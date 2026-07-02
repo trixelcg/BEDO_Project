@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, ContactShadows } from '@react-three/drei';
+import { OrbitControls, ContactShadows, Environment } from '@react-three/drei';
 import { DeviceModel } from './DeviceModel';
 import type { SimulationState } from '../types/index';
 
@@ -38,14 +38,17 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         camera={{ position: [0, 1.2, 3.8], fov: 42 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
+        {/* Load Rosendal Plains environmental HDR map for lighting & reflection */}
+        <Environment files="/rosendal_plains_2_4k.webp" background />
+
         {/* Ambient fill light */}
-        <ambientLight intensity={0.45} color="#d1f2f7" />
+        <ambientLight intensity={0.15} color="#d1f2f7" />
 
         {/* Studio Three-Point Lighting Rig */}
         {/* 1. Key Light (Main illuminating light casting soft shadows) */}
         <directionalLight
           position={[5, 8, 5]}
-          intensity={1.2}
+          intensity={0.8}
           castShadow
           shadow-mapSize={[1024, 1024]}
           shadow-bias={-0.0001}
@@ -56,10 +59,10 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         />
 
         {/* 2. Fill Light (Soften harsh shadows from key light) */}
-        <directionalLight position={[-5, 5, -5]} intensity={0.5} color="#00e5ff" />
+        <directionalLight position={[-5, 5, -5]} intensity={0.3} color="#00e5ff" />
 
         {/* 3. Rim Light (Back illumination to pop object outlines) */}
-        <directionalLight position={[0, 6, -6]} intensity={0.6} color="#ffc107" />
+        <directionalLight position={[0, 6, -6]} intensity={0.4} color="#ffc107" />
 
         {/* Soft grounding contact shadows under the laboratory bench */}
         <ContactShadows
