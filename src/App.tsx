@@ -63,7 +63,7 @@ export default function App() {
       sceneConfig,
       ttsConfig: { apiKey: '' },
       aiConfig: { apiKey: '' },
-      characterUrl: '/Bedo_model_optimized.glb',
+      characterUrl: '/Bedo_baked_integration.glb',
       locationUrl: '',
       hdrUrl: '/rosendal_plains_2_4k.webp',
       visemeMap: {}
