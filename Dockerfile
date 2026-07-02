@@ -32,6 +32,7 @@ RUN npm install -g tsx
 # Copy built assets and backend
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/api ./api
 COPY --from=builder /app/server.ts ./server.ts
 
 EXPOSE 8080
