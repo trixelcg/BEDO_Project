@@ -14,6 +14,7 @@ interface DeviceModelProps {
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
+  reflection: number;
 }
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
@@ -25,10 +26,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onWeightPanClick,
   position,
   rotation,
-  scale
+  scale,
+  reflection
 }) => {
   // Load GLB model from public folder
-  const { scene, nodes } = useGLTF('/Bedo_model_optimized.glb') as any;
+  const { scene, nodes } = useGLTF('/Bedo_baked_integration.glb') as any;
 
   // Refs for key animatable components
   const coverRef = useRef<THREE.Object3D>(null);
@@ -39,15 +41,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const deflectorRef = useRef<THREE.Object3D>(null);
   const apparatusGroupRef = useRef<THREE.Group>(null);
 
-  // Initialize nodes and custom material properties on mount
-
-  // Initialize nodes and custom material properties on mount
+  // Initialize nodes, shadow configs, glass effects, and reflection intensities
   useEffect(() => {
     if (scene) {
       scene.traverse((child: any) => {
         if (child.isMesh) {
           child.castShadow = true;
           child.receiveShadow = true;
+
+          // Apply reflection config to model materials
+          if (child.material) {
+            child.material.envMapIntensity = reflection;
+          }
 
           // Apply glass transparency to the outer shield cylinder
           if (child.name.toLowerCase().includes('cylinder001') || child.name.toLowerCase().includes('cylinder005')) {
@@ -62,6 +67,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               thickness: 1.0,
               depthWrite: false,
             });
+            child.material.envMapIntensity = reflection;
           }
 
           // Apply water shader look to LIQUID001
@@ -84,7 +90,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }
       });
     }
-  }, [scene]);
+  }, [scene, reflection]);
 
   // Map references once nodes are loaded
   useEffect(() => {
@@ -92,7 +98,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       coverRef.current = scene.getObjectByName('Cylinder006'); // typical upper plate lid
       pointerRef.current = scene.getObjectByName('Pointer'); // balancing pointer
       liquidRef.current = scene.getObjectByName('LIQUID001'); // water jet cylinder
-      valveRef.current = scene.getObjectByName('Cold_Tab_001_Baked'); // valve knob
+      valveRef.current = scene.getObjectByName('Valve') || scene.getObjectByName('Cold_Tab_001_Baked'); // valve knob
       switchRef.current = scene.getObjectByName('c pump_066'); // pump switch
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
     }

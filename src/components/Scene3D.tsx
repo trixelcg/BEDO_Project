@@ -92,13 +92,13 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         </Suspense>
 
         {/* Ambient base light linked to configs */}
-        <ambientLight intensity={sceneConfig.selfIllumination} color={sceneConfig.ambientColor} />
+        <ambientLight intensity={sceneConfig.selfIllumination * (2.0 - sceneConfig.contrast)} color={sceneConfig.ambientColor} />
 
         {/* Studio Three-Point Lighting Rig */}
         {/* 1. Key Light (Main illuminating light casting soft shadows) */}
         <directionalLight
           position={[5, 8, 5]}
-          intensity={0.8}
+          intensity={0.8 * sceneConfig.contrast}
           castShadow
           shadow-mapSize={[1024, 1024]}
           shadow-bias={-0.0001}
@@ -109,10 +109,10 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         />
 
         {/* 2. Fill Light (Soften harsh shadows from key light) */}
-        <directionalLight position={[-5, 5, -5]} intensity={0.3} color="#00e5ff" />
+        <directionalLight position={[-5, 5, -5]} intensity={0.3 * (2.0 - sceneConfig.contrast)} color="#00e5ff" />
 
         {/* 3. Rim Light (Back illumination to pop object outlines) */}
-        <directionalLight position={[0, 6, -6]} intensity={0.4} color="#ffc107" />
+        <directionalLight position={[0, 6, -6]} intensity={0.4 * sceneConfig.contrast} color="#ffc107" />
 
         {/* Soft grounding contact shadows under the laboratory bench */}
         <ContactShadows
@@ -139,6 +139,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
               (sceneConfig.characterRotation[2] * Math.PI) / 180
             ]}
             scale={sceneConfig.characterScale}
+            reflection={sceneConfig.reflection}
           />
         </Suspense>
 
