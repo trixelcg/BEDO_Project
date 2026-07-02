@@ -1,6 +1,7 @@
-import React, { Suspense } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, ContactShadows, Environment } from '@react-three/drei';
+import React, { Suspense, useEffect } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
+import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
+import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
 import type { SimulationState } from '../types/index';
 
@@ -12,6 +13,27 @@ interface Scene3DProps {
   onValveClick: () => void;
   onWeightPanClick: () => void;
 }
+
+// Subcomponent to natively load and apply WebP Equirectangular Environment map
+const LabEnvironment: React.FC = () => {
+  const { scene } = useThree();
+  const texture = useTexture('/rosendal_plains_2_4k.webp');
+
+  useEffect(() => {
+    if (texture) {
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      scene.background = texture;
+      scene.environment = texture;
+    }
+    return () => {
+      scene.background = null;
+      scene.environment = null;
+    };
+  }, [texture, scene]);
+
+  return null;
+};
 
 // Simple loading placeholder inside the 3D Canvas
 const ModelLoadingPlaceholder: React.FC = () => {
@@ -38,8 +60,10 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         camera={{ position: [0, 1.2, 3.8], fov: 42 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
-        {/* Load Rosendal Plains environmental HDR map for lighting & reflection */}
-        <Environment files="/rosendal_plains_2_4k.webp" background />
+        {/* Load Rosendal Plains environmental HDR map natively */}
+        <Suspense fallback={null}>
+          <LabEnvironment />
+        </Suspense>
 
         {/* Ambient fill light */}
         <ambientLight intensity={0.15} color="#d1f2f7" />
