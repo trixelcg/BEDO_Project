@@ -11,6 +11,9 @@ interface DeviceModelProps {
   onPowerClick: () => void;
   onValveClick: () => void;
   onWeightPanClick: () => void;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
 }
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
@@ -19,7 +22,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onDeflectorClick,
   onPowerClick,
   onValveClick,
-  onWeightPanClick
+  onWeightPanClick,
+  position,
+  rotation,
+  scale
 }) => {
   // Load GLB model from public folder
   const { scene, nodes } = useGLTF('/Bedo_model_optimized.glb') as any;
@@ -190,7 +196,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   };
 
   return (
-    <group ref={apparatusGroupRef} position={[0, -1.8, 0]} scale={[1.8, 1.8, 1.8]}>
+    <group ref={apparatusGroupRef} position={position} rotation={rotation} scale={scale}>
       {/* 3D Model primitive */}
       <primitive object={scene} />
 

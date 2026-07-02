@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import type { RecordRow, SimulationState } from './types/index';
+import type { RecordRow, SimulationState, SceneConfig } from './types/index';
+import { MenuSettings } from './components/MenuSettings';
+import { Sliders, X } from 'lucide-react';
 import './index.css';
 
 const DEFAULT_ROWS = [0.0, 0.2, 0.4, 0.6];
@@ -23,6 +25,68 @@ export default function App() {
     showMonitor: false,
     warningMessage: null,
   });
+
+  const [sceneConfig, setSceneConfig] = useState<SceneConfig>({
+    exposure: 1.0,
+    selfIllumination: 0.15,
+    hdrLight: 1.0,
+    hdrRotation: 0,
+    reflection: 1.0,
+    contrast: 1.0,
+    ambientColor: '#d1f2f7',
+    characterPosition: [0, -1.8, 0],
+    characterRotation: [0, 0, 0],
+    characterScale: [1.8, 1.8, 1.8],
+  });
+
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+
+  // Load initial configurations from config.json if available
+  useEffect(() => {
+    fetch('/config.json')
+      .then((res) => {
+        if (res.ok) return res.json();
+        throw new Error('No config');
+      })
+      .then((data) => {
+        if (data && data.sceneConfig) {
+          setSceneConfig(data.sceneConfig);
+        }
+      })
+      .catch(() => {
+        console.log('Using default client-side scene configuration.');
+      });
+  }, []);
+
+  const handleSaveConfig = async () => {
+    const fullConfig = {
+      sceneConfig,
+      ttsConfig: { apiKey: '' },
+      aiConfig: { apiKey: '' },
+      characterUrl: '/Bedo_model_optimized.glb',
+      locationUrl: '',
+      hdrUrl: '/rosendal_plains_2_4k.webp',
+      visemeMap: {}
+    };
+
+    try {
+      const res = await fetch('/api/save-config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(fullConfig),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert('Configurations saved successfully to disk and GCS!');
+      } else {
+        alert(`Failed to save configuration: ${data.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      alert(`Save error: ${err.message}`);
+    }
+  };
 
   // Calculate parameters for a given row index dynamically to ensure state sync
   const calculateRowData = (idx: number, n: number, deflectorId: number, weights: number[]): RecordRow => {
@@ -338,12 +402,45 @@ export default function App() {
       {/* 3D Lab Scene Canvas */}
       <Scene3D
         state={state}
+        sceneConfig={sceneConfig}
         onCoverClick={handleCoverClick}
         onDeflectorClick={handleDeflectorClick}
         onPowerClick={handleTogglePower}
         onValveClick={() => handleSetValve(state.currentStep === 4 ? 0.20 : 0.40)}
         onWeightPanClick={() => handleAddWeight(50)}
       />
+
+      {/* Floating Gear / Sliders Toggles for Scene settings */}
+      <button
+        className="floating-settings-toggle"
+        onClick={() => setShowSettings(!showSettings)}
+        title={state.language === 'ar' ? 'إعدادات المشهد' : 'Scene Settings'}
+      >
+        <Sliders size={15} />
+        <span>{state.language === 'ar' ? 'إعدادات المشهد' : 'Scene Settings'}</span>
+      </button>
+
+      {/* Sliding Settings Sidebar Panel */}
+      {showSettings && (
+        <div className="settings-panel-sidebar">
+          <div className="settings-panel-header">
+            <h3>{state.language === 'ar' ? 'إعدادات المشهد والظلال' : 'Scene Settings'}</h3>
+            <button onClick={() => setShowSettings(false)}>
+              <X size={18} />
+            </button>
+          </div>
+          <div className="settings-panel-body">
+            <MenuSettings
+              config={sceneConfig}
+              setConfig={setSceneConfig}
+              onSaveConfig={handleSaveConfig}
+              onSaveCurrentCamera={() => {
+                alert('Camera angles captured. Save config to write permanently.');
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* HTML HUD and Steps overlays */}
       <UIOverlay

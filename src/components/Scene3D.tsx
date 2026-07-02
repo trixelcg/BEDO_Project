@@ -3,10 +3,11 @@ import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
-import type { SimulationState } from '../types/index';
+import type { SimulationState, SceneConfig } from '../types/index';
 
 interface Scene3DProps {
   state: SimulationState;
+  sceneConfig: SceneConfig;
   onCoverClick: () => void;
   onDeflectorClick: () => void;
   onPowerClick: () => void;
@@ -14,8 +15,8 @@ interface Scene3DProps {
   onWeightPanClick: () => void;
 }
 
-// Subcomponent to natively load and apply WebP Equirectangular Environment map
-const LabEnvironment: React.FC = () => {
+// Subcomponent to natively load and apply WebP Equirectangular Environment map with dynamic configurations
+const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
   const { scene } = useThree();
   const texture = useTexture('/rosendal_plains_2_4k.webp');
 
@@ -23,14 +24,35 @@ const LabEnvironment: React.FC = () => {
     if (texture) {
       texture.mapping = THREE.EquirectangularReflectionMapping;
       texture.colorSpace = THREE.SRGBColorSpace;
+      
+      // Apply environment rotation (degrees to radians)
+      texture.rotation = (config.hdrRotation * Math.PI) / 180;
+      
       scene.background = texture;
       scene.environment = texture;
+
+      // Adjust environment and background illumination intensities
+      scene.environmentIntensity = config.hdrLight;
+      scene.backgroundIntensity = config.hdrLight;
     }
     return () => {
       scene.background = null;
       scene.environment = null;
     };
-  }, [texture, scene]);
+  }, [texture, scene, config.hdrLight, config.hdrRotation]);
+
+  return null;
+};
+
+// Subcomponent to update WebGLRenderer properties dynamically (like Tone Mapping Exposure)
+const RendererController: React.FC<{ config: SceneConfig }> = ({ config }) => {
+  const { gl } = useThree();
+
+  useEffect(() => {
+    if (gl) {
+      gl.toneMappingExposure = config.exposure;
+    }
+  }, [gl, config.exposure]);
 
   return null;
 };
@@ -47,6 +69,7 @@ const ModelLoadingPlaceholder: React.FC = () => {
 
 export const Scene3D: React.FC<Scene3DProps> = ({
   state,
+  sceneConfig,
   onCoverClick,
   onDeflectorClick,
   onPowerClick,
@@ -60,13 +83,16 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         camera={{ position: [0, 1.2, 3.8], fov: 42 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
+        {/* Dynamic WebGLRenderer controller */}
+        <RendererController config={sceneConfig} />
+
         {/* Load Rosendal Plains environmental HDR map natively */}
         <Suspense fallback={null}>
-          <LabEnvironment />
+          <LabEnvironment config={sceneConfig} />
         </Suspense>
 
-        {/* Ambient fill light */}
-        <ambientLight intensity={0.15} color="#d1f2f7" />
+        {/* Ambient base light linked to configs */}
+        <ambientLight intensity={sceneConfig.selfIllumination} color={sceneConfig.ambientColor} />
 
         {/* Studio Three-Point Lighting Rig */}
         {/* 1. Key Light (Main illuminating light casting soft shadows) */}
@@ -97,7 +123,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           far={3}
         />
 
-        {/* Lazy load the 3D apparatus */}
+        {/* Lazy load the 3D apparatus with custom dynamic transformations */}
         <Suspense fallback={<ModelLoadingPlaceholder />}>
           <DeviceModel
             state={state}
@@ -106,6 +132,13 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onPowerClick={onPowerClick}
             onValveClick={onValveClick}
             onWeightPanClick={onWeightPanClick}
+            position={sceneConfig.characterPosition}
+            rotation={[
+              (sceneConfig.characterRotation[0] * Math.PI) / 180,
+              (sceneConfig.characterRotation[1] * Math.PI) / 180,
+              (sceneConfig.characterRotation[2] * Math.PI) / 180
+            ]}
+            scale={sceneConfig.characterScale}
           />
         </Suspense>
 
