@@ -34,7 +34,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   return (
     <div className="canvas-container">
       <Canvas
-        shadows
+        shadows="percentage"
         camera={{ position: [0, 1.2, 3.8], fov: 42 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
