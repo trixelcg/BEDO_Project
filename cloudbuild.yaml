@@ -1,0 +1,39 @@
+# GCP Cloud Build Configuration for BEDO Project R3F
+steps:
+  # 1. Build the container image using Dockerfile
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG', '.']
+
+  # 2. Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG']
+
+  # 3. Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '$_SERVICE_NAME'
+      - '--image'
+      - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
+      - '--region'
+      - '$_RUN_REGION'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars'
+      - 'GCS_BUCKET_NAME=bedo-project-assets-2026,NODE_ENV=production'
+
+images:
+  - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
+
+substitutions:
+  _AR_REGION: 'us-central1'
+  _AR_REPO: 'bedo-project-r3f-repo'
+  _SERVICE_NAME: 'bedo-project-r3f-app'
+  _RUN_REGION: 'us-central1'
+  _TAG: 'latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
