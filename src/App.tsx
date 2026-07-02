@@ -37,6 +37,9 @@ export default function App() {
     characterPosition: [0, -1.8, 0],
     characterRotation: [0, 0, 0],
     characterScale: [1.8, 1.8, 1.8],
+    glassSpecular: 1.0,
+    glassRoughness: 0.02,
+    glassIor: 1.52,
   });
 
   const [showSettings, setShowSettings] = useState<boolean>(false);

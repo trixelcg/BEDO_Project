@@ -237,6 +237,40 @@ export const MenuSettings = ({
         </div>
       </div>
 
+      {/* Glass Material Customization Section */}
+      <div className="settings-section-card" style={{ marginBottom: '16px' }}>
+        <div className="section-title">
+          <Palette size={14} style={{ color: 'var(--accent-gold)' }} />
+          <span style={{ marginLeft: '6px' }}>Glass Material Customization</span>
+        </div>
+        <div style={{ padding: '8px 4px' }}>
+          <SliderRow
+            label="Glass Specular Intensity"
+            value={config.glassSpecular}
+            min={0.0}
+            max={1.0}
+            step={0.05}
+            onChange={(v) => updateConfig('glassSpecular', v)}
+          />
+          <SliderRow
+            label="Glass Surface Roughness"
+            value={config.glassRoughness}
+            min={0.0}
+            max={1.0}
+            step={0.01}
+            onChange={(v) => updateConfig('glassRoughness', v)}
+          />
+          <SliderRow
+            label="Glass Index of Refraction (IOR)"
+            value={config.glassIor}
+            min={1.0}
+            max={2.5}
+            step={0.02}
+            onChange={(v) => updateConfig('glassIor', v)}
+          />
+        </div>
+      </div>
+
       {/* Apparatus Transforms Section */}
       <div className="settings-section-card">
         <div className="section-title">

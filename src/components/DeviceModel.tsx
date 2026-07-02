@@ -15,6 +15,9 @@ interface DeviceModelProps {
   rotation: [number, number, number];
   scale: [number, number, number];
   reflection: number;
+  glassSpecular: number;
+  glassRoughness: number;
+  glassIor: number;
 }
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
@@ -27,7 +30,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   position,
   rotation,
   scale,
-  reflection
+  reflection,
+  glassSpecular,
+  glassRoughness,
+  glassIor
 }) => {
   // Load GLB model from public folder
   const { scene, nodes } = useGLTF('/Bedo_baked_integration.glb') as any;
@@ -54,20 +60,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             child.material.envMapIntensity = reflection;
           }
 
-          // Apply glass transparency to the outer shield cylinder
+          // Apply glass transparency to the outer shield cylinder with dynamic slider adjustments
           if (child.name.toLowerCase().includes('cylinder001') || child.name.toLowerCase().includes('cylinder005')) {
             child.material = new THREE.MeshPhysicalMaterial({
               color: '#ffffff',
               transparent: true,
               opacity: 1.0, // High opacity keeps reflection highlights bright
-              roughness: 0.02, // Smooth glass surface
+              roughness: glassRoughness, // User-adjustable roughness
               metalness: 0.0,
-              transmission: 0.98, // Let 98% of light transmit through
-              ior: 1.52, // Glass Index of Refraction
-              thickness: 1.5, // Refraction thickness
-              clearcoat: 1.0, // Glossy outer layer
-              clearcoatRoughness: 0.01,
-              specularIntensity: 1.0,
+              transmission: 0.98, // Transmit light through
+              ior: glassIor, // User-adjustable Index of Refraction
+              thickness: 1.5,
+              clearcoat: 1.0, // Highly polished outer layer
+              clearcoatRoughness: glassRoughness * 0.5,
+              specularIntensity: glassSpecular, // User-adjustable specular level
               depthWrite: false,
             });
             child.material.envMapIntensity = reflection;
@@ -93,7 +99,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }
       });
     }
-  }, [scene, reflection]);
+  }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
 
   // Map references once nodes are loaded
   useEffect(() => {

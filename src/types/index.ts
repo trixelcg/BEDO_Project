@@ -59,5 +59,8 @@ export interface SceneConfig {
   characterPosition: [number, number, number];
   characterRotation: [number, number, number];
   characterScale: [number, number, number];
+  glassSpecular: number;
+  glassRoughness: number;
+  glassIor: number;
 }
 

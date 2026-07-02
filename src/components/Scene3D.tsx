@@ -140,6 +140,9 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             ]}
             scale={sceneConfig.characterScale}
             reflection={sceneConfig.reflection}
+            glassSpecular={sceneConfig.glassSpecular}
+            glassRoughness={sceneConfig.glassRoughness}
+            glassIor={sceneConfig.glassIor}
           />
         </Suspense>
 
