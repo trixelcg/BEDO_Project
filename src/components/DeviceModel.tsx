@@ -57,14 +57,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           // Apply glass transparency to the outer shield cylinder
           if (child.name.toLowerCase().includes('cylinder001') || child.name.toLowerCase().includes('cylinder005')) {
             child.material = new THREE.MeshPhysicalMaterial({
-              color: '#d4f1f5',
+              color: '#ffffff',
               transparent: true,
-              opacity: 0.25,
-              roughness: 0.1,
-              metalness: 0.1,
-              transmission: 0.9,
-              ior: 1.5,
-              thickness: 1.0,
+              opacity: 1.0, // High opacity keeps reflection highlights bright
+              roughness: 0.02, // Smooth glass surface
+              metalness: 0.0,
+              transmission: 0.98, // Let 98% of light transmit through
+              ior: 1.52, // Glass Index of Refraction
+              thickness: 1.5, // Refraction thickness
+              clearcoat: 1.0, // Glossy outer layer
+              clearcoatRoughness: 0.01,
+              specularIntensity: 1.0,
               depthWrite: false,
             });
             child.material.envMapIntensity = reflection;
