@@ -53,6 +53,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const switchRef = useRef<THREE.Object3D>(null);
   const deflectorRef = useRef<THREE.Object3D>(null);
   const apparatusGroupRef = useRef<THREE.Group>(null);
+  const waterGroupRef = useRef<THREE.Group>(null);
+
+  // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
+  const tempNozzlePos = useRef(new THREE.Vector3()).current;
+  const tempDefPos = useRef(new THREE.Vector3()).current;
+  const tempMidpoint = useRef(new THREE.Vector3()).current;
+  const tempQuaternion = useRef(new THREE.Quaternion()).current;
+  const tempScale = useRef(new THREE.Vector3()).current;
 
   // Initialize nodes, shadow configs, glass effects, and reflection intensities
   useEffect(() => {
@@ -238,10 +246,79 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       state.selectedDeflectorId === 2 ? 'Deflector 120' :
       state.selectedDeflectorId === 4 ? 'Deflector 45' : '';
 
-    if (activeDefName && scene) {
-      const activeObj = scene.getObjectByName(activeDefName);
-      if (activeObj) {
-        activeObj.position.y = THREE.MathUtils.lerp(activeObj.position.y, targetY, delta * 10);
+    const activeDef = activeDefName ? scene.getObjectByName(activeDefName) : null;
+    const nozzle = scene.getObjectByName('JET Force 2_214') || scene.getObjectByName('Cylinder001');
+
+    if (activeDef && scene) {
+      activeDef.position.y = THREE.MathUtils.lerp(activeDef.position.y, targetY, delta * 10);
+    }
+
+    // 5. Dynamic Water Shape world position mapping and scaling
+    if (state.isPowerOn && state.valveOpening > 0.05 && activeDef && nozzle && waterGroupRef.current) {
+      waterGroupRef.current.visible = true;
+
+      // Read absolute world positions of target nozzle and active deflector plate
+      nozzle.getWorldPosition(tempNozzlePos);
+      activeDef.getWorldPosition(tempDefPos);
+
+      // Compute exact midpoint to position the centered water shape mesh
+      tempMidpoint.addVectors(tempNozzlePos, tempDefPos).multiplyScalar(0.5);
+      waterGroupRef.current.position.copy(tempMidpoint);
+
+      // Copy nozzle rotation to align the jet flow axis perpendicularly
+      nozzle.getWorldQuaternion(tempQuaternion);
+      waterGroupRef.current.quaternion.copy(tempQuaternion);
+
+      // Copy nozzle scale to fit within the transparent tank shield
+      nozzle.getWorldScale(tempScale);
+
+      // Determine active water shape state and its pre-measured Blender height
+      let activeWater = 'low';
+      let activeMeshHeight = 5.0833; // Water_low height
+
+      if (state.valveOpening > 0.22) {
+        if (state.selectedDeflectorId === 0) {
+          activeWater = '90';
+          activeMeshHeight = 21.9943;
+        } else if (state.selectedDeflectorId === 5) {
+          activeWater = '180';
+          activeMeshHeight = 23.4198;
+        } else if (state.selectedDeflectorId === 2) {
+          activeWater = '60';
+          activeMeshHeight = 17.0207;
+        } else if (state.selectedDeflectorId === 4) {
+          activeWater = '45';
+          activeMeshHeight = 26.1200;
+        }
+      }
+
+      // Calculate distance between nozzle and deflector, and set Y scale
+      const distance = tempNozzlePos.distanceTo(tempDefPos);
+      let scaleY = distance / activeMeshHeight;
+
+      // Adjust height scaling during initial low flow pump startup
+      if (activeWater === 'low') {
+        const startupFactor = Math.min(1.0, state.valveOpening * 4.5);
+        scaleY = (distance * startupFactor) / activeMeshHeight;
+
+        // Offset position downwards so the rising jet starts at the nozzle lip
+        const offsetDist = (distance * (1.0 - startupFactor)) * 0.5;
+        const downDir = new THREE.Vector3(0, -1, 0).applyQuaternion(tempQuaternion);
+        waterGroupRef.current.position.addScaledVector(downDir, offsetDist);
+      }
+
+      // Apply dynamic scale
+      waterGroupRef.current.scale.set(tempScale.x, scaleY, tempScale.z);
+
+      // Toggle mesh sub-scene visibilities
+      waterLow.scene.visible = (activeWater === 'low');
+      water90.scene.visible = (activeWater === '90');
+      water180.scene.visible = (activeWater === '180');
+      water60.scene.visible = (activeWater === '60');
+      water45.scene.visible = (activeWater === '45');
+    } else {
+      if (waterGroupRef.current) {
+        waterGroupRef.current.visible = false;
       }
     }
   });
@@ -293,41 +370,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         </group>
       )}
 
-      {/* Realistic water shape primitives selected by deflector and flow level */}
-      {state.isPowerOn && state.valveOpening > 0.05 && (
-        <group>
-          {/* Low flow water column stream */}
-          <primitive 
-            object={waterLow.scene} 
-            visible={state.valveOpening <= 0.22} 
-            scale={[1, Math.min(1.0, state.valveOpening * 4.5), 1]} 
-          />
-          {/* Developed splash shape for Flat Plate */}
-          <primitive 
-            object={water90.scene} 
-            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 0} 
-            scale={[1, 1, 1]} 
-          />
-          {/* Developed splash shape for Hemispherical Cup */}
-          <primitive 
-            object={water180.scene} 
-            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 5} 
-            scale={[1, 1, 1]} 
-          />
-          {/* Developed splash shape for Cone */}
-          <primitive 
-            object={water60.scene} 
-            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 2} 
-            scale={[1, 1, 1]} 
-          />
-          {/* Developed splash shape for Oblique Plate */}
-          <primitive 
-            object={water45.scene} 
-            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 4} 
-            scale={[1, 1, 1]} 
-          />
-        </group>
-      )}
+      {/* Centered Water shapes container group (positioned and scaled relative to global world space in useFrame) */}
+      <group ref={waterGroupRef} visible={false}>
+        <primitive object={waterLow.scene} />
+        <primitive object={water90.scene} />
+        <primitive object={water180.scene} />
+        <primitive object={water60.scene} />
+        <primitive object={water45.scene} />
+      </group>
 
       {/* Click and Hover Invisible Intersect Handlers for the 3D apparatus */}
       {/* 1. Tank Cover plate click area */}
