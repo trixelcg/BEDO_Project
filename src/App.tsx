@@ -109,6 +109,7 @@ export default function App() {
     let factor = 1.0;
     if (deflectorId === 5) factor = 2.0; // cup
     if (deflectorId === 2) factor = 0.5; // cone
+    if (deflectorId === 4) factor = 0.293; // oblique 45°
 
     // Theoretical force F_th (N)
     const fth = factor * 1000 * 0.0000785 * v2;
@@ -396,6 +397,9 @@ export default function App() {
     }
     if (state.selectedDeflectorId === 2) {
       return state.language === 'ar' ? 'عاكس مخروطي 120 درجة' : '120° Cone';
+    }
+    if (state.selectedDeflectorId === 4) {
+      return state.language === 'ar' ? 'لوح مائل 45 درجة' : 'Oblique Plate (45°)';
     }
     return state.language === 'ar' ? 'لوحة مسطحة 90 درجة' : 'Flat Plate (90°)';
   };

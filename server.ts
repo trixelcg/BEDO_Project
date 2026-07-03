@@ -154,6 +154,8 @@ const server = http.createServer(async (req, res) => {
     '.svg': 'image/svg+xml',
     '.ico': 'image/x-icon',
     '.glb': 'model/gltf-binary',
+    '.mp4': 'video/mp4',
+    '.webp': 'image/webp',
   };
 
   const contentType = mimeTypes[ext] || 'application/octet-stream';

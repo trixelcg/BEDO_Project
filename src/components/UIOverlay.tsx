@@ -1,3 +1,4 @@
+import React, { useState } from 'react';
 import type { Language, StepDefinition, SimulationState } from '../types/index';
 import { Layers, Power, Scale, Play, RefreshCw, AlertTriangle, Monitor } from 'lucide-react';
 
@@ -94,6 +95,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onReset,
   clearWarning
 }) => {
+  const [showVideo, setShowVideo] = useState<boolean>(false);
+
   const { currentStep, language, selectedDeflectorId, isCoverOpen, isPowerOn, valveOpening, loadedWeights, recordedRows, warningMessage } = state;
   const isAr = language === 'ar';
   const activeStep = STEPS[currentStep] || STEPS[0];
@@ -102,6 +105,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     { id: 0, nameEn: 'Flat Plate (90°)', nameAr: 'لوحة مسطحة (90 درجة)', factor: 1.0 },
     { id: 5, nameEn: 'Hemispherical Cup (180°)', nameAr: 'كوب نصف كروي (180 درجة)', factor: 2.0 },
     { id: 2, nameEn: '120° Cone', nameAr: 'مخروط 120 درجة', factor: 0.5 },
+    { id: 4, nameEn: 'Oblique Plate (45°)', nameAr: 'لوح مائل (45 درجة)', factor: 0.293 },
   ];
 
   const totalLoadedWeight = loadedWeights.reduce((a, b) => a + b, 0);
@@ -131,9 +135,14 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             <h2 className="logo-title">VL-FM009</h2>
             <p className="logo-subtitle">{isAr ? 'قياس قوة نفث الماء' : 'Measurement of Jet Forces'}</p>
           </div>
-          <button className="lang-btn" onClick={() => onSelectLanguage(language === 'en' ? 'ar' : 'en')}>
-            {language === 'en' ? 'العربية' : 'English'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
+            <button className="lang-btn" style={{ background: 'rgba(255,193,7,0.12)', borderColor: 'rgba(255,193,7,0.4)', color: '#ffc107', fontSize: '10px', padding: '4px 8px' }} onClick={() => setShowVideo(true)}>
+              {isAr ? 'فيديو توضيحي' : 'Help Video'}
+            </button>
+            <button className="lang-btn" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={() => onSelectLanguage(language === 'en' ? 'ar' : 'en')}>
+              {language === 'en' ? 'العربية' : 'English'}
+            </button>
+          </div>
         </div>
 
         {/* Active step block */}
@@ -291,6 +300,29 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Embedded video player modal overlay */}
+      {showVideo && (
+        <div className="monitor-fullscreen" style={{ zIndex: 1000, background: 'rgba(2, 9, 11, 0.96)', backdropFilter: 'blur(20px)', padding: '24px' }}>
+          <div className="monitor-header" style={{ marginBottom: '16px', paddingBottom: '16px' }}>
+            <div className="monitor-title-group">
+              <h1>{isAr ? 'فيديو توضيحي للتجربة' : 'Experiment Walkthrough Video'}</h1>
+              <p>{isAr ? 'مشاهدة كيفية عمل جهاز قياس قوة نفث الماء والخطوات التفصيلية' : 'Watch how the Measurement of Jet Forces apparatus operates step-by-step'}</p>
+            </div>
+            <button className="btn-secondary" onClick={() => setShowVideo(false)}>
+              {isAr ? 'إغلاق الفيديو' : 'Close Video'}
+            </button>
+          </div>
+          <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: '#000', borderRadius: '16px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.08)', position: 'relative' }}>
+            <video 
+              src="/Bedo_Mesu_J.mp4" 
+              controls 
+              autoPlay 
+              style={{ width: '100%', height: '100%', maxHeight: '72vh', objectFit: 'contain' }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

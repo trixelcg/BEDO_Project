@@ -38,6 +38,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   // Load GLB model from public folder
   const { scene, nodes } = useGLTF('/Bedo_baked_integration.glb') as any;
 
+  // Load water shapes
+  const waterLow = useGLTF('/WaterShapes/Water_low.glb') as any;
+  const water90 = useGLTF('/WaterShapes/Water90_Flat.glb') as any;
+  const water180 = useGLTF('/WaterShapes/Water180_HemiSphere.glb') as any;
+  const water60 = useGLTF('/WaterShapes/Water60_Cone.glb') as any;
+  const water45 = useGLTF('/WaterShapes/Water45_Oblique.glb') as any;
+
   // Refs for key animatable components
   const coverRef = useRef<THREE.Object3D>(null);
   const pointerRef = useRef<THREE.Object3D>(null);
@@ -79,17 +86,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             child.material.envMapIntensity = reflection;
           }
 
-          // Apply water shader look to LIQUID001
+          // Apply water shader look to LIQUID001 (keep hidden since we use realistic meshes now)
           if (child.name === 'LIQUID001') {
-            child.material = new THREE.MeshStandardMaterial({
-              color: '#00e5ff',
-              transparent: true,
-              opacity: 0.7,
-              roughness: 0.1,
-              metalness: 0.1,
-              emissive: '#00838f',
-              emissiveIntensity: 0.3
-            });
+            child.visible = false;
           }
 
           // Hide static weights inside the model initially to avoid clutter
@@ -100,6 +99,61 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       });
     }
   }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
+
+  // Apply transparent cyber-blue water look to the loaded water shapes
+  const waterMaterial = React.useMemo(() => new THREE.MeshStandardMaterial({
+    color: '#00e5ff',
+    transparent: true,
+    opacity: 0.65,
+    roughness: 0.1,
+    metalness: 0.1,
+    emissive: '#00838f',
+    emissiveIntensity: 0.4
+  }), []);
+
+  useEffect(() => {
+    [waterLow, water90, water180, water60, water45].forEach((gltf) => {
+      if (gltf && gltf.scene) {
+        gltf.scene.traverse((child: any) => {
+          if (child.isMesh) {
+            child.material = waterMaterial;
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+      }
+    });
+  }, [waterLow, water90, water180, water60, water45, waterMaterial]);
+
+  // Control visibility of individual deflector meshes inside model based on state
+  useEffect(() => {
+    if (scene) {
+      const deflectorNames = [
+        'Deflector 90', 'Deflector 180', 'Deflector 120', 'Deflector 45',
+        'Deflector 130', 'Deflector Cone 30', 'Deflector Cone 60'
+      ];
+      
+      deflectorNames.forEach((name) => {
+        const obj = scene.getObjectByName(name);
+        if (obj) {
+          obj.visible = false;
+          obj.position.y = 0; // Reset displacement on switch
+        }
+      });
+
+      // Show active selection
+      let activeName = '';
+      if (state.selectedDeflectorId === 0) activeName = 'Deflector 90';
+      if (state.selectedDeflectorId === 5) activeName = 'Deflector 180';
+      if (state.selectedDeflectorId === 2) activeName = 'Deflector 120';
+      if (state.selectedDeflectorId === 4) activeName = 'Deflector 45';
+
+      if (activeName) {
+        const activeObj = scene.getObjectByName(activeName);
+        if (activeObj) activeObj.visible = true;
+      }
+    }
+  }, [scene, state.selectedDeflectorId]);
 
   // Map references once nodes are loaded
   useEffect(() => {
@@ -121,10 +175,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const weightMat = nodes['Weight_50 gm']?.material || new THREE.MeshStandardMaterial({ color: '#78909c', roughness: 0.5 });
 
   // Physics animation tick
-  useFrame((_threeState, delta) => {
+  useFrame((_threeState: any, delta: number) => {
     // 1. Tank Cover / Upper plate animation (Step 0 & 2)
     if (coverRef.current) {
-      // If cover is open, slide it up and rotate slightly. Otherwise, screw it down.
       const targetY = state.isCoverOpen ? 0.35 : 0.0;
       const targetRotY = state.isCoverOpen ? Math.PI * 0.5 : 0.0;
       coverRef.current.position.y = THREE.MathUtils.lerp(coverRef.current.position.y, targetY, delta * 8);
@@ -144,13 +197,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // 4. Calculate Net Force, Spring deflection, Pointer movement
-    // Flow calculations
     const flowLMin = 120 * (-4.9138 * Math.pow(state.valveOpening, 4) + 8.8783 * Math.pow(state.valveOpening, 3) - 3.7629 * Math.pow(state.valveOpening, 2) + 0.7265 * state.valveOpening);
     const flowRateQLMin = Math.max(0, flowLMin);
     const flowRateQM3 = flowRateQLMin / 60000;
     const theoreticalVo = flowRateQM3 / 0.0000785;
     
-    // Impact Velocity squared: v^2 = v₀^2 - 2·g·s
     let v2 = Math.pow(theoreticalVo, 2) - 2 * 9.81 * Math.sqrt(0.035);
     v2 = Math.max(0, v2);
 
@@ -158,6 +209,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     let factor = 1.0;
     if (state.selectedDeflectorId === 5) factor = 2.0; // cup
     if (state.selectedDeflectorId === 2) factor = 0.5; // cone
+    if (state.selectedDeflectorId === 4) factor = 0.293; // oblique 45°
 
     // Jet force in Newtons
     const fth = state.isPowerOn ? (factor * 1000 * 0.0000785 * v2) : 0;
@@ -170,32 +222,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const netForce = fth - weightForceN;
 
     // Spring deflection (200 N/m stiffness)
-    // d = F / k (m) -> d_mm = F / 200 * 1000 = F * 5 (mm)
     const displacementMm = netForce * 5;
-    
-    // Clamp displacement to mechanical limits (-12mm to +15mm)
     const clampedDisplacement = THREE.MathUtils.clamp(displacementMm, -12, 15);
 
     // Update pointer position (Scale 1mm to 0.015 units in R3F space)
+    const targetY = clampedDisplacement * 0.015;
     if (pointerRef.current) {
-      // Lift rod and pointer Y pos
-      const targetPointerY = clampedDisplacement * 0.015;
-      pointerRef.current.position.y = THREE.MathUtils.lerp(pointerRef.current.position.y, targetPointerY, delta * 10);
+      pointerRef.current.position.y = THREE.MathUtils.lerp(pointerRef.current.position.y, targetY, delta * 10);
     }
 
-    // 5. Water Jet animation (LIQUID001)
-    if (liquidRef.current) {
-      if (state.isPowerOn && state.valveOpening > 0.05) {
-        liquidRef.current.visible = true;
-        // Scale jet Y based on flow rate
-        const targetScaleY = Math.min(2.5, 0.2 + state.valveOpening * 2.3);
-        liquidRef.current.scale.y = THREE.MathUtils.lerp(liquidRef.current.scale.y, targetScaleY, delta * 10);
-        // Slightly jitter opacity to simulate water turbulence
-        const mat = liquidRef.current.material as THREE.MeshStandardMaterial;
-        mat.opacity = 0.55 + Math.sin(Date.now() * 0.05) * 0.1;
-      } else {
-        liquidRef.current.visible = false;
-        liquidRef.current.scale.y = 0.01;
+    // Also move the active deflector mesh by the same displacement in real-time
+    const activeDefName = 
+      state.selectedDeflectorId === 0 ? 'Deflector 90' :
+      state.selectedDeflectorId === 5 ? 'Deflector 180' :
+      state.selectedDeflectorId === 2 ? 'Deflector 120' :
+      state.selectedDeflectorId === 4 ? 'Deflector 45' : '';
+
+    if (activeDefName && scene) {
+      const activeObj = scene.getObjectByName(activeDefName);
+      if (activeObj) {
+        activeObj.position.y = THREE.MathUtils.lerp(activeObj.position.y, targetY, delta * 10);
       }
     }
   });
@@ -244,6 +290,42 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               />
             );
           })}
+        </group>
+      )}
+
+      {/* Realistic water shape primitives selected by deflector and flow level */}
+      {state.isPowerOn && state.valveOpening > 0.05 && (
+        <group>
+          {/* Low flow water column stream */}
+          <primitive 
+            object={waterLow.scene} 
+            visible={state.valveOpening <= 0.22} 
+            scale={[1, Math.min(1.0, state.valveOpening * 4.5), 1]} 
+          />
+          {/* Developed splash shape for Flat Plate */}
+          <primitive 
+            object={water90.scene} 
+            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 0} 
+            scale={[1, 1, 1]} 
+          />
+          {/* Developed splash shape for Hemispherical Cup */}
+          <primitive 
+            object={water180.scene} 
+            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 5} 
+            scale={[1, 1, 1]} 
+          />
+          {/* Developed splash shape for Cone */}
+          <primitive 
+            object={water60.scene} 
+            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 2} 
+            scale={[1, 1, 1]} 
+          />
+          {/* Developed splash shape for Oblique Plate */}
+          <primitive 
+            object={water45.scene} 
+            visible={state.valveOpening > 0.22 && state.selectedDeflectorId === 4} 
+            scale={[1, 1, 1]} 
+          />
         </group>
       )}
 
@@ -306,3 +388,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     </group>
   );
 };
+
+// Preload the water GLB shapes
+useGLTF.preload('/WaterShapes/Water_low.glb');
+useGLTF.preload('/WaterShapes/Water90_Flat.glb');
+useGLTF.preload('/WaterShapes/Water180_HemiSphere.glb');
+useGLTF.preload('/WaterShapes/Water60_Cone.glb');
+useGLTF.preload('/WaterShapes/Water45_Oblique.glb');
