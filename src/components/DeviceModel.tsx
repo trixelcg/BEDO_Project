@@ -108,15 +108,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
   }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
 
-  // Apply transparent cyber-blue water look to the loaded water shapes
+  // Apply solid blue water look to the loaded water shapes so they are clearly visible
   const waterMaterial = React.useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#00e5ff',
-    transparent: true,
-    opacity: 0.65,
-    roughness: 0.1,
+    color: '#0066ff', // Bright solid blue
+    transparent: false,
+    opacity: 1.0,
+    roughness: 0.3,
     metalness: 0.1,
-    emissive: '#00838f',
-    emissiveIntensity: 0.4
   }), []);
 
   useEffect(() => {
