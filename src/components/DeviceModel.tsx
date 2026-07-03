@@ -45,6 +45,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const water60 = useGLTF('/WaterShapes/Water60_Cone.glb') as any;
   const water45 = useGLTF('/WaterShapes/Water45_Oblique.glb') as any;
 
+  // State for Cylinder005 hover highlight
+  const [isCylinderHovered, setIsCylinderHovered] = React.useState(false);
+
   // Refs for key animatable components
   const coverRef = useRef<THREE.Object3D>(null);
   const pointerRef = useRef<THREE.Object3D>(null);
@@ -54,6 +57,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const deflectorRef = useRef<THREE.Object3D>(null);
   const apparatusGroupRef = useRef<THREE.Group>(null);
   const waterGroupRef = useRef<THREE.Group>(null);
+
+  // Cylinder005 Hover reference and anim state refs
+  const cylinder005Ref = useRef<THREE.Mesh>(null);
+  const animTimeRef = useRef<number>(0);
+  const animActiveRef = useRef<boolean>(false);
+  const offset006Ref = useRef(0);
+  const offset010Ref = useRef(0);
+  const offsetSphereRef = useRef(0);
+  const originalPos010 = useRef<number | null>(null);
+  const originalPosSphere = useRef<number | null>(null);
 
   // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
   const tempNozzlePos = useRef(new THREE.Vector3()).current;
@@ -131,6 +144,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
   }, [waterLow, water90, water180, water60, water45, waterMaterial]);
 
+  // Cylinder005 mouse hover highlight material controller
+  useEffect(() => {
+    if (cylinder005Ref.current && cylinder005Ref.current.material) {
+      const mat = cylinder005Ref.current.material as any;
+      if (isCylinderHovered) {
+        mat.color.set('#00a2ff');
+        mat.emissive = new THREE.Color('#002266');
+        mat.emissiveIntensity = 0.6;
+      } else {
+        mat.color.set('#ffffff');
+        mat.emissive = new THREE.Color('#000000');
+        mat.emissiveIntensity = 0;
+      }
+    }
+  }, [isCylinderHovered]);
+
   // Control visibility of individual deflector meshes inside model based on state
   useEffect(() => {
     if (scene) {
@@ -170,6 +199,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       valveRef.current = scene.getObjectByName('Valve') || scene.getObjectByName('Cold_Tab_001_Baked'); // valve knob
       switchRef.current = scene.getObjectByName('c pump_066'); // pump switch
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
+      cylinder005Ref.current = scene.getObjectByName('Cylinder005') as THREE.Mesh;
     }
   }, [scene]);
 
@@ -183,7 +213,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   // Physics animation tick
   useFrame((_threeState: any, delta: number) => {
     // 1. Tank Cover / Upper plate animation (Step 0 & 2)
-    if (coverRef.current) {
+    if (coverRef.current && !animActiveRef.current) {
       const targetY = state.isCoverOpen ? 0.35 : 0.0;
       const targetRotY = state.isCoverOpen ? Math.PI * 0.5 : 0.0;
       coverRef.current.position.y = THREE.MathUtils.lerp(coverRef.current.position.y, targetY, delta * 8);
@@ -319,6 +349,51 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         waterGroupRef.current.visible = false;
       }
     }
+
+    // 6. Cylinder005 click-triggered sequential animation loop
+    if (animActiveRef.current) {
+      animTimeRef.current += delta;
+      
+      // Stage 1: Cylinder006 moves up by 10cm (represented by 0.22 units in local scale)
+      if (animTimeRef.current > 0.05) {
+        offset006Ref.current = THREE.MathUtils.lerp(offset006Ref.current, 0.22, delta * 4);
+      }
+      // Stage 2: Cylinder010 moves up by 10cm after 0.8s
+      if (animTimeRef.current > 0.8) {
+        offset010Ref.current = THREE.MathUtils.lerp(offset010Ref.current, 0.22, delta * 4);
+      }
+      // Stage 3: Sphere010 moves up by 10cm after 1.5s
+      if (animTimeRef.current > 1.5) {
+        offsetSphereRef.current = THREE.MathUtils.lerp(offsetSphereRef.current, 0.22, delta * 4);
+      }
+    } else {
+      // Return smoothly to normal resting position
+      offset006Ref.current = THREE.MathUtils.lerp(offset006Ref.current, 0.0, delta * 5);
+      offset010Ref.current = THREE.MathUtils.lerp(offset010Ref.current, 0.0, delta * 5);
+      offsetSphereRef.current = THREE.MathUtils.lerp(offsetSphereRef.current, 0.0, delta * 5);
+    }
+
+    // Retrieve components to apply offsets
+    const cylinder006 = scene.getObjectByName('Cylinder006');
+    const cylinder010 = scene.getObjectByName('Cylinder010');
+    const sphere010 = scene.getObjectByName('Sphere010');
+
+    if (cylinder006) {
+      const baseCoverY = state.isCoverOpen ? 0.35 : 0.0;
+      cylinder006.position.y = baseCoverY + offset006Ref.current;
+    }
+    if (cylinder010) {
+      if (originalPos010.current === null) {
+        originalPos010.current = cylinder010.position.y;
+      }
+      cylinder010.position.y = (originalPos010.current ?? 0) + offset010Ref.current;
+    }
+    if (sphere010) {
+      if (originalPosSphere.current === null) {
+        originalPosSphere.current = sphere010.position.y;
+      }
+      sphere010.position.y = (originalPosSphere.current ?? 0) + offsetSphereRef.current;
+    }
   });
 
   // Highlight helper
@@ -432,6 +507,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         onClick={(e) => { e.stopPropagation(); onWeightPanClick(); }}
       >
         <cylinderGeometry args={[0.16, 0.16, 0.03, 16]} />
+      </mesh>
+
+      {/* 6. Cylinder005 click/hover intercept zone */}
+      <mesh
+        position={[0, 0.85, 0]}
+        visible={false}
+        onPointerOver={(e) => { e.stopPropagation(); handlePointerOver(e); setIsCylinderHovered(true); }}
+        onPointerOut={() => { handlePointerOut(); setIsCylinderHovered(false); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (animActiveRef.current) {
+            animActiveRef.current = false;
+          } else {
+            animActiveRef.current = true;
+            animTimeRef.current = 0;
+          }
+        }}
+      >
+        <cylinderGeometry args={[0.28, 0.28, 0.9, 16]} />
       </mesh>
     </group>
   );
