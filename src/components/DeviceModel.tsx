@@ -385,21 +385,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (animActiveRef.current) {
       animTimeRef.current += delta;
       
-      // Stage 1: Screw_01_GRP (Cylinder006, Object019) moves up by 0.22 units (~0.5m)
+      // Stage 1: Screw_01_GRP (Cylinder006, Object019) moves up by 2.86 units (~6.5m)
       if (animTimeRef.current > 0.05) {
-        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 0.22, delta * 5);
+        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 2.86, delta * 5);
       }
-      // Stage 2: Screw_02_GRP (Cylinder008, Object020, Sphere010) moves up by 0.22 units (~0.5m) after 0.6s
+      // Stage 2: Screw_02_GRP (Cylinder008, Object020, Sphere010) moves up by 2.86 units (~6.5m) after 0.6s
       if (animTimeRef.current > 0.6) {
-        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 0.22, delta * 5);
+        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 2.86, delta * 5);
       }
-      // Stage 3: Screw_03_GRP (Cylinder010, Object021, Sphere011) moves up by 0.22 units (~0.5m) after 1.2s
+      // Stage 3: Screw_03_GRP (Cylinder010, Object021, Sphere011) moves up by 2.86 units (~6.5m) after 1.2s
       if (animTimeRef.current > 1.2) {
-        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.22, delta * 5);
+        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 2.86, delta * 5);
       }
-      // Stage 4: Upper_Plate moves up by 0.232 units (~0.5m) after 1.8s
+      // Stage 4: Upper_Plate moves up by 2.32 units (~5m) after 1.8s
       if (animTimeRef.current > 1.8) {
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.232, delta * 5);
+        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 2.32, delta * 5);
       }
 
       // Finish sequence and toggle parent cover state to open (at 2.5s)
@@ -416,9 +416,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.0, delta * 8);
       } else {
         // If parent state is open, hold screws in their lifted position
-        offsetScrew1Ref.current = 0.22;
-        offsetScrew2Ref.current = 0.22;
-        offsetScrew3Ref.current = 0.22;
+        offsetScrew1Ref.current = 2.86;
+        offsetScrew2Ref.current = 2.86;
+        offsetScrew3Ref.current = 2.86;
         // Upper Plate position is already fully opened
         offsetUpperPlateRef.current = 0.0;
       }
@@ -440,8 +440,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (originalPosUpperPlate.current === null) {
         originalPosUpperPlate.current = upperPlate.position.y;
       }
-      // When open, the base height is lifted by 0.232 (which is 0.5m in local space).
-      const basePlateY = state.isCoverOpen ? 0.232 : 0.0;
+      // When open, the base height is lifted by 2.32 (which is 5m in local space).
+      const basePlateY = state.isCoverOpen ? 2.32 : 0.0;
       upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
     }
 
