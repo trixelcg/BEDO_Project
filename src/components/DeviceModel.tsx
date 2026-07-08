@@ -71,6 +71,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const offsetUpperPlateRef = useRef(0);
 
   // Original coordinates refs to support relative offset movements
+  const originalPosUpperPlate = useRef<number | null>(null);
   const originalPos006 = useRef<number | null>(null);
   const originalPos019 = useRef<number | null>(null);
   const originalPos008 = useRef<number | null>(null);
@@ -420,9 +421,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     // Apply animation offsets
     if (upperPlate) {
+      if (originalPosUpperPlate.current === null) {
+        originalPosUpperPlate.current = upperPlate.position.y;
+      }
       // When open, the base height is lifted by 0.232 (which is 0.5m in local space).
       const basePlateY = state.isCoverOpen ? 0.232 : 0.0;
-      upperPlate.position.y = basePlateY + offsetUpperPlateRef.current;
+      upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
     }
 
     // Screw 1 GRP
