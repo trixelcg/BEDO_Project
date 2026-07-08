@@ -161,22 +161,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
   }, [waterLow, water90, water180, water60, water45, waterMaterial]);
 
-  // Upper_Plate (previously Cylinder005) mouse hover/guide highlight material controller
-  useEffect(() => {
-    if (cylinder005Ref.current && cylinder005Ref.current.material) {
-      const mat = cylinder005Ref.current.material as any;
-      const shouldHighlight = (state.currentStep === 0 && !state.isCoverOpen) || isCylinderHovered;
-      if (shouldHighlight) {
-        mat.color.set('#00a2ff');
-        mat.emissive = new THREE.Color('#002266');
-        mat.emissiveIntensity = isCylinderHovered ? 1.0 : 0.45;
-      } else {
-        mat.color.set('#ffffff');
-        mat.emissive = new THREE.Color('#000000');
-        mat.emissiveIntensity = 0;
-      }
-    }
-  }, [isCylinderHovered, state.currentStep, state.isCoverOpen]);
+
 
   // Control visibility of individual deflector meshes inside model based on state
   useEffect(() => {
@@ -230,6 +215,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
   // Physics animation tick
   useFrame((_threeState: any, delta: number) => {
+    // 0. Guide highlight flicker/pulse effect for Upper_Plate
+    if (cylinder005Ref.current && cylinder005Ref.current.material) {
+      const mat = cylinder005Ref.current.material as any;
+      const shouldHighlight = (state.currentStep === 0 && !state.isCoverOpen) || isCylinderHovered;
+      if (shouldHighlight) {
+        mat.color.set('#00a2ff');
+        mat.emissive.set('#002266');
+        
+        // Emissive flicker/pulse math
+        const time = _threeState.clock.getElapsedTime();
+        const pulse = Math.sin(time * 8.0) * 0.2 + 0.6; // oscillates between 0.4 and 0.8
+        const flicker = Math.random() > 0.94 ? 0.25 : 0.0; // short 25% dips in brightness to create electric flicker
+        
+        mat.emissiveIntensity = isCylinderHovered ? 1.25 : (pulse - flicker);
+      } else {
+        mat.color.set('#ffffff');
+        mat.emissive.set('#000000');
+        mat.emissiveIntensity = 0;
+      }
+    }
+
     // 1. Valve knob rotation (Step 4 & 6)
     if (valveRef.current) {
       const targetRotZ = state.valveOpening * Math.PI * 3.0; // spin as opened
