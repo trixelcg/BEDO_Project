@@ -61,6 +61,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
   const volumetricValveRef = useRef<THREE.Object3D>(null);
+  const springRef = useRef<THREE.Object3D>(null);
+  const jet210Ref = useRef<THREE.Object3D>(null);
+  const jet209Ref = useRef<THREE.Object3D>(null);
 
   // Upper Plate and screw references / animation state refs
   const cylinder005Ref = useRef<THREE.Mesh>(null);
@@ -72,6 +75,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const offsetScrew2Ref = useRef(0);
   const offsetScrew3Ref = useRef(0);
   const offsetUpperPlateRef = useRef(0);
+  const offsetSpringRef = useRef(0);
+  const offsetJet210Ref = useRef(0);
+  const offsetJet209Ref = useRef(0);
 
   // Original coordinates refs to support relative offset movements
   const originalPosUpperPlate = useRef<number | null>(null);
@@ -83,6 +89,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const originalPos010 = useRef<number | null>(null);
   const originalPos021 = useRef<number | null>(null);
   const originalPosSphere11 = useRef<number | null>(null);
+  const originalPosSpring = useRef<number | null>(null);
+  const originalPosJet210 = useRef<number | null>(null);
+  const originalPosJet209 = useRef<number | null>(null);
 
   // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
   const tempNozzlePos = useRef(new THREE.Vector3()).current;
@@ -207,6 +216,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
       cylinder005Ref.current = (scene.getObjectByName('Cylinder005') || scene.getObjectByName('Upper_Plate')) as THREE.Mesh;
       volumetricValveRef.current = scene.getObjectByName('Cold_Tab_002_Baked');
+      springRef.current = scene.getObjectByName('spring');
+      jet210Ref.current = scene.getObjectByName('JET Force 2_210');
+      jet209Ref.current = scene.getObjectByName('JET Force 2_209');
     }
   }, [scene]);
 
@@ -385,21 +397,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (animActiveRef.current) {
       animTimeRef.current += delta;
       
-      // Stage 1: Screw_01_GRP (Cylinder006, Object019) moves up by 2.86 units (~6.5m)
+      // Stage 1: Screw_01_GRP (Cylinder006, Object019) moves up by 11.0 units (~25m)
       if (animTimeRef.current > 0.05) {
-        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 2.86, delta * 5);
+        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 11.0, delta * 5);
       }
-      // Stage 2: Screw_02_GRP (Cylinder008, Object020, Sphere010) moves up by 2.86 units (~6.5m) after 0.6s
+      // Stage 2: Screw_02_GRP (Cylinder008, Object020, Sphere010) moves up by 11.0 units (~25m) after 0.6s
       if (animTimeRef.current > 0.6) {
-        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 2.86, delta * 5);
+        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 11.0, delta * 5);
       }
-      // Stage 3: Screw_03_GRP (Cylinder010, Object021, Sphere011) moves up by 2.86 units (~6.5m) after 1.2s
+      // Stage 3: Screw_03_GRP (Cylinder010, Object021, Sphere011) moves up by 11.0 units (~25m) after 1.2s
       if (animTimeRef.current > 1.2) {
-        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 2.86, delta * 5);
+        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 11.0, delta * 5);
       }
-      // Stage 4: Upper_Plate moves up by 2.32 units (~5m) after 1.8s
+      // Stage 4: Upper_Plate moves up by 9.28 units (~20m) after 1.8s
       if (animTimeRef.current > 1.8) {
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 2.32, delta * 5);
+        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 9.28, delta * 5);
+      }
+      // Stage 5: spring, JET Force 2_210, JET Force 2_209 move up by 6.6 units (~15m) after 1.8s
+      if (animTimeRef.current > 1.8) {
+        offsetSpringRef.current = THREE.MathUtils.lerp(offsetSpringRef.current, 6.6, delta * 5);
+        offsetJet210Ref.current = THREE.MathUtils.lerp(offsetJet210Ref.current, 6.6, delta * 5);
+        offsetJet209Ref.current = THREE.MathUtils.lerp(offsetJet209Ref.current, 6.6, delta * 5);
       }
 
       // Finish sequence and toggle parent cover state to open (at 2.5s)
@@ -414,11 +432,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 0.0, delta * 8);
         offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.0, delta * 8);
         offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.0, delta * 8);
+        offsetSpringRef.current = THREE.MathUtils.lerp(offsetSpringRef.current, 0.0, delta * 8);
+        offsetJet210Ref.current = THREE.MathUtils.lerp(offsetJet210Ref.current, 0.0, delta * 8);
+        offsetJet209Ref.current = THREE.MathUtils.lerp(offsetJet209Ref.current, 0.0, delta * 8);
       } else {
         // If parent state is open, hold screws in their lifted position
-        offsetScrew1Ref.current = 2.86;
-        offsetScrew2Ref.current = 2.86;
-        offsetScrew3Ref.current = 2.86;
+        offsetScrew1Ref.current = 11.0;
+        offsetScrew2Ref.current = 11.0;
+        offsetScrew3Ref.current = 11.0;
+        offsetSpringRef.current = 6.6;
+        offsetJet210Ref.current = 6.6;
+        offsetJet209Ref.current = 6.6;
         // Upper Plate position is already fully opened
         offsetUpperPlateRef.current = 0.0;
       }
@@ -440,8 +464,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (originalPosUpperPlate.current === null) {
         originalPosUpperPlate.current = upperPlate.position.y;
       }
-      // When open, the base height is lifted by 2.32 (which is 5m in local space).
-      const basePlateY = state.isCoverOpen ? 2.32 : 0.0;
+      // When open, the base height is lifted by 9.28 (which is 20m in local space).
+      const basePlateY = state.isCoverOpen ? 9.28 : 0.0;
       upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
     }
 
@@ -481,6 +505,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (sphere011) {
       if (originalPosSphere11.current === null) originalPosSphere11.current = sphere011.position.y;
       sphere011.position.y = (originalPosSphere11.current ?? 0) + offsetScrew3Ref.current;
+    }
+
+    // Spring
+    if (springRef.current) {
+      if (originalPosSpring.current === null) originalPosSpring.current = springRef.current.position.y;
+      const baseSpringY = state.isCoverOpen ? 6.6 : 0.0;
+      springRef.current.position.y = (originalPosSpring.current ?? 0) + baseSpringY + offsetSpringRef.current;
+    }
+
+    // JET Force 2_210
+    if (jet210Ref.current) {
+      if (originalPosJet210.current === null) originalPosJet210.current = jet210Ref.current.position.y;
+      const baseJet210Y = state.isCoverOpen ? 6.6 : 0.0;
+      jet210Ref.current.position.y = (originalPosJet210.current ?? 0) + baseJet210Y + offsetJet210Ref.current;
+    }
+
+    // JET Force 2_209
+    if (jet209Ref.current) {
+      if (originalPosJet209.current === null) originalPosJet209.current = jet209Ref.current.position.y;
+      const baseJet209Y = state.isCoverOpen ? 6.6 : 0.0;
+      jet209Ref.current.position.y = (originalPosJet209.current ?? 0) + baseJet209Y + offsetJet209Ref.current;
     }
   });
 
