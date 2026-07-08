@@ -5,66 +5,80 @@ import { Layers, Power, Scale, Play, RefreshCw, AlertTriangle, Monitor } from 'l
 const STEPS: StepDefinition[] = [
   {
     id: 0,
-    nameEn: "Step 0: Unscrew Upper Plate",
-    nameAr: "الخطوة 0: فك اللوحة العلوية",
-    descEn: "Press the upper plate of the cylinder tank in the 3D scene to unscrew and open it.",
-    descAr: "اضغط على اللوحة العلوية لأسطوانة الخزان في المشهد ثلاثي الأبعاد لفكها وفتح الغطاء."
+    nameEn: "",
+    nameAr: "",
+    descEn: "",
+    descAr: ""
   },
   {
     id: 1,
-    nameEn: "Step 1: Install Deflector",
-    nameAr: "الخطوة 1: تثبيت العاكس",
-    descEn: "Select a deflector shape to mount on the central rod (Flat Plate, Cup, or 120° Cone). You can use the buttons below or click the rod.",
-    descAr: "اختر شكل العاكس المراد تثبيته على القضيب المركزي (لوح مسطح، كوب، أو مخروط 120 درجة). يمكنك استخدام الأزرار أدناه أو النقر فوق القضيب."
+    nameEn: "Step 1: Unscrew Upper Plate",
+    nameAr: "الخطوة 1: فك اللوحة العلوية",
+    descEn: "Press the upper plate to unscrew it.",
+    descAr: "اضغط على اللوحة العلوية لفكها."
   },
   {
     id: 2,
-    nameEn: "Step 2: Screw Tank Cover",
-    nameAr: "الخطوة 2: إغلاق غطاء الخزان",
-    descEn: "Press the tank plate cover again in the 3D scene to screw and mount it back securely to the cylinder tank.",
-    descAr: "اضغط على غطاء اللوحة مرة أخرى في المشهد ثلاثي الأبعاد لربطه وتثبيته بإحكام على الخزان الأسطواني."
+    nameEn: "Step 2: Install Deflector",
+    nameAr: "الخطوة 2: تثبيت العاكس",
+    descEn: "Click on the deflector to install it in the rod.",
+    descAr: "انقر على موجه التدفق لتثبيته في القضيب."
   },
   {
     id: 3,
-    nameEn: "Step 3: Power Switch",
-    nameAr: "الخطوة 3: تشغيل الطاقة",
-    descEn: "Click the main power switch on the console to turn on the water pump.",
-    descAr: "انقر على مفتاح التشغيل الرئيسي في وحدة التحكم لتشغيل مضخة المياه."
+    nameEn: "Step 3: Screw Tank Cover",
+    nameAr: "الخطوة 3: إغلاق غطاء الخزان",
+    descEn: "Press the plate again to mount it to the tank.",
+    descAr: "اضغط على اللوحة مرة أخرى لتثبيتها في الخزان."
   },
   {
     id: 4,
-    nameEn: "Step 4: Adjust Volumetric Valve",
-    nameAr: "الخطوة 4: صمام التدفق الحجمي",
-    descEn: "Slightly open the flow control valve to control the flow rate. Open it to 20% (n = 0.2) using the slider below or clicking the valve.",
-    descAr: "افتح صمام التحكم في التدفق قليلاً للتحكم في معدل التدفق. افتحه بنسبة 20% (n = 0.2) باستخدام المنزلق أدناه أو النقر على الصمام."
+    nameEn: "Step 4: Power Switch",
+    nameAr: "الخطوة 4: تشغيل الطاقة",
+    descEn: "Turn on the power switch of the unit.",
+    descAr: "قم بتشغيل مفتاح الطاقة للوحدة."
   },
   {
     id: 5,
-    nameEn: "Step 5: Load Weights & Balance (Row 1)",
-    nameAr: "الخطوة 5: إضافة أوزان وموازنة المؤشر",
-    descEn: "Notice the jet pushing the deflector upward. Load weights (50g, 100g) on the top tray to push it back down until the pointer aligns to the zero mark (balanced). Click 'Record Data' once balanced.",
-    descAr: "لاحظ أن نفاث الماء يدفع العاكس لأعلى. أضف أوزاناً (50 غ، 100 غ) على الصينية العلوية لدفعها لأسفل حتى يتطابق المؤشر مع علامة الصفر (متوازن). اضغط على 'تسجيل القراءة' عند الموازنة."
+    nameEn: "Step 5: Volumetric Valve",
+    nameAr: "الخطوة 5: صمام التحكم الحجمي",
+    descEn: "Slightly open the Volumetric control valve of the unit.",
+    descAr: "افتح صمام التحكم الحجمي للوحدة قليلاً."
   },
   {
     id: 6,
-    nameEn: "Step 6: Increase Flow Rate",
-    nameAr: "الخطوة 6: زيادة تدفق المياه",
-    descEn: "Increase the opening of the flow control valve to 40% (n = 0.4) to increase the jet velocity and lift force.",
-    descAr: "زد فتحة صمام التحكم في التدفق إلى 40% (n = 0.4) لزيادة سرعة التدفق وقوة الدفع."
+    nameEn: "Step 6: Adjust Flow Valve",
+    nameAr: "الخطوة 6: صمام التحكم في التدفق",
+    descEn: "Slightly open the flow control valve of the unit to control the flow rate.",
+    descAr: "افتح صمام التحكم في التدفق للوحدة قليلاً للتحكم في معدل التدفق."
   },
   {
     id: 7,
-    nameEn: "Step 7: Balance (Row 2)",
-    nameAr: "الخطوة 7: موازنة المؤشر مرة أخرى",
-    descEn: "Add more weights on the pan to balance the pointer tip at zero again (target ideal mass). Click 'Record Data' once balanced.",
-    descAr: "أضف المزيد من الأوزان على الصينية لموازنة طرف المؤشر عند الصفر مرة أخرى (الكتلة المثالية المستهدفة). اضغط على 'تسجيل القراءة' عند الموازنة."
+    nameEn: "Step 7: Load Weights & Balance (Row 1)",
+    nameAr: "الخطوة 7: إضافة أوزان وموازنة المؤشر",
+    descEn: "Add weights to balance the weight base with the Pointer tip.",
+    descAr: "أضف أوزاناً لموازنة قاعدة الأوزان مع طرف المؤشر."
   },
   {
     id: 8,
-    nameEn: "Step 8: View Software Monitor",
-    nameAr: "الخطوة 8: عرض شاشة المراقبة",
-    descEn: "The lab measurements are complete! Click the 'Open Monitor' button below to review your computational charts and table values.",
-    descAr: "تم الانتهاء من قراءات التجربة! اضغط على زر 'فتح الشاشة' أدناه لمراجعة الرسومات البيانية وجدول النتائج الرياضية للتجربة."
+    nameEn: "Step 8: Increase Flow Rate",
+    nameAr: "الخطوة 8: زيادة تدفق المياه",
+    descEn: "Increase the opening of the flow control valve.",
+    descAr: "قم بزيادة فتحة صمام التحكم في التدفق."
+  },
+  {
+    id: 9,
+    nameEn: "Step 9: Balance (Row 2)",
+    nameAr: "الخطوة 9: موازنة المؤشر مرة أخرى",
+    descEn: "Add weights to balance the weight base with the Pointer tip.",
+    descAr: "أضف أوزاناً لموازنة قاعدة الأوزان مع طرف المؤشر."
+  },
+  {
+    id: 10,
+    nameEn: "Step 10: View Software Monitor",
+    nameAr: "الخطوة 10: عرض شاشة المراقبة",
+    descEn: "Switch to the software monitor.",
+    descAr: "انتقل إلى شاشة برنامج المراقبة."
   }
 ];
 
@@ -80,6 +94,7 @@ interface UIOverlayProps {
   onToggleMonitor: () => void;
   onReset: () => void;
   clearWarning: () => void;
+  onOkClick: () => void;
 }
 
 export const UIOverlay: React.FC<UIOverlayProps> = ({
@@ -93,7 +108,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onRecordRow,
   onToggleMonitor,
   onReset,
-  clearWarning
+  clearWarning,
+  onOkClick
 }) => {
   const [showVideo, setShowVideo] = useState<boolean>(false);
 
@@ -156,12 +172,36 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           <p className="step-desc">
             {isAr ? activeStep.descAr : activeStep.descEn}
           </p>
+
+          {/* Render OK Button for confirmed conditions */}
+          {((currentStep === 2 && selectedDeflectorId !== undefined) ||
+            (currentStep === 5 && state.isVolumetricValveOpen) ||
+            (currentStep === 6 && valveOpening >= 0.18) ||
+            (currentStep === 7 && state.recordedRows[1]?.balanced) ||
+            (currentStep === 8 && valveOpening >= 0.38) ||
+            (currentStep === 9 && state.recordedRows[2]?.balanced) ||
+            (currentStep === 10)) && (
+            <button
+              className="btn-primary interactive ok-confirm-btn"
+              onClick={onOkClick}
+              style={{
+                marginTop: '12px',
+                width: '100%',
+                background: 'var(--accent-blue)',
+                color: '#030d10',
+                fontWeight: 'bold',
+                boxShadow: '0 0 12px rgba(0, 229, 255, 0.4)'
+              }}
+            >
+              {isAr ? 'موافق' : 'OK'}
+            </button>
+          )}
         </div>
 
         {/* Step-specific controls */}
         <div className="menu-content-wrapper" style={{ flex: 1 }}>
-          {/* Step 1: Deflector selection */}
-          {currentStep === 1 && (
+          {/* Step 2: Deflector selection */}
+          {currentStep === 2 && (
             <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-blue)' }}>
                 {isAr ? 'اختر العاكس المائي:' : 'Select Deflector:'}
@@ -184,8 +224,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             </div>
           )}
 
-          {/* Step 3: Power Switch control */}
-          {currentStep === 3 && (
+          {/* Step 4: Power Switch control */}
+          {currentStep === 4 && (
             <button
               className={`btn-primary interactive`}
               onClick={onTogglePower}
@@ -201,11 +241,32 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             </button>
           )}
 
-          {/* Step 4, 6, 5, 7: Valve adjust */}
-          {(currentStep >= 4 && currentStep <= 7) && (
+          {/* Step 5: Volumetric Valve control */}
+          {currentStep === 5 && (
+            <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--accent-blue)' }}>
+                {isAr ? 'انقر على صمام التصريف المائي بالأسفل لفتحه:' : 'Click the volumetric drain valve below to open:'}
+              </span>
+              <button
+                className="btn-secondary"
+                onClick={onOkClick}
+                style={{
+                  background: state.isVolumetricValveOpen ? 'rgba(0, 229, 255, 0.12)' : 'transparent',
+                  borderColor: state.isVolumetricValveOpen ? 'var(--accent-blue)' : 'rgba(255,255,255,0.1)'
+                }}
+              >
+                {state.isVolumetricValveOpen 
+                  ? (isAr ? 'الصمام مفتوح (انقر OK للاستمرار)' : 'Valve Open (Click OK to continue)')
+                  : (isAr ? 'محاكاة فتح الصمام الحجمي' : 'Simulate Opening Volumetric Valve')}
+              </button>
+            </div>
+          )}
+
+          {/* Step 6, 8: Valve adjust */}
+          {(currentStep === 6 || currentStep === 8) && (
             <div className="glass-card valve-slider-container">
               <div className="slider-label">
-                <span>{isAr ? 'مستوى صمام التدفق (n):' : 'Volumetric Valve (n):'}</span>
+                <span>{isAr ? 'صمام التحكم في التدفق (n):' : 'Flow Control Valve (n):'}</span>
                 <span className="slider-val">{(valveOpening * 100).toFixed(0)}%</span>
               </div>
               <input
@@ -224,8 +285,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             </div>
           )}
 
-          {/* Step 5, 7: Balance weights control */}
-          {(currentStep === 5 || currentStep === 7) && (
+          {/* Step 7, 9: Balance weights control */}
+          {(currentStep === 7 || currentStep === 9) && (
             <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
                 <span>{isAr ? 'الوزن المضاف للموازنة:' : 'Added Balancing Weights:'}</span>
@@ -245,30 +306,21 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               </button>
 
               {/* Status pointer balanced indicators */}
-              {state.recordedRows[currentStep === 5 ? 1 : 2] && (
-                <div className={`indicator-card ${state.recordedRows[currentStep === 5 ? 1 : 2].balanced ? 'indicator-balanced' : 'indicator-unbalanced'}`}>
+              {state.recordedRows[currentStep === 7 ? 1 : 2] && (
+                <div className={`indicator-card ${state.recordedRows[currentStep === 7 ? 1 : 2].balanced ? 'indicator-balanced' : 'indicator-unbalanced'}`}>
                   <Scale size={16} />
                   <span>
-                    {state.recordedRows[currentStep === 5 ? 1 : 2].balanced
+                    {state.recordedRows[currentStep === 7 ? 1 : 2].balanced
                       ? (isAr ? 'المؤشر متوازن تماماً!' : 'Pointer balanced!')
-                      : (isAr ? `غير متوازن (الهدف التقريبي: ${state.recordedRows[currentStep === 5 ? 1 : 2].idealMass.toFixed(0)} غ)` : `Unbalanced (Target: ~${state.recordedRows[currentStep === 5 ? 1 : 2].idealMass.toFixed(0)}g)`)}
+                      : (isAr ? `غير متوازن (الهدف التقريبي: ${state.recordedRows[currentStep === 7 ? 1 : 2].idealMass.toFixed(0)} غ)` : `Unbalanced (Target: ~${state.recordedRows[currentStep === 7 ? 1 : 2].idealMass.toFixed(0)}g)`)}
                   </span>
                 </div>
               )}
-
-              <button
-                className="btn-primary"
-                onClick={onRecordRow}
-                disabled={state.recordedRows[currentStep === 5 ? 1 : 2] ? !state.recordedRows[currentStep === 5 ? 1 : 2].balanced : true}
-              >
-                <Play size={16} />
-                {isAr ? 'تسجيل قراءة الجدول' : 'Record Data Row'}
-              </button>
             </div>
           )}
 
-          {/* Step 8: Open Monitor button */}
-          {currentStep === 8 && (
+          {/* Step 10: Open Monitor button */}
+          {currentStep === 10 && (
             <button className="btn-primary" onClick={onToggleMonitor} style={{ background: 'var(--success-green)' }}>
               <Monitor size={16} />
               {isAr ? 'فتح شاشة البيانات (Monitor)' : 'Open Data Monitor'}

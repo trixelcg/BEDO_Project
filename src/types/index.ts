@@ -42,6 +42,7 @@ export interface SimulationState {
   valveOpening: number; // 0 to 1
   loadedWeights: number[]; // Array of weights currently on pan (e.g. [50, 100])
   pointerOffset: number; // deviation from zero mark (mm)
+  isVolumetricValveOpen: boolean; // volumetric valve open state
   recordedRows: RecordRow[];
   currentRecordIndex: number;
   showMonitor: boolean;

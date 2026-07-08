@@ -12,6 +12,7 @@ interface Scene3DProps {
   onDeflectorClick: () => void;
   onPowerClick: () => void;
   onValveClick: () => void;
+  onVolumetricValveClick: () => void;
   onWeightPanClick: () => void;
 }
 
@@ -74,6 +75,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onDeflectorClick,
   onPowerClick,
   onValveClick,
+  onVolumetricValveClick,
   onWeightPanClick
 }) => {
   return (
@@ -131,6 +133,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onDeflectorClick={onDeflectorClick}
             onPowerClick={onPowerClick}
             onValveClick={onValveClick}
+            onVolumetricValveClick={onVolumetricValveClick}
             onWeightPanClick={onWeightPanClick}
             position={sceneConfig.characterPosition}
             rotation={[

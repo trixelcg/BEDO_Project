@@ -12,7 +12,7 @@ const DEFAULT_ROWS = [0.0, 0.2, 0.4, 0.6];
 export default function App() {
   // Application State
   const [state, setState] = useState<SimulationState>({
-    currentStep: 0,
+    currentStep: 1,
     language: 'en',
     selectedDeflectorId: 0, // 0 = Flat, 5 = Cup, 2 = Cone
     isCoverOpen: false,
@@ -20,6 +20,7 @@ export default function App() {
     valveOpening: 0.0,
     loadedWeights: [],
     pointerOffset: 0.0,
+    isVolumetricValveOpen: false,
     recordedRows: [],
     currentRecordIndex: 0,
     showMonitor: false,
@@ -150,7 +151,7 @@ export default function App() {
     const updatedRows = DEFAULT_ROWS.map((n, idx) => {
       // For rows that represent steps the user is actively working on, load active weights
       const isCurrentActiveRow =
-        (state.currentStep === 5 && idx === 1) || (state.currentStep === 7 && idx === 2);
+        (state.currentStep === 7 && idx === 1) || (state.currentStep === 9 && idx === 2);
       
       const weightsForThisRow = isCurrentActiveRow
         ? state.loadedWeights
@@ -181,7 +182,7 @@ export default function App() {
     }));
   };
 
-  // 1. Click Tank Cover / Upper Plate (Steps 0, 2)
+  // 1. Click Tank Cover / Upper Plate (Steps 1, 3)
   const handleCoverClick = () => {
     clearWarning();
     
@@ -207,10 +208,10 @@ export default function App() {
 
     setState((prev) => {
       let nextStep = prev.currentStep;
-      if (prev.currentStep === 0 && nextCoverState === true) {
-        nextStep = 1; // Advance to select deflector
-      } else if (prev.currentStep === 2 && nextCoverState === false) {
-        nextStep = 3; // Advance to turn on power
+      if (prev.currentStep === 1 && nextCoverState === true) {
+        nextStep = 2; // Advance to select deflector
+      } else if (prev.currentStep === 3 && nextCoverState === false) {
+        nextStep = 4; // Advance to turn on power
       }
 
       return {
@@ -221,27 +222,26 @@ export default function App() {
     });
   };
 
-  // 2. Select Deflector Shape (Step 1)
+  // 2. Select Deflector Shape (Step 2)
   const handleSelectDeflector = (id: number) => {
     clearWarning();
-    if (state.currentStep !== 1) return;
+    if (state.currentStep !== 2) return;
 
     setState((prev) => ({
       ...prev,
       selectedDeflectorId: id,
-      currentStep: 2, // Advance to screw cover
     }));
   };
 
   const handleDeflectorClick = () => {
     clearWarning();
-    if (state.currentStep === 1) {
+    if (state.currentStep === 2) {
       // Default to Flat plate if clicked in 3D
       handleSelectDeflector(0);
     }
   };
 
-  // 3. Toggle Power Switch (Step 3)
+  // 3. Toggle Power Switch (Step 4)
   const handleTogglePower = () => {
     clearWarning();
 
@@ -258,8 +258,8 @@ export default function App() {
 
     setState((prev) => {
       let nextStep = prev.currentStep;
-      if (prev.currentStep === 3 && nextPowerState === true) {
-        nextStep = 4; // Advance to open valve
+      if (prev.currentStep === 4 && nextPowerState === true) {
+        nextStep = 5; // Advance to Volumetric Valve
       }
 
       return {
@@ -272,7 +272,17 @@ export default function App() {
     });
   };
 
-  // 4. Slide Valve knob (Steps 4, 6)
+  // 3b. Toggle Volumetric Valve (Step 5)
+  const handleToggleVolumetricValve = () => {
+    clearWarning();
+    if (state.currentStep !== 5) return;
+    setState((prev) => ({
+      ...prev,
+      isVolumetricValveOpen: !prev.isVolumetricValveOpen,
+    }));
+  };
+
+  // 4. Slide Valve knob (Steps 6, 8)
   const handleSetValve = (val: number) => {
     clearWarning();
     
@@ -289,15 +299,9 @@ export default function App() {
       let nextStep = prev.currentStep;
       let targetRecordIdx = prev.currentRecordIndex;
 
-      if (prev.currentStep === 4 && val >= 0.18) {
-        // slightly opened (n=0.20)
-        nextStep = 5; // Advance to balance weights
-        targetRecordIdx = 1;
+      if (prev.currentStep === 6 && val >= 0.18) {
         val = 0.20; // Snap to target 0.2
-      } else if (prev.currentStep === 6 && val >= 0.38) {
-        // increased opening (n=0.40)
-        nextStep = 7; // Advance to balance weights 2
-        targetRecordIdx = 2;
+      } else if (prev.currentStep === 8 && val >= 0.38) {
         val = 0.40; // Snap to target 0.4
       }
 
@@ -310,7 +314,7 @@ export default function App() {
     });
   };
 
-  // 5. Add / Clear weights (Steps 5, 7)
+  // 5. Add / Clear weights (Steps 7, 9)
   const handleAddWeight = (weight: number) => {
     clearWarning();
 
@@ -337,27 +341,53 @@ export default function App() {
     }));
   };
 
-  const handleRecordRow = () => {
+  // OK Button Confirm Handler to advance steps
+  const handleStepOkClick = () => {
     clearWarning();
-    
     setState((prev) => {
       let nextStep = prev.currentStep;
       let nextRecordIdx = prev.currentRecordIndex;
 
-      // Lock current values and advance step
-      if (prev.currentStep === 5) {
-        nextStep = 6; // Go to increase flow rate
-        nextRecordIdx = 2;
+      if (prev.currentStep === 2) {
+        nextStep = 3; // Go to screw cover back on
+      } else if (prev.currentStep === 5) {
+        if (!prev.isVolumetricValveOpen) {
+          // Auto-open if user clicks OK without clicking valve first
+          prev.isVolumetricValveOpen = true;
+        }
+        nextStep = 6; // Go to adjust flow control valve
+      } else if (prev.currentStep === 6) {
+        if (prev.valveOpening < 0.18) {
+          // Ensure valve is opened
+          prev.valveOpening = 0.20;
+        }
+        nextStep = 7; // Go to balance weights
+        nextRecordIdx = 1;
       } else if (prev.currentStep === 7) {
-        nextStep = 8; // Completed all runs! Go to view monitor
+        // Record data row 1 and advance to increase flow rate
+        nextStep = 8;
+        nextRecordIdx = 2;
+      } else if (prev.currentStep === 8) {
+        if (prev.valveOpening < 0.38) {
+          prev.valveOpening = 0.40;
+        }
+        nextStep = 9; // Go to balance weights (2nd run)
+      } else if (prev.currentStep === 9) {
+        // Record data row 2 and advance to switch to monitor
+        nextStep = 10;
         nextRecordIdx = 3;
+      } else if (prev.currentStep === 10) {
+        return {
+          ...prev,
+          showMonitor: true
+        };
       }
 
       return {
         ...prev,
         currentStep: nextStep,
         currentRecordIndex: nextRecordIdx,
-        loadedWeights: [], // clear for next row
+        loadedWeights: (prev.currentStep === 7 || prev.currentStep === 9) ? [] : prev.loadedWeights, // clear loaded weights for next row
       };
     });
   };
@@ -375,7 +405,7 @@ export default function App() {
   const handleReset = () => {
     clearWarning();
     setState({
-      currentStep: 0,
+      currentStep: 1,
       language: state.language, // preserve language choice
       selectedDeflectorId: 0,
       isCoverOpen: false,
@@ -383,6 +413,7 @@ export default function App() {
       valveOpening: 0.0,
       loadedWeights: [],
       pointerOffset: 0.0,
+      isVolumetricValveOpen: false,
       recordedRows: [],
       currentRecordIndex: 0,
       showMonitor: false,
@@ -413,7 +444,8 @@ export default function App() {
         onCoverClick={handleCoverClick}
         onDeflectorClick={handleDeflectorClick}
         onPowerClick={handleTogglePower}
-        onValveClick={() => handleSetValve(state.currentStep === 4 ? 0.20 : 0.40)}
+        onValveClick={() => handleSetValve(state.currentStep === 6 ? 0.20 : 0.40)}
+        onVolumetricValveClick={handleToggleVolumetricValve}
         onWeightPanClick={() => handleAddWeight(50)}
       />
 
@@ -462,6 +494,7 @@ export default function App() {
         onToggleMonitor={handleToggleMonitor}
         onReset={handleReset}
         clearWarning={clearWarning}
+        onOkClick={handleStepOkClick}
       />
 
       {/* Fullscreen data analyzer overlay */}

@@ -10,6 +10,7 @@ interface DeviceModelProps {
   onDeflectorClick: () => void;
   onPowerClick: () => void;
   onValveClick: () => void;
+  onVolumetricValveClick: () => void;
   onWeightPanClick: () => void;
   position: [number, number, number];
   rotation: [number, number, number];
@@ -26,6 +27,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onDeflectorClick,
   onPowerClick,
   onValveClick,
+  onVolumetricValveClick,
   onWeightPanClick,
   position,
   rotation,
@@ -58,6 +60,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const apparatusGroupRef = useRef<THREE.Group>(null);
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
+  const volumetricValveRef = useRef<THREE.Object3D>(null);
 
   // Upper Plate and screw references / animation state refs
   const cylinder005Ref = useRef<THREE.Mesh>(null);
@@ -203,6 +206,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       switchRef.current = scene.getObjectByName('c pump_066'); // pump switch
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
       cylinder005Ref.current = (scene.getObjectByName('Cylinder005') || scene.getObjectByName('Upper_Plate')) as THREE.Mesh;
+      volumetricValveRef.current = scene.getObjectByName('Cold_Tab_002_Baked');
     }
   }, [scene]);
 
@@ -218,7 +222,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // 0. Guide highlight flicker/pulse effect for Upper_Plate
     if (cylinder005Ref.current && cylinder005Ref.current.material) {
       const mat = cylinder005Ref.current.material as any;
-      const shouldHighlight = (state.currentStep === 0 && !state.isCoverOpen) || isCylinderHovered;
+      const shouldHighlight = (state.currentStep === 1 && !state.isCoverOpen) || isCylinderHovered;
       if (shouldHighlight) {
         mat.color.set('#00a2ff');
         mat.emissive.set('#002266');
@@ -236,10 +240,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       }
     }
 
-    // 1. Valve knob rotation (Step 4 & 6)
+    // 1. Valve knob rotation (Step 6 & 8)
     if (valveRef.current) {
       const targetRotZ = state.valveOpening * Math.PI * 3.0; // spin as opened
       valveRef.current.rotation.z = THREE.MathUtils.lerp(valveRef.current.rotation.z, targetRotZ, delta * 5);
+    }
+
+    // 1b. Volumetric Valve rotation (Step 5)
+    if (volumetricValveRef.current) {
+      const targetRotZ = state.isVolumetricValveOpen ? -Math.PI * 0.5 : 0.0;
+      volumetricValveRef.current.rotation.z = THREE.MathUtils.lerp(volumetricValveRef.current.rotation.z, targetRotZ, delta * 5);
     }
 
     // 2. Power switch animation (Step 3)
@@ -484,6 +494,42 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     document.body.style.cursor = 'default';
   };
 
+  // Dynamic arrow position and target based on step
+  let arrowPos: [number, number, number] | null = null;
+  if (!state.showMonitor) {
+    if (state.currentStep === 1 && !state.isCoverOpen) {
+      // Step 1: Upper Plate cover
+      arrowPos = [0, 1.9, 0];
+    } else if (state.currentStep === 2 && state.selectedDeflectorId === 0) {
+      // Step 2: Deflector on table (Flat Plate tray area)
+      arrowPos = [0.45, 0.35, 0.45];
+    } else if (state.currentStep === 3 && state.isCoverOpen) {
+      // Step 3: Close Upper Plate cover
+      arrowPos = [0, 2.1, 0];
+    } else if (state.currentStep === 4 && !state.isPowerOn) {
+      // Step 4: Power Switch
+      arrowPos = [0.3, 0.45, 0.5];
+    } else if (state.currentStep === 5 && !state.isVolumetricValveOpen) {
+      // Step 5: Volumetric Valve
+      arrowPos = [-0.173, 0.35, 0.72];
+    } else if (state.currentStep === 6 && state.valveOpening < 0.18) {
+      // Step 6: Adjust Flow Valve
+      arrowPos = [-0.4, 0.4, 0.45];
+    } else if (state.currentStep === 7 && !state.recordedRows[1]?.balanced) {
+      // Step 7: Load weights/balance (Row 1)
+      arrowPos = [0, 1.85, 0]; // Point to weight pan
+    } else if (state.currentStep === 8 && state.valveOpening < 0.38) {
+      // Step 8: Increase Flow Rate
+      arrowPos = [-0.4, 0.4, 0.45];
+    } else if (state.currentStep === 9 && !state.recordedRows[2]?.balanced) {
+      // Step 9: Balance weights (2nd run)
+      arrowPos = [0, 1.85, 0]; // Point to weight pan
+    } else if (state.currentStep === 10) {
+      // Step 10: Switch to Software Monitor
+      arrowPos = [0.8, 0.9, -0.6];
+    }
+  }
+
   return (
     <group ref={apparatusGroupRef} position={position} rotation={rotation} scale={scale}>
       {/* 3D Model primitive */}
@@ -530,18 +576,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         <primitive object={water45.scene} />
       </group>
 
-      {/* 3D Arrow pointing to the Upper Plate during Step 0 (Unscrew Upper Plate) */}
-      {state.currentStep === 0 && !state.isCoverOpen && (
-        <group ref={arrowGroupRef}>
+      {/* Dynamic 3D Arrow pointing to active items at each step */}
+      {arrowPos && (
+        <group ref={arrowGroupRef} position={arrowPos}>
           {/* Arrow Shaft */}
-          <mesh position={[0, 1.9, 0]}>
-            <cylinderGeometry args={[0.015, 0.015, 0.25, 16]} />
-            <meshStandardMaterial color="#00e5ff" emissive="#00e5ff" emissiveIntensity={1.5} />
+          <mesh position={[0, 0.15, 0]}>
+            <cylinderGeometry args={[0.012, 0.012, 0.16, 16]} />
+            <meshStandardMaterial color="#FFD700" emissive="#FFD700" emissiveIntensity={1.2} />
           </mesh>
           {/* Arrow Head */}
-          <mesh position={[0, 1.75, 0]} rotation={[Math.PI, 0, 0]}>
-            <coneGeometry args={[0.04, 0.08, 16]} />
-            <meshStandardMaterial color="#00e5ff" emissive="#00e5ff" emissiveIntensity={1.5} />
+          <mesh position={[0, 0.05, 0]} rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[0.03, 0.06, 16]} />
+            <meshStandardMaterial color="#FFD700" emissive="#FFD700" emissiveIntensity={1.2} />
           </mesh>
         </group>
       )}
@@ -569,7 +615,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         <cylinderGeometry args={[0.2, 0.2, 0.4, 16]} />
       </mesh>
 
-      {/* 3. Valve knob click area */}
+      {/* 3. Flow control valve knob click area */}
       <mesh
         position={[-0.4, 0.15, 0.45]}
         rotation={[Math.PI * 0.5, 0, 0]}
@@ -577,6 +623,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onValveClick(); }}
+      >
+        <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
+      </mesh>
+
+      {/* 3b. Volumetric valve knob click area */}
+      <mesh
+        position={[-0.173, 0.15, 0.72]}
+        rotation={[Math.PI * 0.5, 0, 0]}
+        visible={false}
+        onPointerOver={handlePointerOver}
+        onPointerOut={handlePointerOut}
+        onClick={(e) => { e.stopPropagation(); onVolumetricValveClick(); }}
       >
         <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
       </mesh>
