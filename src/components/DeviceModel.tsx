@@ -380,9 +380,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (animTimeRef.current > 1.2) {
         offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.22, delta * 5);
       }
-      // Stage 4: Upper_Plate moves up by 0.15 units (~0.3m) after 1.8s
+      // Stage 4: Upper_Plate moves up by 0.232 units (~0.5m) after 1.8s
       if (animTimeRef.current > 1.8) {
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.15, delta * 5);
+        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.232, delta * 5);
       }
 
       // Finish sequence and toggle parent cover state to open (at 2.5s)
@@ -420,8 +420,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     // Apply animation offsets
     if (upperPlate) {
-      // When open, the base height is lifted by 0.35. During animation, offset is added.
-      const basePlateY = state.isCoverOpen ? 0.35 : 0.0;
+      // When open, the base height is lifted by 0.232 (which is 0.5m in local space).
+      const basePlateY = state.isCoverOpen ? 0.232 : 0.0;
       upperPlate.position.y = basePlateY + offsetUpperPlateRef.current;
     }
 
