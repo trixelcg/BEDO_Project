@@ -89,7 +89,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           }
 
           // Apply glass transparency to the outer shield cylinder with dynamic slider adjustments
-          if (child.name.toLowerCase().includes('cylinder001') || child.name.toLowerCase().includes('cylinder005')) {
+          if (
+            child.name.toLowerCase().includes('cylinder001') || 
+            child.name.toLowerCase().includes('cylinder005') ||
+            child.name.toLowerCase().includes('upper_plate')
+          ) {
             child.material = new THREE.MeshPhysicalMaterial({
               color: '#ffffff',
               transparent: true,
@@ -199,7 +203,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       valveRef.current = scene.getObjectByName('Valve') || scene.getObjectByName('Cold_Tab_001_Baked'); // valve knob
       switchRef.current = scene.getObjectByName('c pump_066'); // pump switch
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
-      cylinder005Ref.current = scene.getObjectByName('Cylinder005') as THREE.Mesh;
+      cylinder005Ref.current = (scene.getObjectByName('Cylinder005') || scene.getObjectByName('Upper_Plate')) as THREE.Mesh;
     }
   }, [scene]);
 
