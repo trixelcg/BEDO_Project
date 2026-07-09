@@ -184,7 +184,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const deflectorNames = [
         'Deflector 90', 'Deflector 180', 'Deflector 120', 'Deflector 45',
         'Deflector 130', 'Deflector Cone 30', 'Deflector Cone 60',
-        'Flat_surface_deflector_90', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_120', 'Oblique_surface_deflector_45'
+        'Flat_surface_deflector_90', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_120', 'Oblique_surface_deflector_45',
+        'Flat_surface_deflector_90_base', 'Hemi_sphere_deflector_180_base', 'Hemi_sphere_deflector_120_base', 'Oblique_surface_deflector_45_base'
       ];
       
       deflectorNames.forEach((name) => {
@@ -197,10 +198,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
       // Show active selection
       let activeNames: string[] = [];
-      if (state.selectedDeflectorId === 0) activeNames = ['Deflector 90', 'Flat_surface_deflector_90'];
-      if (state.selectedDeflectorId === 5) activeNames = ['Deflector 180', 'Hemi_sphere_deflector_180'];
-      if (state.selectedDeflectorId === 2) activeNames = ['Deflector 120', 'Hemi_sphere_deflector_120'];
-      if (state.selectedDeflectorId === 4) activeNames = ['Deflector 45', 'Oblique_surface_deflector_45'];
+      if (state.selectedDeflectorId === 0) activeNames = ['Deflector 90', 'Flat_surface_deflector_90', 'Flat_surface_deflector_90_base'];
+      if (state.selectedDeflectorId === 5) activeNames = ['Deflector 180', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_180_base'];
+      if (state.selectedDeflectorId === 2) activeNames = ['Deflector 120', 'Hemi_sphere_deflector_120', 'Hemi_sphere_deflector_120_base'];
+      if (state.selectedDeflectorId === 4) activeNames = ['Deflector 45', 'Oblique_surface_deflector_45', 'Oblique_surface_deflector_45_base'];
 
       activeNames.forEach((name) => {
         const activeObj = scene.getObjectByName(name);
