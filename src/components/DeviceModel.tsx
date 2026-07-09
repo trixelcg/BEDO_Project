@@ -95,6 +95,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const originalPosJet209 = useRef<number | null>(null);
   const originalPosScrews = useRef<number | null>(null);
   const originalPosActiveDeflector = useRef<number | null>(null);
+  const arrowPosRef = useRef<[number, number, number] | null>(null);
 
   // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
   const tempNozzlePos = useRef(new THREE.Vector3()).current;
@@ -269,8 +270,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const mat = cylinder005Ref.current.material as any;
       const shouldHighlight = (state.currentStep === 1 && !state.isCoverOpen) || isCylinderHovered;
       if (shouldHighlight) {
-        mat.color.set('#f58220');
-        mat.emissive.set('#551a00');
+        mat.color.set('#00a2ff');
+        mat.emissive.set('#002266');
         
         // Emissive flicker/pulse math
         const time = _threeState.clock.getElapsedTime();
@@ -425,9 +426,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       }
     }
 
-    // 5. Animate pointing guide arrow bobbing
-    if (arrowGroupRef.current) {
-      arrowGroupRef.current.position.y = Math.sin(_threeState.clock.getElapsedTime() * 5.0) * 0.06;
+    // 5. Animate pointing guide arrow bobbing relative to target Y position
+    if (arrowGroupRef.current && arrowPosRef.current) {
+      arrowGroupRef.current.position.y = arrowPosRef.current[1] + Math.sin(_threeState.clock.getElapsedTime() * 5.0) * 0.06;
     }
 
     // 6. Click-triggered sequential animation loop for Upper_Plate click
@@ -446,9 +447,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (animTimeRef.current > 1.2) {
         offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.308, delta * 5);
       }
-      // Stage 4: Upper_Plate moves up by 0.232 units (~0.5m) after 1.8s
+      // Stage 4: Upper_Plate moves up by 0.1856 units (~0.4m) after 1.8s
       if (animTimeRef.current > 1.8) {
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.232, delta * 5);
+        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.1856, delta * 5);
       }
       // Stage 5: spring, deflector_rod, and active deflector move up by 0.286 units (~0.65m) after 1.8s
       if (animTimeRef.current > 1.8) {
@@ -501,8 +502,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (originalPosUpperPlate.current === null) {
         originalPosUpperPlate.current = upperPlate.position.y;
       }
-      // When open, the base height is lifted by 0.232 (which is 0.5m in local space).
-      const basePlateY = state.isCoverOpen ? 0.232 : 0.0;
+      // When open, the base height is lifted by 0.1856 (which is 0.4m in local space).
+      const basePlateY = state.isCoverOpen ? 0.1856 : 0.0;
       upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
     }
 
@@ -619,6 +620,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       arrowPos = [0.8, 0.9, -0.6];
     }
   }
+  arrowPosRef.current = arrowPos;
 
   return (
     <group ref={apparatusGroupRef} position={position} rotation={rotation} scale={scale}>
