@@ -150,7 +150,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             <p className="logo-subtitle">{isAr ? 'قياس قوة نفث الماء' : 'Measurement of Jet Forces'}</p>
           </div>
           <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-            <button className="lang-btn" style={{ background: 'rgba(255,193,7,0.12)', borderColor: 'rgba(255,193,7,0.4)', color: '#ffc107', fontSize: '10px', padding: '4px 8px' }} onClick={() => setShowVideo(true)}>
+            <button className="lang-btn" style={{ background: 'rgba(245,130,32,0.12)', borderColor: 'rgba(245,130,32,0.4)', color: '#f58220', fontSize: '10px', padding: '4px 8px' }} onClick={() => setShowVideo(true)}>
               {isAr ? 'فيديو توضيحي' : 'Help Video'}
             </button>
             <button className="lang-btn" style={{ fontSize: '10px', padding: '4px 8px' }} onClick={() => onSelectLanguage(language === 'en' ? 'ar' : 'en')}>
@@ -185,10 +185,10 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               style={{
                 marginTop: '12px',
                 width: '100%',
-                background: 'var(--accent-blue)',
-                color: '#030d10',
+                background: '#f58220',
+                color: '#fff',
                 fontWeight: 'bold',
-                boxShadow: '0 0 12px rgba(0, 229, 255, 0.4)'
+                boxShadow: '0 0 12px rgba(245, 130, 32, 0.4)'
               }}
             >
               {isAr ? 'موافق' : 'OK'}
@@ -201,7 +201,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           {/* Step 2: Deflector selection */}
           {currentStep === 2 && (
             <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent-blue)' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, color: '#f58220' }}>
                 {isAr ? 'اختر العاكس المائي:' : 'Select Deflector:'}
               </span>
               {deflectors.map((def) => (
@@ -211,9 +211,9 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                   onClick={() => onSelectDeflector(def.id)}
                   style={{
                     justifyContent: 'flex-start',
-                    borderColor: selectedDeflectorId === def.id ? 'var(--accent-blue)' : 'rgba(255,255,255,0.08)',
-                    background: selectedDeflectorId === def.id ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
-                    color: selectedDeflectorId === def.id ? 'var(--accent-blue)' : '#fff'
+                    borderColor: selectedDeflectorId === def.id ? '#f58220' : 'rgba(255,255,255,0.08)',
+                    background: selectedDeflectorId === def.id ? 'rgba(245, 130, 32, 0.08)' : 'transparent',
+                    color: selectedDeflectorId === def.id ? '#f58220' : '#fff'
                   }}
                 >
                   {isAr ? def.nameAr : def.nameEn}
@@ -229,7 +229,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               onClick={onTogglePower}
               style={{
                 background: isPowerOn ? 'var(--danger-red)' : 'var(--accent-blue)',
-                color: isPowerOn ? '#fff' : '#030d10'
+                color: isPowerOn ? '#fff' : '#141517'
               }}
             >
               <Power size={16} />
@@ -249,7 +249,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 className="btn-secondary"
                 onClick={onOkClick}
                 style={{
-                  background: state.isVolumetricValveOpen ? 'rgba(0, 229, 255, 0.12)' : 'transparent',
+                  background: state.isVolumetricValveOpen ? 'rgba(245, 130, 32, 0.12)' : 'transparent',
                   borderColor: state.isVolumetricValveOpen ? 'var(--accent-blue)' : 'rgba(255,255,255,0.1)'
                 }}
               >
@@ -353,7 +353,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 
       {/* Embedded video player modal overlay */}
       {showVideo && (
-        <div className="monitor-fullscreen" style={{ zIndex: 1000, background: 'rgba(2, 9, 11, 0.96)', backdropFilter: 'blur(20px)', padding: '24px' }}>
+        <div className="monitor-fullscreen" style={{ zIndex: 1000, background: 'rgba(20, 21, 23, 0.98)', backdropFilter: 'blur(20px)', padding: '24px' }}>
           <div className="monitor-header" style={{ marginBottom: '16px', paddingBottom: '16px' }}>
             <div className="monitor-title-group">
               <h1>{isAr ? 'فيديو توضيحي للتجربة' : 'Experiment Walkthrough Video'}</h1>

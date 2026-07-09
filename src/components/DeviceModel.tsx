@@ -241,8 +241,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const mat = cylinder005Ref.current.material as any;
       const shouldHighlight = (state.currentStep === 1 && !state.isCoverOpen) || isCylinderHovered;
       if (shouldHighlight) {
-        mat.color.set('#00a2ff');
-        mat.emissive.set('#002266');
+        mat.color.set('#f58220');
+        mat.emissive.set('#551a00');
         
         // Emissive flicker/pulse math
         const time = _threeState.clock.getElapsedTime();
@@ -644,12 +644,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           {/* Arrow Shaft */}
           <mesh position={[0, 0.15, 0]}>
             <cylinderGeometry args={[0.012, 0.012, 0.16, 16]} />
-            <meshStandardMaterial color="#FFD700" emissive="#FFD700" emissiveIntensity={1.2} />
+            <meshStandardMaterial color="#f58220" emissive="#ff9100" emissiveIntensity={1.2} />
           </mesh>
           {/* Arrow Head */}
           <mesh position={[0, 0.05, 0]} rotation={[Math.PI, 0, 0]}>
             <coneGeometry args={[0.03, 0.06, 16]} />
-            <meshStandardMaterial color="#FFD700" emissive="#FFD700" emissiveIntensity={1.2} />
+            <meshStandardMaterial color="#f58220" emissive="#ff9100" emissiveIntensity={1.2} />
           </mesh>
         </group>
       )}

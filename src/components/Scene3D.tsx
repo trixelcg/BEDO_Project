@@ -63,7 +63,7 @@ const ModelLoadingPlaceholder: React.FC = () => {
   return (
     <mesh position={[0, 0.2, 0]}>
       <boxGeometry args={[0.5, 0.5, 0.5]} />
-      <meshStandardMaterial color="#00e5ff" wireframe />
+      <meshStandardMaterial color="#f58220" wireframe />
     </mesh>
   );
 };
@@ -111,10 +111,10 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         />
 
         {/* 2. Fill Light (Soften harsh shadows from key light) */}
-        <directionalLight position={[-5, 5, -5]} intensity={0.3 * (2.0 - sceneConfig.contrast)} color="#00e5ff" />
+        <directionalLight position={[-5, 5, -5]} intensity={0.3 * (2.0 - sceneConfig.contrast)} color="#f58220" />
 
         {/* 3. Rim Light (Back illumination to pop object outlines) */}
-        <directionalLight position={[0, 6, -6]} intensity={0.4 * sceneConfig.contrast} color="#ffc107" />
+        <directionalLight position={[0, 6, -6]} intensity={0.4 * sceneConfig.contrast} color="#ff9100" />
 
         {/* Soft grounding contact shadows under the laboratory bench */}
         <ContactShadows
