@@ -139,14 +139,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             child.material.envMapIntensity = reflection;
           }
 
-          // Apply water shader look to LIQUID001 (keep hidden since we use realistic meshes now)
-          if (child.name === 'LIQUID001') {
+          // Ensure all scene meshes are visible by default (forces hidden GLB meshes like Bing Sink and static weight meshes to show)
+          const isInstalledDeflector = child.name.includes('.001') && (
+            child.name.toLowerCase().includes('deflector') || 
+            child.name.toLowerCase().includes('conical')
+          );
+          
+          if (child.name === 'LIQUID001' || isInstalledDeflector) {
             child.visible = false;
-          }
-
-          // Hide static weights inside the model initially to avoid clutter
-          if (child.name.includes('Weight_')) {
-            child.visible = false;
+          } else {
+            child.visible = true;
           }
         }
       });
