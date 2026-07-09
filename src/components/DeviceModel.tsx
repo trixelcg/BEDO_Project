@@ -690,75 +690,85 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       {/* 1. Tank Cover plate click area */}
       <mesh
         position={[0, 1.5, 0]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onCoverClick(); }}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (state.isCoverOpen) {
+            onCoverClick();
+            animActiveRef.current = false;
+          } else {
+            if (!animActiveRef.current) {
+              animActiveRef.current = true;
+              animTimeRef.current = 0;
+            }
+          }
+        }}
       >
         <cylinderGeometry args={[0.3, 0.3, 0.08, 16]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 2. Deflector / Central Rod area */}
       <mesh
         position={[0, 0.9, 0]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onDeflectorClick(); }}
       >
         <cylinderGeometry args={[0.2, 0.2, 0.4, 16]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 3. Flow control valve knob click area */}
       <mesh
         position={[-0.4, 0.15, 0.45]}
         rotation={[Math.PI * 0.5, 0, 0]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onValveClick(); }}
       >
         <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 3b. Volumetric valve knob click area */}
       <mesh
         position={[-0.173, 0.15, 0.72]}
         rotation={[Math.PI * 0.5, 0, 0]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onVolumetricValveClick(); }}
       >
         <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 4. Power switch click area */}
       <mesh
         position={[0.3, 0.2, 0.5]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onPowerClick(); }}
       >
         <boxGeometry args={[0.06, 0.08, 0.08]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 5. Weight Pan (Weights tray) click area */}
       <mesh
         position={[0, 1.62, 0]}
-        visible={false}
         onPointerOver={handlePointerOver}
         onPointerOut={handlePointerOut}
         onClick={(e) => { e.stopPropagation(); onWeightPanClick(); }}
       >
         <cylinderGeometry args={[0.16, 0.16, 0.03, 16]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
 
       {/* 6. Cylinder005 click/hover intercept zone */}
       <mesh
         position={[0, 0.85, 0]}
-        visible={false}
         onPointerOver={(e) => { e.stopPropagation(); handlePointerOver(e); setIsCylinderHovered(true); }}
         onPointerOut={() => { handlePointerOut(); setIsCylinderHovered(false); }}
         onClick={(e) => {
@@ -775,6 +785,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }}
       >
         <cylinderGeometry args={[0.28, 0.28, 0.9, 16]} />
+        <meshBasicMaterial visible={false} />
       </mesh>
     </group>
   );
