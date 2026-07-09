@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { Language, StepDefinition, SimulationState } from '../types/index';
-import { Layers, Power, Scale, Play, RefreshCw, AlertTriangle, Monitor } from 'lucide-react';
+import { Layers, Power, Scale, RefreshCw, AlertTriangle, Monitor } from 'lucide-react';
 
 const STEPS: StepDefinition[] = [
   {
@@ -90,7 +90,6 @@ interface UIOverlayProps {
   onAddWeight: (weight: number) => void;
   onClearWeights: () => void;
   onTogglePower: () => void;
-  onRecordRow: () => void;
   onToggleMonitor: () => void;
   onReset: () => void;
   clearWarning: () => void;
@@ -105,7 +104,6 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onAddWeight,
   onClearWeights,
   onTogglePower,
-  onRecordRow,
   onToggleMonitor,
   onReset,
   clearWarning,

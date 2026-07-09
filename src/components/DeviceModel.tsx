@@ -473,6 +473,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
     }
 
+    // Screws (Merged mesh in new GLB)
+    if (screwsRef.current) {
+      if (originalPosScrews.current === null) {
+        originalPosScrews.current = screwsRef.current.position.y;
+      }
+      screwsRef.current.position.y = (originalPosScrews.current ?? 0) + offsetScrew1Ref.current;
+    }
+
     // Screw 1 GRP
     if (cylinder006) {
       if (originalPos006.current === null) originalPos006.current = cylinder006.position.y;

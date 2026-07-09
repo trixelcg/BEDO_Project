@@ -490,7 +490,6 @@ export default function App() {
         onAddWeight={handleAddWeight}
         onClearWeights={handleClearWeights}
         onTogglePower={handleTogglePower}
-        onRecordRow={handleRecordRow}
         onToggleMonitor={handleToggleMonitor}
         onReset={handleReset}
         clearWarning={clearWarning}
