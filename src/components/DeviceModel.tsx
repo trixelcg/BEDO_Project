@@ -38,7 +38,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   glassIor
 }) => {
   // Load GLB model from public folder
-  const { scene, nodes } = useGLTF('/Bedo_baked_integration.glb') as any;
+  const { scene, nodes } = useGLTF('/Bedo_baked.glb') as any;
 
   // Load water shapes
   const waterLow = useGLTF('/WaterShapes/Water_low.glb') as any;
@@ -64,6 +64,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const springRef = useRef<THREE.Object3D>(null);
   const jet210Ref = useRef<THREE.Object3D>(null);
   const jet209Ref = useRef<THREE.Object3D>(null);
+  const screwsRef = useRef<THREE.Object3D>(null);
 
   // Upper Plate and screw references / animation state refs
   const cylinder005Ref = useRef<THREE.Mesh>(null);
@@ -92,6 +93,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const originalPosSpring = useRef<number | null>(null);
   const originalPosJet210 = useRef<number | null>(null);
   const originalPosJet209 = useRef<number | null>(null);
+  const originalPosScrews = useRef<number | null>(null);
 
   // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
   const tempNozzlePos = useRef(new THREE.Vector3()).current;
@@ -180,7 +182,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (scene) {
       const deflectorNames = [
         'Deflector 90', 'Deflector 180', 'Deflector 120', 'Deflector 45',
-        'Deflector 130', 'Deflector Cone 30', 'Deflector Cone 60'
+        'Deflector 130', 'Deflector Cone 30', 'Deflector Cone 60',
+        'Flat_surface_deflector_90', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_120', 'Oblique_surface_deflector_45'
       ];
       
       deflectorNames.forEach((name) => {
@@ -192,16 +195,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       });
 
       // Show active selection
-      let activeName = '';
-      if (state.selectedDeflectorId === 0) activeName = 'Deflector 90';
-      if (state.selectedDeflectorId === 5) activeName = 'Deflector 180';
-      if (state.selectedDeflectorId === 2) activeName = 'Deflector 120';
-      if (state.selectedDeflectorId === 4) activeName = 'Deflector 45';
+      let activeNames: string[] = [];
+      if (state.selectedDeflectorId === 0) activeNames = ['Deflector 90', 'Flat_surface_deflector_90'];
+      if (state.selectedDeflectorId === 5) activeNames = ['Deflector 180', 'Hemi_sphere_deflector_180'];
+      if (state.selectedDeflectorId === 2) activeNames = ['Deflector 120', 'Hemi_sphere_deflector_120'];
+      if (state.selectedDeflectorId === 4) activeNames = ['Deflector 45', 'Oblique_surface_deflector_45'];
 
-      if (activeName) {
-        const activeObj = scene.getObjectByName(activeName);
+      activeNames.forEach((name) => {
+        const activeObj = scene.getObjectByName(name);
         if (activeObj) activeObj.visible = true;
-      }
+      });
     }
   }, [scene, state.selectedDeflectorId]);
 
@@ -216,9 +219,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
       cylinder005Ref.current = (scene.getObjectByName('Cylinder005') || scene.getObjectByName('Upper_Plate')) as THREE.Mesh;
       volumetricValveRef.current = scene.getObjectByName('Cold_Tab_002_Baked');
-      springRef.current = scene.getObjectByName('spring');
-      jet210Ref.current = scene.getObjectByName('JET Force 2_210');
-      jet209Ref.current = scene.getObjectByName('JET Force 2_209');
+      springRef.current = scene.getObjectByName('deflector_spring') || scene.getObjectByName('spring');
+      jet210Ref.current = scene.getObjectByName('deflector_rod') || scene.getObjectByName('JET Force 2_210');
+      jet209Ref.current = scene.getObjectByName('deflector_rod') || scene.getObjectByName('JET Force 2_209');
+      screwsRef.current = scene.getObjectByName('Screws');
     }
   }, [scene]);
 
