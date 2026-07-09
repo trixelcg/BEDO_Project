@@ -38,7 +38,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   glassIor
 }) => {
   // Load GLB model from public folder
-  const { scene, nodes } = useGLTF('/Bedo_baked.glb') as any;
+  const { scene, nodes } = useGLTF('/Bedo_baked_v2.glb') as any;
 
   // Load water shapes
   const waterLow = useGLTF('/WaterShapes/Water_low.glb') as any;
