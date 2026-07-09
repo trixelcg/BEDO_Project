@@ -508,49 +508,50 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // Screws (Merged mesh in new GLB)
+    const baseScrewsY = state.isCoverOpen ? 0.308 : 0.0;
     if (screwsRef.current) {
       if (originalPosScrews.current === null) {
         originalPosScrews.current = screwsRef.current.position.y;
       }
-      screwsRef.current.position.y = (originalPosScrews.current ?? 0) + offsetScrew1Ref.current;
+      screwsRef.current.position.y = (originalPosScrews.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
     }
 
     // Screw 1 GRP
     if (cylinder006) {
       if (originalPos006.current === null) originalPos006.current = cylinder006.position.y;
-      cylinder006.position.y = (originalPos006.current ?? 0) + offsetScrew1Ref.current;
+      cylinder006.position.y = (originalPos006.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
     }
     if (object019) {
       if (originalPos019.current === null) originalPos019.current = object019.position.y;
-      object019.position.y = (originalPos019.current ?? 0) + offsetScrew1Ref.current;
+      object019.position.y = (originalPos019.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
     }
 
     // Screw 2 GRP
     if (cylinder008) {
       if (originalPos008.current === null) originalPos008.current = cylinder008.position.y;
-      cylinder008.position.y = (originalPos008.current ?? 0) + offsetScrew2Ref.current;
+      cylinder008.position.y = (originalPos008.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
     }
     if (object020) {
       if (originalPos020.current === null) originalPos020.current = object020.position.y;
-      object020.position.y = (originalPos020.current ?? 0) + offsetScrew2Ref.current;
+      object020.position.y = (originalPos020.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
     }
     if (sphere010) {
       if (originalPosSphere.current === null) originalPosSphere.current = sphere010.position.y;
-      sphere010.position.y = (originalPosSphere.current ?? 0) + offsetScrew2Ref.current;
+      sphere010.position.y = (originalPosSphere.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
     }
 
     // Screw 3 GRP
     if (cylinder010) {
       if (originalPos010.current === null) originalPos010.current = cylinder010.position.y;
-      cylinder010.position.y = (originalPos010.current ?? 0) + offsetScrew3Ref.current;
+      cylinder010.position.y = (originalPos010.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
     }
     if (object021) {
       if (originalPos021.current === null) originalPos021.current = object021.position.y;
-      object021.position.y = (originalPos021.current ?? 0) + offsetScrew3Ref.current;
+      object021.position.y = (originalPos021.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
     }
     if (sphere011) {
       if (originalPosSphere11.current === null) originalPosSphere11.current = sphere011.position.y;
-      sphere011.position.y = (originalPosSphere11.current ?? 0) + offsetScrew3Ref.current;
+      sphere011.position.y = (originalPosSphere11.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
     }
 
     // Spring
@@ -589,14 +590,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   let arrowPos: [number, number, number] | null = null;
   if (!state.showMonitor) {
     if (state.currentStep === 1 && !state.isCoverOpen) {
-      // Step 1: Upper Plate cover
-      arrowPos = [0, 1.9, 0];
+      // Step 1: Upper Plate cover (directly over top surface)
+      arrowPos = [0, 1.58, 0];
     } else if (state.currentStep === 2 && state.selectedDeflectorId === 0) {
       // Step 2: Deflector on table (Flat Plate tray area)
       arrowPos = [0.45, 0.35, 0.45];
     } else if (state.currentStep === 3 && state.isCoverOpen) {
-      // Step 3: Close Upper Plate cover
-      arrowPos = [0, 2.1, 0];
+      // Step 3: Close Upper Plate cover (directly over open cover)
+      arrowPos = [0, 1.75, 0];
     } else if (state.currentStep === 4 && !state.isPowerOn) {
       // Step 4: Power Switch
       arrowPos = [0.3, 0.45, 0.5];
