@@ -178,37 +178,61 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
 
 
-  // Control visibility of individual deflector meshes inside model based on state
+  // Control visibility of individual deflector meshes based on state
   useEffect(() => {
     if (scene) {
-      const deflectorNames = [
-        'Deflector 90', 'Deflector 180', 'Deflector 120', 'Deflector 45',
-        'Deflector 130', 'Deflector Cone 30', 'Deflector Cone 60',
-        'Flat_surface_deflector_90', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_120', 'Oblique_surface_deflector_45',
-        'Flat_surface_deflector_90_base', 'Hemi_sphere_deflector_180_base', 'Hemi_sphere_deflector_120_base', 'Oblique_surface_deflector_45_base'
-      ];
-      
-      deflectorNames.forEach((name) => {
+      const shelfDeflectors = {
+        0: ['Flat_surface_deflector_90_base', 'Flat_surface_deflector_90', 'Deflector 90'],
+        5: ['Hemi_sphere_deflector_180_base', 'Hemi_sphere_deflector_180', 'Deflector 180'],
+        2: ['Hemi_sphere_deflector_120_base', 'Hemi_sphere_deflector_120', 'Deflector 120'],
+        4: ['Oblique_surface_deflector_45_base', 'Oblique_surface_deflector_45', 'Deflector 45']
+      };
+
+      const installedDeflectors = {
+        0: ['Flat_surface_deflector_90.001'],
+        5: ['Hemi_sphere_deflector_180.001'],
+        2: ['Hemi_sphere_deflector_120.001', 'Cone_surface_deflector_30.001'],
+        4: ['Oblique_surface_deflector_45.001']
+      };
+
+      // Hide all installed deflectors inside the tank first
+      Object.values(installedDeflectors).flat().forEach((name) => {
         const obj = scene.getObjectByName(name);
-        if (obj) {
-          obj.visible = false;
-          obj.position.y = 0; // Reset displacement on switch
+        if (obj) obj.visible = false;
+      });
+
+      // Handle Step 0 & 1 (Initial Setup)
+      if (state.currentStep < 2) {
+        // All shelf deflectors are visible
+        Object.values(shelfDeflectors).flat().forEach((name) => {
+          const obj = scene.getObjectByName(name);
+          if (obj) obj.visible = true;
+        });
+      } else {
+        // Step >= 2: Deflector selected/installed
+        const hasSelection = state.selectedDeflectorId !== undefined;
+        
+        // Shelf deflectors: show all except the selected one (which is installed)
+        Object.entries(shelfDeflectors).forEach(([idStr, names]) => {
+          const id = parseInt(idStr, 10);
+          const isSelected = hasSelection && state.selectedDeflectorId === id;
+          names.forEach((name) => {
+            const obj = scene.getObjectByName(name);
+            if (obj) obj.visible = !isSelected;
+          });
+        });
+
+        // Installed deflector: show only the selected one
+        if (hasSelection) {
+          const activeInstalledNames = installedDeflectors[state.selectedDeflectorId as keyof typeof installedDeflectors] || [];
+          activeInstalledNames.forEach((name) => {
+            const obj = scene.getObjectByName(name);
+            if (obj) obj.visible = true;
+          });
         }
-      });
-
-      // Show active selection
-      let activeNames: string[] = [];
-      if (state.selectedDeflectorId === 0) activeNames = ['Deflector 90', 'Flat_surface_deflector_90', 'Flat_surface_deflector_90_base'];
-      if (state.selectedDeflectorId === 5) activeNames = ['Deflector 180', 'Hemi_sphere_deflector_180', 'Hemi_sphere_deflector_180_base'];
-      if (state.selectedDeflectorId === 2) activeNames = ['Deflector 120', 'Hemi_sphere_deflector_120', 'Hemi_sphere_deflector_120_base'];
-      if (state.selectedDeflectorId === 4) activeNames = ['Deflector 45', 'Oblique_surface_deflector_45', 'Oblique_surface_deflector_45_base'];
-
-      activeNames.forEach((name) => {
-        const activeObj = scene.getObjectByName(name);
-        if (activeObj) activeObj.visible = true;
-      });
+      }
     }
-  }, [scene, state.selectedDeflectorId]);
+  }, [scene, state.currentStep, state.selectedDeflectorId]);
 
   // Map references once nodes are loaded
   useEffect(() => {
@@ -229,11 +253,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [scene]);
 
   // Dynamic weights geometries cloned from nodes
-  const weightGeometry50 = nodes['Weight_50 gm']?.geometry;
-  const weightGeometry100 = nodes['Weight_100 gm']?.geometry;
-  const weightGeometry200 = nodes['Weight_200 gm']?.geometry;
-  const weightGeometry500 = nodes['Weight_500 gm']?.geometry;
-  const weightMat = nodes['Weight_50 gm']?.material || new THREE.MeshStandardMaterial({ color: '#78909c', roughness: 0.5 });
+  const weightGeometry50 = nodes['Weight_50']?.geometry || nodes['Weight_50 gm']?.geometry;
+  const weightGeometry100 = nodes['Weight_100']?.geometry || nodes['Weight_100 gm']?.geometry;
+  const weightGeometry200 = nodes['Weight_200']?.geometry || nodes['Weight_200 gm']?.geometry;
+  const weightGeometry500 = nodes['Weight_500']?.geometry || nodes['Weight_500 gm']?.geometry;
+  const weightGeometryCustom = nodes['Weight_Custom']?.geometry;
+  const weightMat = nodes['Weight_50']?.material || nodes['Weight_50 gm']?.material || new THREE.MeshStandardMaterial({ color: '#78909c', roughness: 0.5 });
 
   // Physics animation tick
   useFrame((_threeState: any, delta: number) => {
@@ -610,8 +635,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           {state.loadedWeights.map((w, idx) => {
             let geom = weightGeometry50;
             if (w === 100) geom = weightGeometry100;
-            if (w === 200) geom = weightGeometry200;
-            if (w === 500) geom = weightGeometry500;
+            else if (w === 200) geom = weightGeometry200;
+            else if (w === 500) geom = weightGeometry500;
+            else if (w !== 50 && w > 0) geom = weightGeometryCustom || weightGeometry50;
 
             const yPos = idx * 0.04; // Stack weights vertically
 
