@@ -1,6 +1,13 @@
 import React, { useState } from 'react';
 import type { Language, StepDefinition, SimulationState } from '../types/index';
 import { Layers, Power, Scale, RefreshCw, AlertTriangle, Monitor } from 'lucide-react';
+import { DEFLECTORS, WEIGHTS } from '../lib/apparatus';
+import {
+  FIRST_READING_VALVE,
+  SECOND_READING_VALVE,
+  VALVE_SNAP_MARGIN,
+  flowRateLMin,
+} from '../lib/physics';
 
 const STEPS: StepDefinition[] = [
   {
@@ -90,6 +97,7 @@ interface UIOverlayProps {
   onAddWeight: (weight: number) => void;
   onClearWeights: () => void;
   onTogglePower: () => void;
+  onToggleVolumetricValve: () => void;
   onToggleMonitor: () => void;
   onReset: () => void;
   clearWarning: () => void;
@@ -104,6 +112,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onAddWeight,
   onClearWeights,
   onTogglePower,
+  onToggleVolumetricValve,
   onToggleMonitor,
   onReset,
   clearWarning,
@@ -115,18 +124,20 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   const isAr = language === 'ar';
   const activeStep = STEPS[currentStep] || STEPS[0];
 
-  const deflectors = [
-    { id: 0, nameEn: 'Flat Plate (90°)', nameAr: 'لوحة مسطحة (90 درجة)', factor: 1.0 },
-    { id: 5, nameEn: 'Hemispherical Cup (180°)', nameAr: 'كوب نصف كروي (180 درجة)', factor: 2.0 },
-    { id: 2, nameEn: '120° Cone', nameAr: 'مخروط 120 درجة', factor: 0.5 },
-    { id: 4, nameEn: 'Oblique Plate (45°)', nameAr: 'لوح مائل (45 درجة)', factor: 0.293 },
-  ];
-
   const totalLoadedWeight = loadedWeights.reduce((a, b) => a + b, 0);
+  const correctedFlow = flowRateLMin(valveOpening);
 
-  // Compute values for HUD
-  const flowLMin = 120 * (-4.9138 * Math.pow(valveOpening, 4) + 8.8783 * Math.pow(valveOpening, 3) - 3.7629 * Math.pow(valveOpening, 2) + 0.7265 * valveOpening);
-  const correctedFlow = Math.max(0, flowLMin);
+  // The valve is open far enough to take this step's reading.
+  const valveReady =
+    (currentStep === 6 && valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
+    (currentStep === 8 && valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN);
+
+  /** Table row the current balancing step fills in. */
+  const balanceRow = currentStep === 7 ? 1 : currentStep === 9 ? 2 : null;
+  const activeRow = balanceRow !== null ? recordedRows[balanceRow] : undefined;
+
+  // Rows 1 and 2 are the two readings; a row counts once it carries weights.
+  const readingsTaken = [1, 2].filter((i) => (recordedRows[i]?.actualWeightMass ?? 0) > 0).length;
 
   return (
     <div className={`ui-container ${isAr ? 'rtl' : ''}`}>
@@ -174,10 +185,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           {/* Render OK Button for confirmed conditions */}
           {((currentStep === 2 && selectedDeflectorId !== undefined) ||
             (currentStep === 5 && state.isVolumetricValveOpen) ||
-            (currentStep === 6 && valveOpening >= 0.18) ||
-            (currentStep === 7 && state.recordedRows[1]?.balanced) ||
-            (currentStep === 8 && valveOpening >= 0.38) ||
-            (currentStep === 9 && state.recordedRows[2]?.balanced) ||
+            valveReady ||
+            (balanceRow !== null && !!activeRow?.balanced) ||
             (currentStep === 10)) && (
             <button
               className="btn-primary interactive ok-confirm-btn"
@@ -204,7 +213,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               <span style={{ fontSize: '11px', fontWeight: 600, color: '#f58220' }}>
                 {isAr ? 'اختر العاكس المائي:' : 'Select Deflector:'}
               </span>
-              {deflectors.map((def) => (
+              {DEFLECTORS.map((def) => (
                 <button
                   key={def.id}
                   className={`btn-secondary ${selectedDeflectorId === def.id ? 'active' : ''}`}
@@ -247,7 +256,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               </span>
               <button
                 className="btn-secondary"
-                onClick={onOkClick}
+                onClick={onToggleVolumetricValve}
                 style={{
                   background: state.isVolumetricValveOpen ? 'rgba(245, 130, 32, 0.12)' : 'transparent',
                   borderColor: state.isVolumetricValveOpen ? 'var(--accent-blue)' : 'rgba(255,255,255,0.1)'
@@ -292,9 +301,13 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               </div>
 
               <div className="weight-pan-grid">
-                {[50, 100, 200, 500].map((w) => (
-                  <button key={w} className="weight-add-btn" onClick={() => onAddWeight(w)}>
-                    +{w}g
+                {WEIGHTS.map((w) => (
+                  <button
+                    key={w.grams}
+                    className="weight-add-btn"
+                    onClick={() => onAddWeight(w.grams)}
+                  >
+                    +{w.grams}g
                   </button>
                 ))}
               </div>
@@ -304,13 +317,13 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               </button>
 
               {/* Status pointer balanced indicators */}
-              {state.recordedRows[currentStep === 7 ? 1 : 2] && (
-                <div className={`indicator-card ${state.recordedRows[currentStep === 7 ? 1 : 2].balanced ? 'indicator-balanced' : 'indicator-unbalanced'}`}>
+              {activeRow && (
+                <div className={`indicator-card ${activeRow.balanced ? 'indicator-balanced' : 'indicator-unbalanced'}`}>
                   <Scale size={16} />
                   <span>
-                    {state.recordedRows[currentStep === 7 ? 1 : 2].balanced
+                    {activeRow.balanced
                       ? (isAr ? 'المؤشر متوازن تماماً!' : 'Pointer balanced!')
-                      : (isAr ? `غير متوازن (الهدف التقريبي: ${state.recordedRows[currentStep === 7 ? 1 : 2].idealMass.toFixed(0)} غ)` : `Unbalanced (Target: ~${state.recordedRows[currentStep === 7 ? 1 : 2].idealMass.toFixed(0)}g)`)}
+                      : (isAr ? `غير متوازن (الهدف التقريبي: ${activeRow.idealMass.toFixed(0)} غ)` : `Unbalanced (Target: ~${activeRow.idealMass.toFixed(0)}g)`)}
                   </span>
                 </div>
               )}
@@ -338,9 +351,9 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#8fa7ad', marginBottom: '12px' }}>
-            <span>{isAr ? 'القراءات المسجلة في الجدول:' : 'Recorded Data Rows:'}</span>
-            <span style={{ color: recordedRows.length >= 3 ? 'var(--success-green)' : '#fff', fontWeight: 600 }}>
-              {recordedRows.length} / 4
+            <span>{isAr ? 'القراءات المسجلة في الجدول:' : 'Recorded Readings:'}</span>
+            <span style={{ color: readingsTaken >= 2 ? 'var(--success-green)' : '#fff', fontWeight: 600 }}>
+              {readingsTaken} / 2
             </span>
           </div>
 

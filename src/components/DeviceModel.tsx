@@ -1,17 +1,58 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { SimulationState } from '../types/index';
+import {
+  COVER_LIFT,
+  DEFAULT_ARROW_OFFSET,
+  DEFLECTORS,
+  MESH,
+  SCREW_LIFT,
+  STEP_FOCUS,
+  WATER_SHAPES,
+  WEIGHTS,
+  getDeflector,
+  gltfName,
+  type AnchorKey,
+  type Anchors,
+  type WaterShapeKey,
+} from '../lib/apparatus';
+import {
+  FIRST_READING_VALVE,
+  SECOND_READING_VALVE,
+  SPRING_RATE_N_PER_M,
+  VALVE_SNAP_MARGIN,
+  jetState,
+} from '../lib/physics';
+
+type Action =
+  | { kind: 'cover' }
+  | { kind: 'deflector'; id: number }
+  | { kind: 'weight'; grams: number }
+  | { kind: 'power' }
+  | { kind: 'flowValve' }
+  | { kind: 'volumetricValve' };
+
+/** An invisible sphere placed and sized from a real mesh, so clicks land on the part. */
+interface Hotspot {
+  key: string;
+  position: [number, number, number];
+  radius: number;
+  action: Action;
+}
 
 interface DeviceModelProps {
   state: SimulationState;
+  groupRef: React.RefObject<THREE.Group | null>;
+  anchors: Anchors;
+  onAnchors: (anchors: Anchors) => void;
   onCoverClick: () => void;
-  onDeflectorClick: () => void;
+  onSelectDeflector: (id: number) => void;
   onPowerClick: () => void;
-  onValveClick: () => void;
+  onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
-  onWeightPanClick: () => void;
+  onAddWeight: (grams: number) => void;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -23,777 +64,678 @@ interface DeviceModelProps {
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
+  groupRef,
+  anchors,
+  onAnchors,
   onCoverClick,
-  onDeflectorClick,
+  onSelectDeflector,
   onPowerClick,
-  onValveClick,
+  onFlowValveClick,
   onVolumetricValveClick,
-  onWeightPanClick,
+  onAddWeight,
   position,
   rotation,
   scale,
   reflection,
   glassSpecular,
   glassRoughness,
-  glassIor
+  glassIor,
 }) => {
-  // Load GLB model from public folder
-  const { scene, nodes } = useGLTF('/Bedo_baked_v2.glb') as any;
+  const { scene } = useGLTF('/Bedo_baked_v2.glb') as any;
 
-  // Load water shapes
-  const waterLow = useGLTF('/WaterShapes/Water_low.glb') as any;
-  const water90 = useGLTF('/WaterShapes/Water90_Flat.glb') as any;
-  const water180 = useGLTF('/WaterShapes/Water180_HemiSphere.glb') as any;
-  const water60 = useGLTF('/WaterShapes/Water60_Cone.glb') as any;
-  const water45 = useGLTF('/WaterShapes/Water45_Oblique.glb') as any;
+  const water = {
+    low: useGLTF(WATER_SHAPES.low.url) as any,
+    flat: useGLTF(WATER_SHAPES.flat.url) as any,
+    hemi: useGLTF(WATER_SHAPES.hemi.url) as any,
+    cone: useGLTF(WATER_SHAPES.cone.url) as any,
+    oblique: useGLTF(WATER_SHAPES.oblique.url) as any,
+  };
 
-  // State for Cylinder005 hover highlight
-  const [isCylinderHovered, setIsCylinderHovered] = React.useState(false);
+  const [hoveredCover, setHoveredCover] = useState(false);
+  const [hotspots, setHotspots] = useState<Hotspot[]>([]);
+  /** Nozzle exit, in the apparatus's local space. */
+  const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
 
-  // Refs for key animatable components
-  const coverRef = useRef<THREE.Object3D>(null);
-  const pointerRef = useRef<THREE.Object3D>(null);
-  const liquidRef = useRef<THREE.Mesh>(null);
-  const valveRef = useRef<THREE.Object3D>(null);
-  const switchRef = useRef<THREE.Object3D>(null);
-  const deflectorRef = useRef<THREE.Object3D>(null);
-  const apparatusGroupRef = useRef<THREE.Group>(null);
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
-  const volumetricValveRef = useRef<THREE.Object3D>(null);
-  const springRef = useRef<THREE.Object3D>(null);
-  const jet210Ref = useRef<THREE.Object3D>(null);
-  const jet209Ref = useRef<THREE.Object3D>(null);
-  const screwsRef = useRef<THREE.Object3D>(null);
+  const weightStackRef = useRef<THREE.Group>(null);
 
-  // Upper Plate and screw references / animation state refs
-  const cylinder005Ref = useRef<THREE.Mesh>(null);
-  const animTimeRef = useRef<number>(0);
-  const animActiveRef = useRef<boolean>(false);
+  // Unscrew sequence
+  const animActiveRef = useRef(false);
+  const animTimeRef = useRef(0);
+  const coverOffsetRef = useRef(0);
+  const screwOffsetRef = useRef(0);
 
-  // Animation offsets
-  const offsetScrew1Ref = useRef(0);
-  const offsetScrew2Ref = useRef(0);
-  const offsetScrew3Ref = useRef(0);
-  const offsetUpperPlateRef = useRef(0);
-  const offsetSpringRef = useRef(0);
-  const offsetJet210Ref = useRef(0);
-  const offsetJet209Ref = useRef(0);
+  /** Resting Y of each animated part, captured the first time it is touched. */
+  const restY = useRef<Record<string, number>>({});
+  const baseY = useCallback((obj: THREE.Object3D, key: string) => {
+    if (restY.current[key] === undefined) restY.current[key] = obj.position.y;
+    return restY.current[key];
+  }, []);
 
-  // Original coordinates refs to support relative offset movements
-  const originalPosUpperPlate = useRef<number | null>(null);
-  const originalPos006 = useRef<number | null>(null);
-  const originalPos019 = useRef<number | null>(null);
-  const originalPos008 = useRef<number | null>(null);
-  const originalPos020 = useRef<number | null>(null);
-  const originalPosSphere = useRef<number | null>(null);
-  const originalPos010 = useRef<number | null>(null);
-  const originalPos021 = useRef<number | null>(null);
-  const originalPosSphere11 = useRef<number | null>(null);
-  const originalPosSpring = useRef<number | null>(null);
-  const originalPosJet210 = useRef<number | null>(null);
-  const originalPosJet209 = useRef<number | null>(null);
-  const originalPosScrews = useRef<number | null>(null);
-  const originalPosActiveDeflector = useRef<number | null>(null);
-  const arrowPosRef = useRef<[number, number, number] | null>(null);
+  const tmp = useMemo(
+    () => ({
+      nozzlePos: new THREE.Vector3(),
+      defPos: new THREE.Vector3(),
+      mid: new THREE.Vector3(),
+      quat: new THREE.Quaternion(),
+      groupQuat: new THREE.Quaternion(),
+      down: new THREE.Vector3(),
+      box: new THREE.Box3(),
+      center: new THREE.Vector3(),
+      size: new THREE.Vector3(),
+    }),
+    []
+  );
 
-  // Temporary vectors/quaternions for coordinate mapping in useFrame (avoid frame allocation)
-  const tempNozzlePos = useRef(new THREE.Vector3()).current;
-  const tempDefPos = useRef(new THREE.Vector3()).current;
-  const tempMidpoint = useRef(new THREE.Vector3()).current;
-  const tempQuaternion = useRef(new THREE.Quaternion()).current;
-  const tempScale = useRef(new THREE.Vector3()).current;
+  const modelScale = scale[0] || 1;
 
-  // Initialize nodes, shadow configs, glass effects, and reflection intensities
+  /** Look a mesh up by its authored GLB name, through three's name sanitiser. */
+  const pick = useCallback(
+    (authored: string): THREE.Object3D | undefined =>
+      scene?.getObjectByName(gltfName(authored)) ?? scene?.getObjectByName(authored),
+    [scene]
+  );
+
+  // Materials, shadows, glass. LIQUID001 and the mounted deflectors start hidden;
+  // everything else is forced visible, since several parts ship hidden in the GLB.
   useEffect(() => {
-    if (scene) {
-      scene.traverse((child: any) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
+    if (!scene) return;
+    // child.name is already sanitised by the loader, so compare against sanitised names.
+    const mounted = new Set(DEFLECTORS.map((d) => gltfName(d.installed)));
+    const coverName = gltfName(MESH.tankCover);
+    const liquidName = gltfName(MESH.liquid);
 
-          // Apply reflection config to model materials
-          if (child.material) {
-            child.material.envMapIntensity = reflection;
-          }
+    scene.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      if (child.material) child.material.envMapIntensity = reflection;
 
-          // Apply glass transparency to the outer shield cylinder with dynamic slider adjustments
-          if (
-            child.name.toLowerCase().includes('cylinder001') || 
-            child.name.toLowerCase().includes('cylinder005') ||
-            child.name.toLowerCase().includes('upper_plate')
-          ) {
-            child.material = new THREE.MeshPhysicalMaterial({
-              color: '#ffffff',
-              transparent: true,
-              opacity: 1.0, // High opacity keeps reflection highlights bright
-              roughness: glassRoughness, // User-adjustable roughness
-              metalness: 0.0,
-              transmission: 0.98, // Transmit light through
-              ior: glassIor, // User-adjustable Index of Refraction
-              thickness: 1.5,
-              clearcoat: 1.0, // Highly polished outer layer
-              clearcoatRoughness: glassRoughness * 0.5,
-              specularIntensity: glassSpecular, // User-adjustable specular level
-              depthWrite: false,
-            });
-            child.material.envMapIntensity = reflection;
-          }
+      if (child.name === coverName) {
+        child.material = new THREE.MeshPhysicalMaterial({
+          color: '#ffffff',
+          transparent: true,
+          opacity: 1.0,
+          roughness: glassRoughness,
+          metalness: 0.0,
+          transmission: 0.98,
+          ior: glassIor,
+          thickness: 1.5,
+          clearcoat: 1.0,
+          clearcoatRoughness: glassRoughness * 0.5,
+          specularIntensity: glassSpecular,
+          depthWrite: false,
+        });
+        child.material.envMapIntensity = reflection;
+      }
 
-          // Ensure all scene meshes are visible by default (forces hidden GLB meshes like Bing Sink and static weight meshes to show)
-          const isInstalledDeflector = child.name.includes('.001') && (
-            child.name.toLowerCase().includes('deflector') || 
-            child.name.toLowerCase().includes('conical')
-          );
-          
-          if (child.name === 'LIQUID001' || isInstalledDeflector) {
-            child.visible = false;
-          } else {
-            child.visible = true;
-          }
-        }
-      });
-    }
+      child.visible = child.name !== liquidName && !mounted.has(child.name);
+    });
   }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
 
-  // Apply solid blue water look to the loaded water shapes so they are clearly visible
-  const waterMaterial = React.useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#0066ff', // Bright solid blue
-    transparent: false,
-    opacity: 1.0,
-    roughness: 0.3,
-    metalness: 0.1,
-  }), []);
+  const waterMaterial = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#2f7fdd',
+        transparent: true,
+        opacity: 0.85,
+        roughness: 0.15,
+        metalness: 0.0,
+      }),
+    []
+  );
 
   useEffect(() => {
-    [waterLow, water90, water180, water60, water45].forEach((gltf) => {
-      if (gltf && gltf.scene) {
-        gltf.scene.traverse((child: any) => {
+    [water.low, water.flat, water.hemi, water.cone, water.oblique].forEach((gltf: any) => {
+      gltf?.scene?.traverse((child: any) => {
+        if (child.isMesh) {
+          child.material = waterMaterial;
+          child.castShadow = false;
+          child.receiveShadow = false;
+        }
+      });
+    });
+  }, [water.low, water.flat, water.hemi, water.cone, water.oblique, waterMaterial]);
+
+  /**
+   * Each jet shape's own offset and height, measured off a detached clone.
+   *
+   * The files don't sit at their origin — Water90_Flat is parked at y = +117.9 — and
+   * two of them are rotated a quarter turn, so their listed heights were wrong. Both
+   * facts have to be cancelled out or the jet renders far above the tank at the wrong
+   * length. Cloning keeps the measurement free of whatever parent it gets mounted under.
+   */
+  const waterFit = useMemo(() => {
+    const fit = {} as Record<
+      WaterShapeKey,
+      { center: THREE.Vector3; height: number; width: number }
+    >;
+    (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
+      const source = (water as any)[key]?.scene;
+      if (!source) return;
+      const probe = source.clone(true);
+      probe.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(probe);
+      if (box.isEmpty()) return;
+      const size = box.getSize(new THREE.Vector3());
+      fit[key] = {
+        center: box.getCenter(new THREE.Vector3()),
+        height: Math.max(size.y, 1e-6),
+        width: Math.max(size.x, size.z, 1e-6),
+      };
+    });
+    return fit;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [water.low, water.flat, water.hemi, water.cone, water.oblique]);
+
+  // The chosen deflector leaves the tray and appears mounted on the rod.
+  useEffect(() => {
+    if (!scene) return;
+    DEFLECTORS.forEach((d) => {
+      const shelf = pick(d.shelf);
+      const installed = pick(d.installed);
+      const chosen = state.currentStep >= 2 && state.selectedDeflectorId === d.id;
+      if (shelf) shelf.visible = !chosen;
+      if (installed) installed.visible = chosen;
+    });
+  }, [scene, state.currentStep, state.selectedDeflectorId]);
+
+  /**
+   * Read every interactive part's real position and size back off the GLB.
+   *
+   * These were hand-typed before, and they were wrong: the pump-switch hitbox sat at
+   * (0.3, 0.2, 0.5) while the switch is really at (-0.35, 0.96, -0.42). The hotspots
+   * floated in mid-air, so clicking a control did nothing. Deriving them from the
+   * bounding boxes keeps hotspots, guide arrow and camera correct even if the model
+   * is re-exported.
+   */
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!scene || !group) return;
+    group.updateWorldMatrix(true, true);
+
+    const localBox = (names: string[]) => {
+      tmp.box.makeEmpty();
+      let found = false;
+      names.forEach((n) => {
+        const obj = pick(n);
+        if (!obj) return;
+        tmp.box.expandByObject(obj);
+        found = true;
+      });
+      return found && !tmp.box.isEmpty();
+    };
+
+    const localCenter = (names: string[]): [number, number, number] | null => {
+      if (!localBox(names)) return null;
+      tmp.box.getCenter(tmp.center);
+      const local = group.worldToLocal(tmp.center.clone());
+      return [local.x, local.y, local.z];
+    };
+
+    const trayDeflectors = DEFLECTORS.map((d) => d.shelf);
+    const trayWeights = WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!);
+
+    const nextAnchors: Anchors = {};
+    const assign = (key: AnchorKey, names: string[]) => {
+      const c = localCenter(names);
+      if (c) nextAnchors[key] = c;
+    };
+
+    assign('cover', [MESH.tankCover]);
+    assign('tray', trayDeflectors);
+    assign('pointer', [MESH.pointer]);
+    // Frame the weights and the pointer together: the student loads one while
+    // watching the other, which is how the reference video frames these steps.
+    assign('weights', [...trayWeights, MESH.pointer]);
+    assign('power', [MESH.powerSwitch]);
+    assign('flowValve', [MESH.flowValve]);
+    assign('volumetricValve', [MESH.volumetricValve]);
+    assign('overview', [MESH.tankCover, MESH.flowValve, MESH.powerSwitch, ...trayDeflectors]);
+
+    // The weight pan sits on top of the rod, so take the rod's crown rather than its
+    // centre.
+    if (localBox([MESH.rod])) {
+      tmp.box.getCenter(tmp.center);
+      const crown = group.worldToLocal(
+        new THREE.Vector3(tmp.center.x, tmp.box.max.y, tmp.center.z)
+      );
+      nextAnchors.pan = [crown.x, crown.y, crown.z];
+    }
+
+    onAnchors(nextAnchors);
+
+    // The jet leaves the nozzle's lip, not its centre.
+    if (localBox([MESH.nozzle])) {
+      tmp.box.getCenter(tmp.center);
+      const lip = group.worldToLocal(new THREE.Vector3(tmp.center.x, tmp.box.max.y, tmp.center.z));
+      setNozzleLip([lip.x, lip.y, lip.z]);
+    }
+
+    const spot = (name: string, action: Action, minRadius: number): Hotspot | null => {
+      if (!localBox([name])) return null;
+      tmp.box.getCenter(tmp.center);
+      tmp.box.getSize(tmp.size);
+      const local = group.worldToLocal(tmp.center.clone());
+      const worldRadius = Math.max(tmp.size.x, tmp.size.y, tmp.size.z) * 0.6;
+      const radius = THREE.MathUtils.clamp(worldRadius / modelScale, minRadius, 0.18);
+      return { key: name, position: [local.x, local.y, local.z], radius, action };
+    };
+
+    const list = [
+      spot(MESH.tankCover, { kind: 'cover' }, 0.08),
+      spot(MESH.powerSwitch, { kind: 'power' }, 0.04),
+      spot(MESH.flowValve, { kind: 'flowValve' }, 0.045),
+      spot(MESH.volumetricValve, { kind: 'volumetricValve' }, 0.045),
+      ...DEFLECTORS.map((d) => spot(d.shelf, { kind: 'deflector', id: d.id }, 0.022)),
+      ...WEIGHTS.filter((w) => w.mesh).map((w) =>
+        spot(w.mesh!, { kind: 'weight', grams: w.grams }, 0.022)
+      ),
+    ];
+
+    setHotspots(list.filter((h): h is Hotspot => h !== null));
+  }, [scene, groupRef, onAnchors, tmp, modelScale]);
+
+  /** Parts the current step expects the student to touch — drives the pointer cursor. */
+  const liveKeys = useMemo<Set<string>>(() => {
+    const s = state.currentStep;
+    if (state.showMonitor) return new Set();
+    if (s === 1 || s === 3) return new Set([MESH.tankCover]);
+    if (s === 2) return new Set(DEFLECTORS.map((d) => d.shelf));
+    if (s === 4) return new Set([MESH.powerSwitch]);
+    if (s === 5) return new Set([MESH.volumetricValve]);
+    if (s === 6 || s === 8) return new Set([MESH.flowValve]);
+    if (s === 7 || s === 9) return new Set(WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!));
+    return new Set();
+  }, [state.currentStep, state.showMonitor]);
+
+  /** Where the guide arrow floats — null once the step's action is done. */
+  const arrowPos = useMemo<[number, number, number] | null>(() => {
+    if (state.showMonitor) return null;
+    const step = state.currentStep;
+    const focus = STEP_FOCUS[step];
+    if (!focus) return null;
+
+    const done =
+      (step === 1 && state.isCoverOpen) ||
+      (step === 3 && !state.isCoverOpen) ||
+      (step === 4 && state.isPowerOn) ||
+      (step === 5 && state.isVolumetricValveOpen) ||
+      (step === 6 && state.valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
+      (step === 8 && state.valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) ||
+      (step === 7 && !!state.recordedRows[1]?.balanced) ||
+      (step === 9 && !!state.recordedRows[2]?.balanced) ||
+      step === 10;
+
+    const anchor = anchors[focus.anchor];
+    if (done || !anchor) return null;
+
+    const off = focus.arrowOffset ?? DEFAULT_ARROW_OFFSET;
+    return [anchor[0] + off[0], anchor[1] + off[1], anchor[2] + off[2]];
+  }, [state, anchors]);
+
+  const handleHotspot = (action: Action) => {
+    switch (action.kind) {
+      case 'cover': {
+        if (state.isCoverOpen) {
+          onCoverClick();
+          animActiveRef.current = false;
+          return;
+        }
+        // Let App raise its safety warning rather than playing an unscrew that
+        // would be rejected the moment it finishes.
+        if (state.isPowerOn || state.loadedWeights.length > 0) {
+          onCoverClick();
+          return;
+        }
+        if (!animActiveRef.current) {
+          animActiveRef.current = true;
+          animTimeRef.current = 0;
+        }
+        return;
+      }
+      case 'deflector':
+        return onSelectDeflector(action.id);
+      case 'weight':
+        return onAddWeight(action.grams);
+      case 'power':
+        return onPowerClick();
+      case 'flowValve':
+        return onFlowValveClick();
+      case 'volumetricValve':
+        return onVolumetricValveClick();
+    }
+  };
+
+  /** Local position of each interactive part, keyed by mesh name. */
+  const partPos = useMemo(
+    () => Object.fromEntries(hotspots.map((h) => [h.key, h.position])),
+    [hotspots]
+  );
+
+  /**
+   * Weights the student has loaded, as clones of the real tray objects.
+   *
+   * The GLB is baked, so a weight's geometry carries the tray's coordinates in its
+   * vertices — dropping that raw geometry into a mesh at a new position (what this
+   * did before) renders it at the wrong place and the wrong size, which is why no
+   * weights were ever visible on the pan. Cloning the object keeps its baked
+   * transform, and we shift it by the pan-minus-tray delta.
+   */
+  const stack = useMemo(() => {
+    if (!scene) return [];
+    return state.loadedWeights
+      .map((grams, idx) => {
+        const def = WEIGHTS.find((w) => w.grams === grams);
+        const meshName = def?.mesh ?? 'Weight_Custom';
+        const proto = pick(meshName);
+        if (!proto) return null;
+
+        const object = proto.clone(true);
+        object.traverse((child: any) => {
           if (child.isMesh) {
-            child.material = waterMaterial;
+            child.visible = true;
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
-      }
-    });
-  }, [waterLow, water90, water180, water60, water45, waterMaterial]);
+        return { key: `${idx}-${grams}`, object, meshName, idx };
+      })
+      .filter((w): w is { key: string; object: THREE.Object3D; meshName: string; idx: number } => w !== null);
+  }, [scene, state.loadedWeights]);
 
+  useFrame((three, rawDelta) => {
+    if (!scene) return;
+    const t = three.clock.getElapsedTime();
 
+    // Frame-rate-independent easing.
+    //
+    // Everything here used to ease with lerp(current, target, delta * rate). The moment
+    // a frame took longer than 1/rate seconds that factor went above 1, so the lerp
+    // extrapolated past its target and the value ran away — each frame overshooting
+    // further than the last. Loading a 27 MB model, or simply a weak GPU, is enough to
+    // trigger it, and the scene detonates: the deflector's Y reached 2.7e20 and the
+    // water's scale 6.8e18, which is why no jet was ever visible. damp() folds the
+    // delta into an exponential, so the blend factor can never leave [0, 1).
+    const delta = Math.min(rawDelta, 0.1);
+    const damp = (current: number, target: number, rate: number) =>
+      THREE.MathUtils.damp(current, target, rate, delta);
 
-  // Control visibility of individual deflector meshes based on state
-  useEffect(() => {
-    if (scene) {
-      const shelfDeflectors = {
-        0: ['Flat_surface_deflector_90_base', 'Flat_surface_deflector_90', 'Deflector 90'],
-        5: ['Hemi_sphere_deflector_180_base', 'Hemi_sphere_deflector_180', 'Deflector 180'],
-        2: ['Hemi_sphere_deflector_120_base', 'Hemi_sphere_deflector_120', 'Deflector 120'],
-        4: ['Oblique_surface_deflector_45_base', 'Oblique_surface_deflector_45', 'Deflector 45']
-      };
-
-      const installedDeflectors = {
-        0: ['Flat_surface_deflector_90.001'],
-        5: ['Hemi_sphere_deflector_180.001'],
-        2: ['Hemi_sphere_deflector_120.001', 'Cone_surface_deflector_30.001'],
-        4: ['Oblique_surface_deflector_45.001']
-      };
-
-      // Hide all installed deflectors inside the tank first
-      Object.values(installedDeflectors).flat().forEach((name) => {
-        const obj = scene.getObjectByName(name);
-        if (obj) obj.visible = false;
-      });
-
-      // Handle Step 0 & 1 (Initial Setup)
-      if (state.currentStep < 2) {
-        // All shelf deflectors are visible
-        Object.values(shelfDeflectors).flat().forEach((name) => {
-          const obj = scene.getObjectByName(name);
-          if (obj) obj.visible = true;
-        });
+    // --- Cover highlight ------------------------------------------------------
+    const cover = pick(MESH.tankCover) as THREE.Mesh | undefined;
+    const coverMat = cover?.material as any;
+    if (coverMat?.emissive) {
+      const invite = (state.currentStep === 1 && !state.isCoverOpen) || hoveredCover;
+      if (invite) {
+        coverMat.color.set('#9fdcff');
+        coverMat.emissive.set('#0b3f7a');
+        coverMat.emissiveIntensity = hoveredCover ? 1.2 : Math.sin(t * 6.0) * 0.25 + 0.6;
       } else {
-        // Step >= 2: Deflector selected/installed
-        const hasSelection = state.selectedDeflectorId !== undefined;
-        
-        // Shelf deflectors: show all except the selected one (which is installed)
-        Object.entries(shelfDeflectors).forEach(([idStr, names]) => {
-          const id = parseInt(idStr, 10);
-          const isSelected = hasSelection && state.selectedDeflectorId === id;
-          names.forEach((name) => {
-            const obj = scene.getObjectByName(name);
-            if (obj) obj.visible = !isSelected;
-          });
-        });
-
-        // Installed deflector: show only the selected one
-        if (hasSelection) {
-          const activeInstalledNames = installedDeflectors[state.selectedDeflectorId as keyof typeof installedDeflectors] || [];
-          activeInstalledNames.forEach((name) => {
-            const obj = scene.getObjectByName(name);
-            if (obj) obj.visible = true;
-          });
-        }
-      }
-    }
-  }, [scene, state.currentStep, state.selectedDeflectorId]);
-
-  // Map references once nodes are loaded
-  useEffect(() => {
-    if (scene) {
-      coverRef.current = scene.getObjectByName('Cylinder006'); // typical upper plate lid
-      pointerRef.current = scene.getObjectByName('Pointer'); // balancing pointer
-      liquidRef.current = scene.getObjectByName('LIQUID001'); // water jet cylinder
-      valveRef.current = scene.getObjectByName('Valve') || scene.getObjectByName('Cold_Tab_001_Baked'); // valve knob
-      switchRef.current = scene.getObjectByName('c pump_066'); // pump switch
-      deflectorRef.current = scene.getObjectByName('Cone001'); // active deflector holder
-      cylinder005Ref.current = (scene.getObjectByName('Cylinder005') || scene.getObjectByName('Upper_Plate')) as THREE.Mesh;
-      volumetricValveRef.current = scene.getObjectByName('Cold_Tab_002_Baked');
-      springRef.current = scene.getObjectByName('deflector_spring') || scene.getObjectByName('spring');
-      jet210Ref.current = scene.getObjectByName('deflector_rod') || scene.getObjectByName('JET Force 2_210');
-      jet209Ref.current = scene.getObjectByName('deflector_rod') || scene.getObjectByName('JET Force 2_209');
-      screwsRef.current = scene.getObjectByName('Screws');
-    }
-  }, [scene]);
-
-  // Dynamic weights geometries cloned from nodes
-  const weightGeometry50 = nodes['Weight_50']?.geometry || nodes['Weight_50 gm']?.geometry;
-  const weightGeometry100 = nodes['Weight_100']?.geometry || nodes['Weight_100 gm']?.geometry;
-  const weightGeometry200 = nodes['Weight_200']?.geometry || nodes['Weight_200 gm']?.geometry;
-  const weightGeometry500 = nodes['Weight_500']?.geometry || nodes['Weight_500 gm']?.geometry;
-  const weightGeometryCustom = nodes['Weight_Custom']?.geometry;
-  const weightMat = nodes['Weight_50']?.material || nodes['Weight_50 gm']?.material || new THREE.MeshStandardMaterial({ color: '#78909c', roughness: 0.5 });
-
-  // Physics animation tick
-  useFrame((_threeState: any, delta: number) => {
-    // 0. Guide highlight flicker/pulse effect for Upper_Plate
-    if (cylinder005Ref.current && cylinder005Ref.current.material) {
-      const mat = cylinder005Ref.current.material as any;
-      const shouldHighlight = (state.currentStep === 1 && !state.isCoverOpen) || isCylinderHovered;
-      if (shouldHighlight) {
-        mat.color.set('#00a2ff');
-        mat.emissive.set('#002266');
-        
-        // Emissive flicker/pulse math
-        const time = _threeState.clock.getElapsedTime();
-        const pulse = Math.sin(time * 8.0) * 0.2 + 0.6; // oscillates between 0.4 and 0.8
-        const flicker = Math.random() > 0.94 ? 0.25 : 0.0; // short 25% dips in brightness to create electric flicker
-        
-        mat.emissiveIntensity = isCylinderHovered ? 1.25 : (pulse - flicker);
-      } else {
-        mat.color.set('#ffffff');
-        mat.emissive.set('#000000');
-        mat.emissiveIntensity = 0;
+        coverMat.color.set('#ffffff');
+        coverMat.emissive.set('#000000');
+        coverMat.emissiveIntensity = 0;
       }
     }
 
-    // 1. Valve knob rotation (Step 6 & 8)
-    if (valveRef.current) {
-      const targetRotZ = state.valveOpening * Math.PI * 3.0; // spin as opened
-      valveRef.current.rotation.z = THREE.MathUtils.lerp(valveRef.current.rotation.z, targetRotZ, delta * 5);
+    // --- Unscrew / re-seat sequence -------------------------------------------
+    if (animActiveRef.current) {
+      animTimeRef.current += delta;
+      const a = animTimeRef.current;
+      if (a > 0.05) {
+        screwOffsetRef.current = damp(screwOffsetRef.current, SCREW_LIFT, 4);
+      }
+      if (a > 0.8) {
+        coverOffsetRef.current = damp(coverOffsetRef.current, COVER_LIFT, 4);
+      }
+      if (a > 2.2 && !state.isCoverOpen) {
+        animActiveRef.current = false;
+        onCoverClick();
+      }
+    } else if (state.isCoverOpen) {
+      screwOffsetRef.current = SCREW_LIFT;
+      coverOffsetRef.current = COVER_LIFT;
+    } else {
+      screwOffsetRef.current = damp(screwOffsetRef.current, 0, 6);
+      coverOffsetRef.current = damp(coverOffsetRef.current, 0, 6);
     }
 
-    // 1b. Volumetric Valve rotation (Step 5)
-    if (volumetricValveRef.current) {
-      const targetRotZ = state.isVolumetricValveOpen ? -Math.PI * 0.5 : 0.0;
-      volumetricValveRef.current.rotation.z = THREE.MathUtils.lerp(volumetricValveRef.current.rotation.z, targetRotZ, delta * 5);
+    // --- Valves, switch, lamp --------------------------------------------------
+    const flowValve = pick(MESH.flowValve);
+    if (flowValve) {
+      const target = state.valveOpening * Math.PI * 3.0;
+      flowValve.rotation.z = damp(flowValve.rotation.z, target, 5);
     }
 
-    // 2. Power switch animation (Step 3)
-    if (switchRef.current) {
-      const targetRotX = state.isPowerOn ? -0.4 : 0.4;
-      switchRef.current.rotation.x = THREE.MathUtils.lerp(switchRef.current.rotation.x, targetRotX, delta * 12);
+    const volValve = pick(MESH.volumetricValve);
+    if (volValve) {
+      const target = state.isVolumetricValveOpen ? -Math.PI * 0.5 : 0;
+      volValve.rotation.z = damp(volValve.rotation.z, target, 5);
     }
 
-    // 3. Calculate Net Force, Spring deflection, Pointer movement
-    const flowLMin = 120 * (-4.9138 * Math.pow(state.valveOpening, 4) + 8.8783 * Math.pow(state.valveOpening, 3) - 3.7629 * Math.pow(state.valveOpening, 2) + 0.7265 * state.valveOpening);
-    const flowRateQLMin = Math.max(0, flowLMin);
-    const flowRateQM3 = flowRateQLMin / 60000;
-    const theoreticalVo = flowRateQM3 / 0.0000785;
-    
-    let v2 = Math.pow(theoreticalVo, 2) - 2 * 9.81 * Math.sqrt(0.035);
-    v2 = Math.max(0, v2);
+    const powerSwitch = pick(MESH.powerSwitch);
+    if (powerSwitch) {
+      const target = state.isPowerOn ? -0.35 : 0.35;
+      powerSwitch.rotation.x = damp(powerSwitch.rotation.x, target, 12);
+    }
 
-    // Deflector force multiplier
-    let factor = 1.0;
-    if (state.selectedDeflectorId === 5) factor = 2.0; // cup
-    if (state.selectedDeflectorId === 2) factor = 0.5; // cone
-    if (state.selectedDeflectorId === 4) factor = 0.293; // oblique 45°
+    const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
+      ?.material as any;
+    if (lampMat?.emissive) {
+      lampMat.emissive.set(state.isPowerOn ? '#26ff7a' : '#000000');
+      lampMat.emissiveIntensity = state.isPowerOn ? 1.6 : 0;
+    }
 
-    // Jet force in Newtons
-    const fth = state.isPowerOn ? (factor * 1000 * 0.0000785 * v2) : 0;
-
-    // Weight force in Newtons
+    // --- Jet force, spring deflection, pointer ---------------------------------
+    const { fth } = jetState(state.valveOpening, state.selectedDeflectorId);
+    const jetForceN = state.isPowerOn && !state.isCoverOpen ? fth : 0;
     const loadedMassG = state.loadedWeights.reduce((a, b) => a + b, 0);
     const weightForceN = (loadedMassG * 9.81) / 1000;
 
-    // Net upward force
-    const netForce = fth - weightForceN;
+    // Net force on a 200 N/m spring, in metres, clamped to the pointer's travel.
+    const netForce = jetForceN - weightForceN;
+    const deflection = THREE.MathUtils.clamp(netForce / SPRING_RATE_N_PER_M, -0.06, 0.075);
 
-    // Spring deflection (200 N/m stiffness)
-    const displacementMm = netForce * 5;
-    const clampedDisplacement = THREE.MathUtils.clamp(displacementMm, -12, 15);
-
-    // Update pointer position (Scale 1mm to 0.015 units in R3F space)
-    const targetY = clampedDisplacement * 0.015;
-    if (pointerRef.current) {
-      pointerRef.current.position.y = THREE.MathUtils.lerp(pointerRef.current.position.y, targetY, delta * 10);
+    const pointer = pick(MESH.pointer);
+    if (pointer) {
+      pointer.position.y = damp(
+        pointer.position.y,
+        baseY(pointer, MESH.pointer) + coverOffsetRef.current + deflection,
+        10
+      );
     }
 
-    // Also move the active deflector mesh by the same displacement in real-time
-    let activeDef = null;
-    if (state.selectedDeflectorId === 0) activeDef = scene.getObjectByName('Flat_surface_deflector_90.001') || scene.getObjectByName('Deflector 90');
-    if (state.selectedDeflectorId === 5) activeDef = scene.getObjectByName('Hemi_sphere_deflector_180.001') || scene.getObjectByName('Deflector 180');
-    if (state.selectedDeflectorId === 2) activeDef = scene.getObjectByName('Hemi_sphere_deflector_120.001') || scene.getObjectByName('Cone_surface_deflector_30.001') || scene.getObjectByName('Deflector 120');
-    if (state.selectedDeflectorId === 4) activeDef = scene.getObjectByName('Oblique_surface_deflector_45.001') || scene.getObjectByName('Deflector 45');
+    // --- Cover assembly rises as one ------------------------------------------
+    const lift = (name: string, offset: number) => {
+      const obj = pick(name);
+      if (obj) obj.position.y = baseY(obj, name) + offset;
+    };
+    lift(MESH.tankCover, coverOffsetRef.current);
+    lift(MESH.screws, screwOffsetRef.current);
+    lift(MESH.spring, coverOffsetRef.current);
+    lift(MESH.rod, coverOffsetRef.current);
 
-    const nozzle = scene.getObjectByName('JET Force 2_214') || scene.getObjectByName('Cylinder001');
-
-    if (activeDef && scene) {
-      if (originalPosActiveDeflector.current === null) {
-        originalPosActiveDeflector.current = activeDef.position.y;
-      }
-      const baseDefY = state.isCoverOpen ? 0.286 : 0.0;
-      const totalDeflectorY = (originalPosActiveDeflector.current ?? 0) + baseDefY + offsetSpringRef.current + targetY;
-      activeDef.position.y = THREE.MathUtils.lerp(activeDef.position.y, totalDeflectorY, delta * 10);
+    const deflector = getDeflector(state.selectedDeflectorId);
+    const activeDef = pick(deflector.installed);
+    if (activeDef) {
+      activeDef.position.y = damp(
+        activeDef.position.y,
+        baseY(activeDef, deflector.installed) + coverOffsetRef.current + deflection,
+        10
+      );
     }
 
-    // 4. Dynamic Water Shape world position mapping and scaling
-    if (state.isPowerOn && state.valveOpening > 0.05 && activeDef && nozzle && waterGroupRef.current) {
-      waterGroupRef.current.visible = true;
+    // --- Water jet --------------------------------------------------------------
+    // Two things had to be true here and neither was.
+    //
+    // The jet group is a child of the apparatus, so it must be placed in the group's
+    // local space; the old code copied world positions straight in, so the group's own
+    // transform applied a second time and threw the jet clear of the tank.
+    //
+    // And because the GLB is baked, every node shares the same origin — asking the
+    // nozzle and the deflector for getWorldPosition() returned the *same* point, so
+    // the gap between them measured zero and the jet was scaled to nothing. The real
+    // positions only live in the geometry, so measure the bounding boxes instead.
+    const group = groupRef.current;
+    const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
 
-      // Read absolute world positions of target nozzle and active deflector plate
-      nozzle.getWorldPosition(tempNozzlePos);
-      activeDef.getWorldPosition(tempDefPos);
+    if (flowing && group && activeDef && nozzleLip && waterGroupRef.current) {
+      tmp.box.setFromObject(activeDef);
+      tmp.box.getCenter(tmp.defPos);
+      tmp.box.getSize(tmp.size);
+      tmp.defPos.setY(tmp.box.min.y); // the face the jet strikes
+      group.worldToLocal(tmp.defPos);
 
-      // Compute exact midpoint to position the centered water shape mesh
-      tempMidpoint.addVectors(tempNozzlePos, tempDefPos).multiplyScalar(0.5);
-      waterGroupRef.current.position.copy(tempMidpoint);
+      tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
 
-      // Copy nozzle rotation to align the jet flow axis perpendicularly
-      nozzle.getWorldQuaternion(tempQuaternion);
-      waterGroupRef.current.quaternion.copy(tempQuaternion);
+      const gap = tmp.defPos.y - tmp.nozzlePos.y;
+      /** Deflector diameter, back in the apparatus's local units. */
+      const plateWidth = Math.max(tmp.size.x, tmp.size.z) / modelScale;
 
-      // Copy nozzle scale to fit within the transparent tank shield
-      nozzle.getWorldScale(tempScale);
+      // Below a trickle the jet has no shape; above it the plume takes the form of
+      // whichever deflector is mounted.
+      const shape: WaterShapeKey = state.valveOpening > 0.22 ? deflector.water : 'low';
+      const fit = waterFit[shape];
 
-      // Determine active water shape state and its pre-measured Blender height
-      let activeWater = 'low';
-      let activeMeshHeight = 5.0833; // Water_low height
+      if (gap > 0.001 && fit) {
+        waterGroupRef.current.visible = true;
 
-      if (state.valveOpening > 0.22) {
-        if (state.selectedDeflectorId === 0) {
-          activeWater = '90';
-          activeMeshHeight = 21.9943;
-        } else if (state.selectedDeflectorId === 5) {
-          activeWater = '180';
-          activeMeshHeight = 23.4198;
-        } else if (state.selectedDeflectorId === 2) {
-          activeWater = '60';
-          activeMeshHeight = 17.0207;
-        } else if (state.selectedDeflectorId === 4) {
-          activeWater = '45';
-          activeMeshHeight = 26.1200;
+        tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
+
+        // Height spans the nozzle/deflector gap; width is driven by the plate the jet
+        // spreads across. Scaling uniformly instead (height and width from the same
+        // factor) blew the plume out to nearly three times the tank's diameter.
+        let scaleY = gap / fit.height;
+        let scaleXZ = plateWidth / fit.width;
+
+        if (shape === 'low') {
+          // A startup trickle: short, and barely wider than the nozzle.
+          const startup = Math.min(1, state.valveOpening * 4.5);
+          scaleY = (gap * startup) / fit.height;
+          scaleXZ *= 0.3;
+          tmp.mid.y -= gap * (1 - startup) * 0.5; // keep the rising jet on the nozzle
         }
-      }
 
-      // Calculate distance between nozzle and deflector, and set Y scale
-      const distance = tempNozzlePos.distanceTo(tempDefPos);
-      let scaleY = distance / activeMeshHeight;
+        waterGroupRef.current.position.copy(tmp.mid);
+        waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
 
-      // Adjust height scaling during initial low flow pump startup
-      if (activeWater === 'low') {
-        const startupFactor = Math.min(1.0, state.valveOpening * 4.5);
-        scaleY = (distance * startupFactor) / activeMeshHeight;
-
-        // Offset position downwards so the rising jet starts at the nozzle lip
-        const offsetDist = (distance * (1.0 - startupFactor)) * 0.5;
-        const downDir = new THREE.Vector3(0, -1, 0).applyQuaternion(tempQuaternion);
-        waterGroupRef.current.position.addScaledVector(downDir, offsetDist);
-      }
-
-      // Apply dynamic scale
-      waterGroupRef.current.scale.set(tempScale.x, scaleY, tempScale.z);
-
-      // Toggle mesh sub-scene visibilities
-      waterLow.scene.visible = (activeWater === 'low');
-      water90.scene.visible = (activeWater === '90');
-      water180.scene.visible = (activeWater === '180');
-      water60.scene.visible = (activeWater === '60');
-      water45.scene.visible = (activeWater === '45');
-    } else {
-      if (waterGroupRef.current) {
+        (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
+          const gltf = (water as any)[key];
+          if (gltf?.scene) gltf.scene.visible = key === shape;
+        });
+      } else {
         waterGroupRef.current.visible = false;
       }
+    } else if (waterGroupRef.current) {
+      waterGroupRef.current.visible = false;
     }
 
-    // 5. Animate pointing guide arrow bobbing relative to target Y position
-    if (arrowGroupRef.current && arrowPosRef.current) {
-      arrowGroupRef.current.position.y = arrowPosRef.current[1] + Math.sin(_threeState.clock.getElapsedTime() * 5.0) * 0.06;
+    // --- Loaded weights ride the pan --------------------------------------------
+    // Each weight is already offset onto the pan; this only follows the pan's travel.
+    if (weightStackRef.current) {
+      weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
     }
 
-    // 6. Click-triggered sequential animation loop for Upper_Plate click
-    if (animActiveRef.current) {
-      animTimeRef.current += delta;
-      
-      // Stage 1: Screw_01_GRP moves up by 0.308 units (~0.7m)
-      if (animTimeRef.current > 0.05) {
-        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 0.308, delta * 5);
-      }
-      // Stage 2: Screw_02_GRP moves up by 0.308 units (~0.7m) after 0.6s
-      if (animTimeRef.current > 0.6) {
-        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 0.308, delta * 5);
-      }
-      // Stage 3: Screw_03_GRP moves up by 0.308 units (~0.7m) after 1.2s
-      if (animTimeRef.current > 1.2) {
-        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.308, delta * 5);
-      }
-      // Stage 4: Upper_Plate moves up by 0.1856 units (~0.4m) after 1.8s
-      if (animTimeRef.current > 1.8) {
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.1856, delta * 5);
-      }
-      // Stage 5: spring, deflector_rod, and active deflector move up by 0.286 units (~0.65m) after 1.8s
-      if (animTimeRef.current > 1.8) {
-        offsetSpringRef.current = THREE.MathUtils.lerp(offsetSpringRef.current, 0.286, delta * 5);
-        offsetJet210Ref.current = THREE.MathUtils.lerp(offsetJet210Ref.current, 0.286, delta * 5);
-        offsetJet209Ref.current = THREE.MathUtils.lerp(offsetJet209Ref.current, 0.286, delta * 5);
-      }
-
-      // Finish sequence and toggle parent cover state to open (at 2.5s)
-      if (animTimeRef.current > 2.5 && !state.isCoverOpen) {
-        onCoverClick(); // Opens the plate in App state
-        animActiveRef.current = false;
-      }
-    } else {
-      // Return smoothly to resting positions if closed
-      if (!state.isCoverOpen) {
-        offsetScrew1Ref.current = THREE.MathUtils.lerp(offsetScrew1Ref.current, 0.0, delta * 8);
-        offsetScrew2Ref.current = THREE.MathUtils.lerp(offsetScrew2Ref.current, 0.0, delta * 8);
-        offsetScrew3Ref.current = THREE.MathUtils.lerp(offsetScrew3Ref.current, 0.0, delta * 8);
-        offsetUpperPlateRef.current = THREE.MathUtils.lerp(offsetUpperPlateRef.current, 0.0, delta * 8);
-        offsetSpringRef.current = THREE.MathUtils.lerp(offsetSpringRef.current, 0.0, delta * 8);
-        offsetJet210Ref.current = THREE.MathUtils.lerp(offsetJet210Ref.current, 0.0, delta * 8);
-        offsetJet209Ref.current = THREE.MathUtils.lerp(offsetJet209Ref.current, 0.0, delta * 8);
-      } else {
-        // If parent state is open, hold screws in their lifted position
-        offsetScrew1Ref.current = 0.308;
-        offsetScrew2Ref.current = 0.308;
-        offsetScrew3Ref.current = 0.308;
-        offsetSpringRef.current = 0.286;
-        offsetJet210Ref.current = 0.286;
-        offsetJet209Ref.current = 0.286;
-        // Upper Plate position is already fully opened
-        offsetUpperPlateRef.current = 0.0;
-      }
-    }
-
-    // Retrieve active components to apply offsets
-    const upperPlate = scene.getObjectByName('Upper_Plate') || scene.getObjectByName('Cylinder005');
-    const cylinder006 = scene.getObjectByName('Cylinder006'); // Screw 1 rod
-    const object019 = scene.getObjectByName('Object019'); // Screw 1 cap
-    const cylinder008 = scene.getObjectByName('Cylinder008'); // Screw 2 rod
-    const object020 = scene.getObjectByName('Object020'); // Screw 2 cap
-    const sphere010 = scene.getObjectByName('Sphere010'); // Screw 2 top sphere
-    const cylinder010 = scene.getObjectByName('Cylinder010'); // Screw 3 rod
-    const object021 = scene.getObjectByName('Object021'); // Screw 3 cap
-    const sphere011 = scene.getObjectByName('Sphere011'); // Screw 3 top sphere
-
-    // Apply animation offsets
-    if (upperPlate) {
-      if (originalPosUpperPlate.current === null) {
-        originalPosUpperPlate.current = upperPlate.position.y;
-      }
-      // When open, the base height is lifted by 0.1856 (which is 0.4m in local space).
-      const basePlateY = state.isCoverOpen ? 0.1856 : 0.0;
-      upperPlate.position.y = (originalPosUpperPlate.current ?? 0) + basePlateY + offsetUpperPlateRef.current;
-    }
-
-    // Screws (Merged mesh in new GLB)
-    const baseScrewsY = state.isCoverOpen ? 0.308 : 0.0;
-    if (screwsRef.current) {
-      if (originalPosScrews.current === null) {
-        originalPosScrews.current = screwsRef.current.position.y;
-      }
-      screwsRef.current.position.y = (originalPosScrews.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
-    }
-
-    // Screw 1 GRP
-    if (cylinder006) {
-      if (originalPos006.current === null) originalPos006.current = cylinder006.position.y;
-      cylinder006.position.y = (originalPos006.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
-    }
-    if (object019) {
-      if (originalPos019.current === null) originalPos019.current = object019.position.y;
-      object019.position.y = (originalPos019.current ?? 0) + baseScrewsY + offsetScrew1Ref.current;
-    }
-
-    // Screw 2 GRP
-    if (cylinder008) {
-      if (originalPos008.current === null) originalPos008.current = cylinder008.position.y;
-      cylinder008.position.y = (originalPos008.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
-    }
-    if (object020) {
-      if (originalPos020.current === null) originalPos020.current = object020.position.y;
-      object020.position.y = (originalPos020.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
-    }
-    if (sphere010) {
-      if (originalPosSphere.current === null) originalPosSphere.current = sphere010.position.y;
-      sphere010.position.y = (originalPosSphere.current ?? 0) + baseScrewsY + offsetScrew2Ref.current;
-    }
-
-    // Screw 3 GRP
-    if (cylinder010) {
-      if (originalPos010.current === null) originalPos010.current = cylinder010.position.y;
-      cylinder010.position.y = (originalPos010.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
-    }
-    if (object021) {
-      if (originalPos021.current === null) originalPos021.current = object021.position.y;
-      object021.position.y = (originalPos021.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
-    }
-    if (sphere011) {
-      if (originalPosSphere11.current === null) originalPosSphere11.current = sphere011.position.y;
-      sphere011.position.y = (originalPosSphere11.current ?? 0) + baseScrewsY + offsetScrew3Ref.current;
-    }
-
-    // Spring
-    if (springRef.current) {
-      if (originalPosSpring.current === null) originalPosSpring.current = springRef.current.position.y;
-      const baseSpringY = state.isCoverOpen ? 0.286 : 0.0;
-      springRef.current.position.y = (originalPosSpring.current ?? 0) + baseSpringY + offsetSpringRef.current;
-    }
-
-    // JET Force 2_210
-    if (jet210Ref.current) {
-      if (originalPosJet210.current === null) originalPosJet210.current = jet210Ref.current.position.y;
-      const baseJet210Y = state.isCoverOpen ? 0.286 : 0.0;
-      jet210Ref.current.position.y = (originalPosJet210.current ?? 0) + baseJet210Y + offsetJet210Ref.current;
-    }
-
-    // JET Force 2_209
-    if (jet209Ref.current) {
-      if (originalPosJet209.current === null) originalPosJet209.current = jet209Ref.current.position.y;
-      const baseJet209Y = state.isCoverOpen ? 0.286 : 0.0;
-      jet209Ref.current.position.y = (originalPosJet209.current ?? 0) + baseJet209Y + offsetJet209Ref.current;
+    // --- Guide arrow bob ---------------------------------------------------------
+    if (arrowGroupRef.current && arrowPos) {
+      arrowGroupRef.current.position.set(
+        arrowPos[0],
+        arrowPos[1] + Math.sin(t * 5.0) * 0.02,
+        arrowPos[2]
+      );
     }
   });
 
-  // Highlight helper
-  const handlePointerOver = (e: any) => {
-    e.stopPropagation();
-    document.body.style.cursor = 'pointer';
-  };
-
-  const handlePointerOut = () => {
-    document.body.style.cursor = 'default';
-  };
-
-  // Dynamic arrow position and target based on step
-  let arrowPos: [number, number, number] | null = null;
-  if (!state.showMonitor) {
-    if (state.currentStep === 1 && !state.isCoverOpen) {
-      // Step 1: Upper Plate cover (directly over top surface)
-      arrowPos = [0, 1.58, 0];
-    } else if (state.currentStep === 2 && state.selectedDeflectorId === 0) {
-      // Step 2: Deflector on table (Flat Plate tray area)
-      arrowPos = [0.45, 0.35, 0.45];
-    } else if (state.currentStep === 3 && state.isCoverOpen) {
-      // Step 3: Close Upper Plate cover (directly over open cover)
-      arrowPos = [0, 1.75, 0];
-    } else if (state.currentStep === 4 && !state.isPowerOn) {
-      // Step 4: Power Switch
-      arrowPos = [0.3, 0.45, 0.5];
-    } else if (state.currentStep === 5 && !state.isVolumetricValveOpen) {
-      // Step 5: Volumetric Valve
-      arrowPos = [-0.173, 0.35, 0.72];
-    } else if (state.currentStep === 6 && state.valveOpening < 0.18) {
-      // Step 6: Adjust Flow Valve
-      arrowPos = [-0.4, 0.4, 0.45];
-    } else if (state.currentStep === 7 && !state.recordedRows[1]?.balanced) {
-      // Step 7: Load weights/balance (Row 1)
-      arrowPos = [0, 1.85, 0]; // Point to weight pan
-    } else if (state.currentStep === 8 && state.valveOpening < 0.38) {
-      // Step 8: Increase Flow Rate
-      arrowPos = [-0.4, 0.4, 0.45];
-    } else if (state.currentStep === 9 && !state.recordedRows[2]?.balanced) {
-      // Step 9: Balance weights (2nd run)
-      arrowPos = [0, 1.85, 0]; // Point to weight pan
-    } else if (state.currentStep === 10) {
-      // Step 10: Switch to Software Monitor
-      arrowPos = [0.8, 0.9, -0.6];
-    }
-  }
-  arrowPosRef.current = arrowPos;
-
   return (
-    <group ref={apparatusGroupRef} position={position} rotation={rotation} scale={scale}>
-      {/* 3D Model primitive */}
+    <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
       <primitive object={scene} />
 
-      {/* Dynamic weights rendering stacked on pointer pan tray */}
-      {pointerRef.current && (
-        <group
-          position={[
-            pointerRef.current.position.x, 
-            pointerRef.current.position.y + 1.62, // Stack on top of pan
-            pointerRef.current.position.z
-          ]}
-        >
-          {state.loadedWeights.map((w, idx) => {
-            let geom = weightGeometry50;
-            if (w === 100) geom = weightGeometry100;
-            else if (w === 200) geom = weightGeometry200;
-            else if (w === 500) geom = weightGeometry500;
-            else if (w !== 50 && w > 0) geom = weightGeometryCustom || weightGeometry50;
-
-            const yPos = idx * 0.04; // Stack weights vertically
-
-            return (
-              <mesh
-                key={idx}
-                geometry={geom}
-                material={weightMat}
-                position={[0, yPos, 0]}
-                scale={[0.65, 0.65, 0.65]}
-                castShadow
-                receiveShadow
-              />
-            );
-          })}
-        </group>
-      )}
-
-      {/* Centered Water shapes container group (positioned and scaled relative to global world space in useFrame) */}
-      <group ref={waterGroupRef} visible={false}>
-        <primitive object={waterLow.scene} />
-        <primitive object={water90.scene} />
-        <primitive object={water180.scene} />
-        <primitive object={water60.scene} />
-        <primitive object={water45.scene} />
+      <group ref={weightStackRef}>
+        {stack.map(({ key, object, meshName, idx }) => {
+          const from = partPos[meshName];
+          const pan = anchors.pan;
+          if (!from || !pan) return null;
+          return (
+            <group
+              key={key}
+              position={[
+                pan[0] - from[0],
+                pan[1] - from[1] + 0.006 + idx * 0.008,
+                pan[2] - from[2],
+              ]}
+            >
+              <primitive object={object} />
+            </group>
+          );
+        })}
       </group>
 
-      {/* Dynamic 3D Arrow pointing to active items at each step */}
+      {/* Each shape is re-centred on its own origin so the outer group can simply be
+          parked at the midpoint of the nozzle/deflector gap. */}
+      <group ref={waterGroupRef} visible={false}>
+        {(Object.keys(WATER_SHAPES) as WaterShapeKey[]).map((key) => {
+          const fit = waterFit[key];
+          const source = (water as any)[key]?.scene;
+          if (!source) return null;
+          return (
+            <group
+              key={key}
+              position={fit ? [-fit.center.x, -fit.center.y, -fit.center.z] : [0, 0, 0]}
+            >
+              <primitive object={source} />
+            </group>
+          );
+        })}
+      </group>
+
       {arrowPos && (
         <group ref={arrowGroupRef} position={arrowPos}>
-          {/* Arrow Shaft */}
-          <mesh position={[0, 0.15, 0]}>
-            <cylinderGeometry args={[0.012, 0.012, 0.16, 16]} />
-            <meshStandardMaterial color="#f58220" emissive="#ff9100" emissiveIntensity={1.2} />
+          <mesh position={[0, 0.055, 0]}>
+            <cylinderGeometry args={[0.006, 0.006, 0.07, 12]} />
+            <meshStandardMaterial
+              color="#f58220"
+              emissive="#ff9100"
+              emissiveIntensity={1.4}
+              toneMapped={false}
+            />
           </mesh>
-          {/* Arrow Head */}
-          <mesh position={[0, 0.05, 0]} rotation={[Math.PI, 0, 0]}>
-            <coneGeometry args={[0.03, 0.06, 16]} />
-            <meshStandardMaterial color="#f58220" emissive="#ff9100" emissiveIntensity={1.2} />
+          <mesh position={[0, 0.008, 0]} rotation={[Math.PI, 0, 0]}>
+            <coneGeometry args={[0.017, 0.034, 14]} />
+            <meshStandardMaterial
+              color="#f58220"
+              emissive="#ff9100"
+              emissiveIntensity={1.4}
+              toneMapped={false}
+            />
           </mesh>
         </group>
       )}
 
-      {/* Click and Hover Invisible Intersect Handlers for the 3D apparatus */}
-      {/* 1. Tank Cover plate click area */}
-      <mesh
-        position={[0, 1.5, 0]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (state.isCoverOpen) {
-            onCoverClick();
-            animActiveRef.current = false;
-          } else {
-            if (!animActiveRef.current) {
-              animActiveRef.current = true;
-              animTimeRef.current = 0;
-            }
-          }
-        }}
-      >
-        <cylinderGeometry args={[0.3, 0.3, 0.08, 16]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 2. Deflector / Central Rod area */}
-      <mesh
-        position={[0, 0.9, 0]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onDeflectorClick(); }}
-      >
-        <cylinderGeometry args={[0.2, 0.2, 0.4, 16]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 3. Flow control valve knob click area */}
-      <mesh
-        position={[-0.4, 0.15, 0.45]}
-        rotation={[Math.PI * 0.5, 0, 0]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onValveClick(); }}
-      >
-        <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 3b. Volumetric valve knob click area */}
-      <mesh
-        position={[-0.173, 0.15, 0.72]}
-        rotation={[Math.PI * 0.5, 0, 0]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onVolumetricValveClick(); }}
-      >
-        <cylinderGeometry args={[0.08, 0.08, 0.06, 12]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 4. Power switch click area */}
-      <mesh
-        position={[0.3, 0.2, 0.5]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onPowerClick(); }}
-      >
-        <boxGeometry args={[0.06, 0.08, 0.08]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 5. Weight Pan (Weights tray) click area */}
-      <mesh
-        position={[0, 1.62, 0]}
-        onPointerOver={handlePointerOver}
-        onPointerOut={handlePointerOut}
-        onClick={(e) => { e.stopPropagation(); onWeightPanClick(); }}
-      >
-        <cylinderGeometry args={[0.16, 0.16, 0.03, 16]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
-
-      {/* 6. Cylinder005 click/hover intercept zone */}
-      <mesh
-        position={[0, 0.85, 0]}
-        onPointerOver={(e) => { e.stopPropagation(); handlePointerOver(e); setIsCylinderHovered(true); }}
-        onPointerOut={() => { handlePointerOut(); setIsCylinderHovered(false); }}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (state.isCoverOpen) {
-            onCoverClick(); // Toggle parent to false (close cover)
-            animActiveRef.current = false;
-          } else {
-            if (!animActiveRef.current) {
-              animActiveRef.current = true;
-              animTimeRef.current = 0;
-            }
-          }
-        }}
-      >
-        <cylinderGeometry args={[0.28, 0.28, 0.9, 16]} />
-        <meshBasicMaterial visible={false} />
-      </mesh>
+      {hotspots.map((h) => (
+        <mesh
+          key={h.key}
+          position={h.position}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            if (liveKeys.has(h.key)) document.body.style.cursor = 'pointer';
+            if (h.key === MESH.tankCover) setHoveredCover(true);
+          }}
+          onPointerOut={() => {
+            document.body.style.cursor = 'default';
+            if (h.key === MESH.tankCover) setHoveredCover(false);
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleHotspot(h.action);
+          }}
+        >
+          <sphereGeometry args={[h.radius, 12, 10]} />
+          <meshBasicMaterial visible={false} />
+        </mesh>
+      ))}
     </group>
   );
 };
 
-// Preload the water GLB shapes
-useGLTF.preload('/WaterShapes/Water_low.glb');
-useGLTF.preload('/WaterShapes/Water90_Flat.glb');
-useGLTF.preload('/WaterShapes/Water180_HemiSphere.glb');
-useGLTF.preload('/WaterShapes/Water60_Cone.glb');
-useGLTF.preload('/WaterShapes/Water45_Oblique.glb');
+useGLTF.preload('/Bedo_baked_v2.glb');
+Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(s.url));

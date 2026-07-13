@@ -19,9 +19,18 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
 }) => {
   const isAr = language === 'ar';
 
-  // Find max force values to scale SVG chart dynamically
-  const maxFlow = 50; // max expected Q L/min
-  const maxForce = 1.5; // max expected Force in Newtons
+  // Scale the axes to the data. These were pinned at 50 L/min and 1.5 N, which clipped
+  // every reading once the force calculation was fixed.
+  const niceCeil = (v: number) => {
+    const step = 10 ** Math.floor(Math.log10(Math.max(v, 1e-6)));
+    return Math.ceil(v / step) * step;
+  };
+  const maxFlow = niceCeil(
+    Math.max(10, ...recordedRows.map((r) => r.flowRateQLMin)) * 1.1
+  );
+  const maxForce = niceCeil(
+    Math.max(0.5, ...recordedRows.map((r) => Math.max(r.fth, r.weightsN))) * 1.15
+  );
 
   // Map recorded rows to chart coordinates (padding inside a 400x250 SVG box)
   const paddingX = 40;
@@ -152,7 +161,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               <ul>
                 <li>Impact velocity accounts for gravitational deceleration across the 0.035m travel height: v = &radic;(v₀&sup2; - 2&middot;g&middot;s)</li>
                 <li>{"Measured force F_exp represents the added weights under balancing conditions (F_exp = m_weights · 9.81)"}</li>
-                <li>{"Theoretical force F_th incorporates the momentum transfer deflection factor (Flat: 1.0, Hemispherical: 2.0, 120° Cone: 0.5)"}</li>
+                <li>{"Theoretical force F_th = (1 - cos θ) · ρ · A · v², where θ is the deflection angle (45°: 0.293, 90°: 1.0, 120°: 1.5, 135°: 1.707, 180°: 2.0)"}</li>
               </ul>
             )}
           </div>
