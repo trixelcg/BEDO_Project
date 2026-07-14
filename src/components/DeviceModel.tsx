@@ -773,6 +773,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!proto) return;
 
       const object = proto.clone(true);
+      object.position.set(0, 0, 0);
+      object.rotation.set(0, 0, 0);
+      object.scale.set(0.01, 0.01, 0.01);
       object.traverse((child: any) => {
         if (child.isMesh) {
           child.visible = true;
@@ -950,21 +953,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const loadedMassG = state.loadedWeights.reduce((a, b) => a + b, 0);
     const weightForceN = (loadedMassG * 9.81) / 1000;
 
-    // Net force on a 200 N/m spring, in metres, clamped to the pointer's travel.
+    // Net force on a 200 N/m spring, in metres
     const netForce = jetForceN - weightForceN;
-    const deflection = THREE.MathUtils.clamp(netForce / SPRING_RATE_N_PER_M, -0.06, 0.075);
+
+    const restH = springInfoRef.current ? springInfoRef.current.restH : 0.065;
+    const minDeflection = -0.45 * restH;
+    const maxDeflection = 0.45 * restH;
+    const deflection = THREE.MathUtils.clamp(netForce / SPRING_RATE_N_PER_M, minDeflection, maxDeflection);
 
     // The pointer rides the moving assembly and swings about the rod axis it is clamped
     // to. Rotating the mesh itself would orbit the GLB's distant shared origin, so the
     // swing goes through its pivot (planted on the rod axis at install time).
     const pointerPivot = pivots.current[MESH.pointer];
     if (pointerPivot) {
+      // The pointer height is driven only by spring deflection, staying in place when the cover lifts.
       pointerPivot.position.y = damp(
         pointerPivot.position.y,
-        baseY(pointerPivot, 'pivot:pointer') + coverOffsetRef.current + deflection,
+        baseY(pointerPivot, 'pivot:pointer') + deflection,
         10
       );
-      pointerPivot.rotation.y = -pointerSwingRef.current * QUARTER_TURN;
+      // Swings 90 degrees to the right when open
+      pointerPivot.rotation.y = pointerSwingRef.current * QUARTER_TURN;
     }
 
     // --- Cover assembly rises as one ------------------------------------------
@@ -974,21 +983,23 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     };
     lift(MESH.tankCover, coverOffsetRef.current);
     lift(MESH.screws, screwOffsetRef.current);
-    lift(MESH.rod, coverOffsetRef.current);
-    // The pointer's pin is mounted on the cover assembly: it rises too, or the arm
-    // clamped to it would float off into the air.
-    lift(MESH.pointerPin, coverOffsetRef.current);
 
-    // The spring's bottom stays seated while its top follows the moving assembly, so it
-    // visibly stretches under jet force and squashes back as weights land. Scaling a
-    // helix about its fixed end is exactly what a compress/stretch morph target encodes;
-    // if a future GLB export ships a real one on deflector_spring, it takes over here.
+    // Central rod and pointer pin stay down and move with deflection
+    const rodObj = pick(MESH.rod);
+    if (rodObj) {
+      rodObj.position.y = baseY(rodObj, MESH.rod) + deflection;
+    }
+    const pinObj = pick(MESH.pointerPin);
+    if (pinObj) {
+      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + deflection;
+    }
+
+    // The spring stays inside the tank with the rod, compressing/deflecting under weights.
     const springPivot = pivots.current[MESH.spring];
     const springInfo = springInfoRef.current;
     if (springPivot && springInfo) {
-      springPivot.position.y =
-        baseY(springPivot, 'pivot:spring') + coverOffsetRef.current;
-      const stretch = THREE.MathUtils.clamp(1 + deflection / springInfo.restH, 0.55, 1.35);
+      springPivot.position.y = baseY(springPivot, 'pivot:spring');
+      const stretch = 1 + deflection / springInfo.restH;
       if (springInfo.morph) {
         const inf = springInfo.morph.mesh.morphTargetInfluences;
         if (inf) inf[springInfo.morph.index] = THREE.MathUtils.clamp(1 - stretch, 0, 1);
@@ -1000,34 +1011,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const deflector = getDeflector(state.selectedDeflectorId);
     const activeDef = pick(deflector.installed);
     if (activeDef) {
+      // The deflector moves only with spring deflection
       activeDef.position.y = damp(
         activeDef.position.y,
-        baseY(activeDef, deflector.installed) + coverOffsetRef.current + deflection,
+        baseY(activeDef, deflector.installed) + deflection,
         10
       );
     }
 
     // --- Water ------------------------------------------------------------------
-    // The deflector meshes are not jets. Rendered on their own, Water90_Flat is a fat
-    // cylinder and Water180 a cylinder capped with a cone: they are the *body of water
-    // filling the tank*, its top surface shaped by whatever the jet is striking. That is
-    // what the reference video shows at the second reading — a tank full of blue water,
-    // not a thin stream. Only Water_low (5.1 x 17.5 x 5.1) is an actual jet.
-    //
-    // So they scale against the tank, uniformly, and stand on its floor. Stretching them
-    // across the nozzle/deflector gap — which is what this did — squashed a tank-sized
-    // volume into a thin ribbon and destroyed the shape each one was simulated for.
-    //
-    // Everything is computed in the apparatus's local space: the water group is a child of
-    // it, so world coordinates would have its transform applied a second time. And because
-    // the GLB is baked, every node shares one origin, so getWorldPosition() cannot be used
-    // to locate anything — only the geometry's bounding box can.
     const group = groupRef.current;
     const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
 
     if (flowing && group && activeDef && nozzleLip && tankBounds && waterGroupRef.current) {
-      // Below a trickle the water has no shape yet — it is still a stream climbing from the
-      // nozzle. Above it, the tank fills and the surface takes the deflector's form.
       const shape: WaterShapeKey = state.valveOpening > 0.22 ? deflector.water : 'low';
       const fit = waterFit[shape];
 
@@ -1054,17 +1050,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           waterGroupRef.current.position.copy(tmp.mid);
           waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
         } else {
-          // The tank fills. Uniform, so each mesh keeps the proportions it was simulated
-          // at, sized to sit just inside the glass and standing on the tank floor.
-          const fill = 0.86 + 0.14 * Math.min(1, state.valveOpening / SECOND_READING_VALVE);
-          const k = ((tankBounds.width * 0.9) / fit.width) * fill;
+          // Dynamic spray shape stretching from nozzle to deflector, with thickness responsive to flow rate
+          tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
+          const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
 
-          waterGroupRef.current.position.set(
-            tankBounds.cx,
-            tankBounds.baseY + (fit.height * k) / 2,
-            tankBounds.cz
-          );
-          waterGroupRef.current.scale.setScalar(k);
+          const scaleY = gap / fit.height;
+          const flowIntensity = 0.7 + 0.3 * Math.min(1, (state.valveOpening - 0.22) / 0.48);
+          const scaleXZ = ((tankBounds.width * 0.95) / fit.width) * flowIntensity;
+
+          tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
+          waterGroupRef.current.position.copy(tmp.mid);
+          waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
         }
 
         // Ripple faster the harder the jet runs.
@@ -1083,10 +1079,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
-    // Each weight is already offset onto the pan; this only follows the pan's travel.
     if (weightStackRef.current) {
-      weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
+      weightStackRef.current.position.set(0, deflection, 0);
     }
+
+    // Update original table weights visibility based on loaded state
+    WEIGHTS.forEach((w) => {
+      if (w.mesh) {
+        const meshObj = pick(w.mesh);
+        if (meshObj) {
+          meshObj.visible = !state.loadedWeights.includes(w.grams);
+        }
+      }
+    });
 
     // --- Cover's click target rides with the plate --------------------------------
     // It used to sit at the plate's resting height for good, so once the plate lifted you
