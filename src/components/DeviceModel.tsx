@@ -928,13 +928,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       volPivot.rotation.x = damp(volPivot.rotation.x, target, 6);
     }
 
-    // The switch is a rotary knob on the panel, and the panel faces -X. A knob turns about
-    // the axis it sits on — so X, the panel's normal. Turning it about Z tipped it over
-    // sideways out of its housing.
+    // The switch is a rotary knob on the panel, and the panel faces Z. A knob turns about
+    // the axis it sits on — so Z, the panel's normal (perpendicular to the XY plane).
     const powerPivot = pivots.current[MESH.powerSwitch];
     if (powerPivot) {
       const target = state.isPowerOn ? -QUARTER_TURN : 0;
-      powerPivot.rotation.x = damp(powerPivot.rotation.x, target, 12);
+      powerPivot.rotation.z = damp(powerPivot.rotation.z, target, 12);
     }
 
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
