@@ -32,8 +32,16 @@ export const MESH = {
   rod: 'deflector_rod',
   pointer: 'Pointer',
   nozzle: 'JET Force 2_214',
+  // The flow control valve's lever, on the black pipe under the bench, on the left.
   flowValve: 'Valve',
-  volumetricValve: 'Object307',
+  /**
+   * The volumetric (drain) valve's lever, under the bench on the operator's right, beside
+   * the litre scale. This pointed at Object307 — a fitting on the *left*, next to the flow
+   * valve — so step 5 turned the wrong part and framed the sump instead of the valve.
+   * 1_087 has the same lever proportions as the flow handle (0.019 x 0.026 x 0.090), and
+   * its valve body (1_086) sits right beside it.
+   */
+  volumetricValve: 'hydrolic bensh 1_087',
   powerSwitch: 'Power_Switch',
   powerButtonBody: 'power_button_body001',
   powerLight: 'Diagram_Green_light_off',
@@ -230,22 +238,33 @@ export interface AnchorView {
 export const DEFAULT_ARROW_OFFSET: [number, number, number] = [0, 0.09, 0];
 
 /**
+ * Where the operator stands, in model space.
+ *
+ * The rig faces -X. Renders from each side settle it: from -X you get the view the
+ * reference video opens on — the BEDO chart on the far wall, the red emergency-stop panel
+ * square to you, the tank left, the deflector tray and weights right, and both valves
+ * visible under the bench. Every other side looks at its back or into a wall.
+ *
+ * Facing +X with +Y up, the operator's right hand points along +Z. Camera offsets below
+ * are read in those terms: negative X stands the camera in front, positive Z moves it to
+ * the operator's right.
+ */
+export const FRONT: [number, number, number] = [-1, 0, 0];
+
+/**
  * How to frame each part, so the camera can fly to whichever one the current step is
  * about — the way the reference simulator reframes between steps.
- *
- * The unit faces -Z: the control panel, both valves and the bench front all look that
- * way, and the pipework is boxed in behind them. Framing the valves from +Z puts the
- * camera inside the sump tank staring at the back of the cabinet, so those take
- * negative-Z offsets. The tray and cover sit on top and read fine from either side.
  */
 export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
-  cover: { offset: [0.28, 0.24, 0.62] },
-  tray: { offset: [0.02, 0.30, 0.42] },
-  power: { offset: [-0.30, 0.26, -0.58] },
-  volumetricValve: { offset: [-0.28, 0.30, -0.90], arrowOffset: [0, 0.03, -0.11] },
-  flowValve: { offset: [-0.24, 0.26, -0.78], arrowOffset: [0, 0.03, -0.10] },
-  weights: { offset: [0.22, 0.38, 0.80] },
-  pointer: { offset: [0.20, 0.26, 0.60] },
-  pan: { offset: [0.20, 0.26, 0.60] },
-  overview: { offset: [0.35, 0.75, 1.75] },
+  cover: { offset: [-0.52, 0.22, 0.34] },
+  tray: { offset: [-0.34, 0.34, 0.24] },
+  power: { offset: [-0.44, 0.20, 0.12] },
+  // Both valves live under the bench and are approached from the operator's right,
+  // which is where they actually face.
+  volumetricValve: { offset: [-0.50, 0.15, 0.30], arrowOffset: [-0.09, 0.05, 0] },
+  flowValve: { offset: [-0.52, 0.22, 0.44], arrowOffset: [-0.09, 0.04, 0] },
+  weights: { offset: [-0.44, 0.34, 0.34] },
+  pointer: { offset: [-0.42, 0.24, 0.30] },
+  pan: { offset: [-0.42, 0.24, 0.30] },
+  overview: { offset: [-1.45, 0.70, 0.45] },
 };

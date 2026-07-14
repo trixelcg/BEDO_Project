@@ -4,7 +4,7 @@ import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
 import type { SimulationState, SceneConfig } from '../types/index';
-import { ANCHOR_VIEW, type AnchorKey, type Anchors } from '../lib/apparatus';
+import { ANCHOR_VIEW, COVER_LIFT, type AnchorKey, type Anchors } from '../lib/apparatus';
 import type { ExperimentStep } from '../lib/experiments';
 
 interface Scene3DProps {
@@ -68,22 +68,34 @@ const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 
  */
 const CameraRig: React.FC<{
   target: AnchorKey | null;
+  coverLift: number;
   showMonitor: boolean;
   anchors: Anchors;
   groupRef: React.RefObject<THREE.Group | null>;
-}> = ({ target, showMonitor, anchors, groupRef }) => {
+}> = ({ target, coverLift, showMonitor, anchors, groupRef }) => {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as any;
 
   const progress = useRef(1);
   const pending = useRef(false);
+  /** undefined until the first render settles — see below. */
+  const lastTarget = useRef<AnchorKey | null | undefined>(undefined);
   const from = useMemo(() => ({ pos: new THREE.Vector3(), target: new THREE.Vector3() }), []);
   const to = useMemo(() => ({ pos: new THREE.Vector3(), target: new THREE.Vector3() }), []);
   const scratch = useMemo(() => new THREE.Vector3(), []);
 
-  // Queue a flight whenever the focused part changes and its anchor is known.
+  // Fly when the focused part *changes*, not on first paint. Step 1 focuses the cover, so
+  // flying on mount snapped the camera to a close-up of the plate and the student never
+  // saw the bench they were standing at.
   useEffect(() => {
-    if (showMonitor || !target || !anchors[target]) return;
+    if (showMonitor) return;
+    if (lastTarget.current === undefined) {
+      lastTarget.current = target;
+      return;
+    }
+    if (target === lastTarget.current) return;
+    lastTarget.current = target;
+    if (!target || !anchors[target]) return;
     pending.current = true;
   }, [target, showMonitor, anchors]);
 
@@ -107,16 +119,20 @@ const CameraRig: React.FC<{
       const view = target ? ANCHOR_VIEW[target] : undefined;
       if (!anchor || !view) return;
 
+      // Step 3 asks the student to press the plate again, and by then the plate is up in
+      // the air — so frame it where it now is, not where it started.
+      const lift = target === 'cover' ? coverLift : 0;
+
       from.pos.copy(camera.position);
       from.target.copy(controls.target);
 
       // Anchor and offset are both in model space, so convert after adding.
-      to.target.copy(group.localToWorld(scratch.set(anchor[0], anchor[1], anchor[2])));
+      to.target.copy(group.localToWorld(scratch.set(anchor[0], anchor[1] + lift, anchor[2])));
       to.pos.copy(
         group.localToWorld(
           scratch.set(
             anchor[0] + view.offset[0],
-            anchor[1] + view.offset[1],
+            anchor[1] + lift + view.offset[1],
             anchor[2] + view.offset[2]
           )
         )
@@ -163,7 +179,9 @@ export const Scene3D: React.FC<Scene3DProps> = ({
     <div className="canvas-container">
       <Canvas
         shadows="percentage"
-        camera={{ position: [0, 1.2, 3.8], fov: 42 }}
+        // Open where the operator stands: in front of the bench (-X), the view the
+        // reference video starts on. This used to sit at +Z, behind the rig.
+        camera={{ position: [-3.7, 0.95, -0.2], fov: 42 }}
         gl={{ antialias: true, preserveDrawingBuffer: true }}
       >
         <RendererController config={sceneConfig} />
@@ -226,6 +244,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
 
         <CameraRig
           target={focusTarget}
+          coverLift={state.isCoverOpen ? COVER_LIFT : 0}
           showMonitor={state.showMonitor}
           anchors={anchors}
           groupRef={apparatusRef}
@@ -239,7 +258,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           maxPolarAngle={Math.PI / 2 + 0.25}
           minDistance={0.6}
           maxDistance={8}
-          target={[0, 0.15, 0]}
+          target={[0, -0.1, -0.2]}
         />
       </Canvas>
     </div>

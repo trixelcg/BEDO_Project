@@ -34,6 +34,9 @@ type Action =
   | { kind: 'flowValve' }
   | { kind: 'volumetricValve' };
 
+/** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
+const QUARTER_TURN = Math.PI / 2;
+
 /** An invisible sphere placed and sized from a real mesh, so clicks land on the part. */
 interface Hotspot {
   key: string;
@@ -100,10 +103,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const highlighted = useRef<Set<string>>(new Set());
   /** Nozzle exit, in the apparatus's local space. */
   const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
+  /** Groups that let a part spin about its own centre — see makePivot. */
+  const pivots = useRef<Record<string, THREE.Group>>({});
 
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
   const weightStackRef = useRef<THREE.Group>(null);
+  /** The cover's click target has to ride up with the plate — see below. */
+  const coverHotspotRef = useRef<THREE.Mesh>(null);
 
   // Unscrew sequence
   const animActiveRef = useRef(false);
@@ -233,6 +240,49 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     return fit;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [water.low, water.flat, water.hemi, water.cone, water.oblique]);
+
+  /**
+   * Let the valves and the switch turn on the spot.
+   *
+   * The GLB is baked, so every node's origin sits at the same far-away point
+   * (0, 1.239, -1.232) while the geometry lives more than a metre away in its vertices.
+   * Setting `valve.rotation.z` therefore swung the whole mesh around that distant origin
+   * in a huge arc instead of spinning it in place — which is exactly why the flow valve
+   * looked broken and appeared to turn about the wrong axis.
+   *
+   * Slot a group at each part's real centre and rotate that instead. Offsetting the mesh
+   * by the same amount leaves it exactly where it was.
+   */
+  useEffect(() => {
+    if (!scene) return;
+
+    const install = (authored: string) => {
+      const obj = pick(authored);
+      if (!obj || pivots.current[authored]) return;
+      const parent = obj.parent;
+      if (!parent) return;
+
+      parent.updateWorldMatrix(true, false);
+      const box = new THREE.Box3().setFromObject(obj);
+      if (box.isEmpty()) return;
+
+      const centre = parent.worldToLocal(box.getCenter(new THREE.Vector3()));
+
+      const pivot = new THREE.Group();
+      pivot.name = `${authored}__pivot`;
+      pivot.position.copy(centre);
+      parent.add(pivot);
+
+      obj.position.sub(centre); // keeps the geometry exactly where it already was
+      pivot.add(obj);
+
+      pivots.current[authored] = pivot;
+    };
+
+    install(MESH.flowValve);
+    install(MESH.volumetricValve);
+    install(MESH.powerSwitch);
+  }, [scene, pick]);
 
   // The chosen deflector leaves the tray and appears mounted on the rod.
   useEffect(() => {
@@ -573,22 +623,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // --- Valves, switch, lamp --------------------------------------------------
-    const flowValve = pick(MESH.flowValve);
-    if (flowValve) {
-      const target = state.valveOpening * Math.PI * 3.0;
-      flowValve.rotation.z = damp(flowValve.rotation.z, target, 5);
+    // These turn their pivot, not the mesh: rotating the mesh spins it around the GLB's
+    // shared, far-off node origin instead of its own centre. They are lever valves, so
+    // they travel a quarter turn — the old code spun the flow valve through three full
+    // revolutions (valveOpening * PI * 3).
+    const flowPivot = pivots.current[MESH.flowValve];
+    if (flowPivot) {
+      flowPivot.rotation.z = damp(flowPivot.rotation.z, state.valveOpening * -QUARTER_TURN, 6);
     }
 
-    const volValve = pick(MESH.volumetricValve);
-    if (volValve) {
-      const target = state.isVolumetricValveOpen ? -Math.PI * 0.5 : 0;
-      volValve.rotation.z = damp(volValve.rotation.z, target, 5);
+    // The volumetric lever lies along Z, so it swings about X — the flow lever lies along
+    // Y and swings about Z. Each turns in the plane its blade occupies.
+    const volPivot = pivots.current[MESH.volumetricValve];
+    if (volPivot) {
+      const target = state.isVolumetricValveOpen ? QUARTER_TURN : 0;
+      volPivot.rotation.x = damp(volPivot.rotation.x, target, 6);
     }
 
-    const powerSwitch = pick(MESH.powerSwitch);
-    if (powerSwitch) {
-      const target = state.isPowerOn ? -0.35 : 0.35;
-      powerSwitch.rotation.x = damp(powerSwitch.rotation.x, target, 12);
+    const powerPivot = pivots.current[MESH.powerSwitch];
+    if (powerPivot) {
+      const target = state.isPowerOn ? -QUARTER_TURN : 0;
+      powerPivot.rotation.z = damp(powerPivot.rotation.z, target, 12);
     }
 
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
@@ -708,11 +763,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
     }
 
+    // --- Cover's click target rides with the plate --------------------------------
+    // It used to sit at the plate's resting height for good, so once the plate lifted you
+    // had to click the empty air it came from to put it back, rather than the plate itself.
+    const coverSpot = hotspots.find((h) => h.key === MESH.tankCover);
+    if (coverHotspotRef.current && coverSpot) {
+      coverHotspotRef.current.position.y = coverSpot.position[1] + coverOffsetRef.current;
+    }
+
     // --- Guide arrow bob ---------------------------------------------------------
     if (arrowGroupRef.current && arrowPos) {
+      // Step 3 points at the plate, which by then is up in the air.
+      const lift = focusTarget === 'cover' ? coverOffsetRef.current : 0;
       arrowGroupRef.current.position.set(
         arrowPos[0],
-        arrowPos[1] + Math.sin(t * 5.0) * 0.02,
+        arrowPos[1] + lift + Math.sin(t * 5.0) * 0.02,
         arrowPos[2]
       );
     }
@@ -786,6 +851,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       {hotspots.map((h) => (
         <mesh
           key={h.key}
+          ref={h.key === MESH.tankCover ? coverHotspotRef : undefined}
           position={h.position}
           onPointerOver={(e) => {
             e.stopPropagation();
