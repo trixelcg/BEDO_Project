@@ -345,14 +345,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             '#include <normal_fragment_maps>',
             `#include <normal_fragment_maps>
              {
-               // Two scrolling ripple layers bend the shading normal (view space).
-               vec2 uvTop = vWPos.xz * 7.0 + vec2(uTime * 0.11, uTime * 0.08);
-               vec2 uvSide = vec2(vWPos.x + vWPos.z, vWPos.y * 1.6) * 5.5
-                           - vec2(0.0, uTime * 0.5);
-               vec2 grad = (texture2D(uWaterTex, uvTop).rg - 0.5) * 1.5
-                         + (texture2D(uWaterTex, uvSide).rg - 0.5) * 1.1;
+               // Rapidly scrolling ripple layers along the flow direction (V-axis)
+               vec2 uvTop = vWPos.xz * 6.0 + vec2(uTime * 1.2, uTime * 0.9);
+               vec2 uvSide = vec2(vWPos.x + vWPos.z, vWPos.y * 2.0) * 4.5
+                           - vec2(0.0, uTime * 7.5);
+               vec2 grad = (texture2D(uWaterTex, uvTop).rg - 0.5) * 1.8
+                         + (texture2D(uWaterTex, uvSide).rg - 0.5) * 2.2;
                vec3 bump = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
-               normal = normalize(normal + bump * 0.85);
+               normal = normalize(normal + bump * 1.5);
              }`
           )
           .replace(
@@ -363,24 +363,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                vec3 N = normalize(vWNorm);
 
                float hTop = texture2D(uWaterTex,
-                 vWPos.xz * 5.0 + vec2(uTime * 0.09, -uTime * 0.06)).b;
+                 vWPos.xz * 5.0 + vec2(uTime * 1.5, -uTime * 1.0)).b;
                float hSide = texture2D(uWaterTex,
-                 vec2(vWPos.x - vWPos.z, vWPos.y * 1.7) * 4.5 - vec2(0.0, uTime * 0.45)).b;
+                 vec2(vWPos.x - vWPos.z, vWPos.y * 2.5) * 5.0 - vec2(0.0, uTime * 8.5)).b;
 
-               // Sparkle where drifting crests coincide.
-               float glint = smoothstep(0.62, 0.95, hTop * 0.55 + hSide * 0.55) * 0.3;
+               // Fast-moving specular glints reflecting off turbulent wave crests
+               float glint = smoothstep(0.55, 0.90, hTop * 0.5 + hSide * 0.5) * 0.65;
 
-               // The silhouette against the glass reads bright, never dark.
-               float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.38;
+               // Enhanced rim reflection highlight
+               float rim = pow(1.0 - abs(dot(N, V)), 2.5) * 0.55;
 
-               // Soft foam only near the churning top, where the crests pile up.
-               float foam = smoothstep(0.45, 0.85, N.y)
-                          * smoothstep(0.7, 0.95, vRise)
-                          * smoothstep(0.9, 1.3, hTop + hSide) * 0.55;
+               // Flowing foam streaks matching the high-velocity jet stream
+               float foam = smoothstep(0.40, 0.80, hSide) * 0.6;
 
-               float lum = clamp(glint + rim + foam, 0.0, 0.7);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.95, 0.98, 1.0), lum);
-               gl_FragColor.a = mix(gl_FragColor.a, 0.94, lum);
+               float lum = clamp(glint + rim + foam, 0.0, 0.95);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.96, 0.98, 1.0), lum);
+               gl_FragColor.a = mix(gl_FragColor.a, 0.92, lum);
              }`
           );
     };
