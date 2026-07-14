@@ -496,17 +496,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     install(MESH.volumetricValve);
     install(MESH.powerSwitch);
 
-    // The pointer is an arm clamped to the deflector rod: swinging it out of the way
-    // means rotating it about the ROD's vertical axis, not the arm's own centre.
-    const rod = pick(MESH.rod);
+    // The pointer is an arm clamped to the thin vertical pin (JET Force 2_212), so it
+    // swings about THAT pin's axis and turns in place. The first cut hinged it on the
+    // main deflector rod, which made the whole arm orbit sideways instead.
+    const pin = pick(MESH.pointerPin);
     const pointer = pick(MESH.pointer);
-    if (rod && pointer) {
-      const rodBox = new THREE.Box3().setFromObject(rod);
+    if (pin && pointer) {
+      const pinBox = new THREE.Box3().setFromObject(pin);
       const ptrBox = new THREE.Box3().setFromObject(pointer);
-      if (!rodBox.isEmpty() && !ptrBox.isEmpty()) {
-        const rodC = rodBox.getCenter(new THREE.Vector3());
+      if (!pinBox.isEmpty() && !ptrBox.isEmpty()) {
+        const pinC = pinBox.getCenter(new THREE.Vector3());
         const ptrC = ptrBox.getCenter(new THREE.Vector3());
-        install(MESH.pointer, new THREE.Vector3(rodC.x, ptrC.y, rodC.z));
+        install(MESH.pointer, new THREE.Vector3(pinC.x, ptrC.y, pinC.z));
       }
     }
 
@@ -976,6 +977,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     lift(MESH.tankCover, coverOffsetRef.current);
     lift(MESH.screws, screwOffsetRef.current);
     lift(MESH.rod, coverOffsetRef.current);
+    // The pointer's pin is mounted on the cover assembly: it rises too, or the arm
+    // clamped to it would float off into the air.
+    lift(MESH.pointerPin, coverOffsetRef.current);
 
     // The spring's bottom stays seated while its top follows the moving assembly, so it
     // visibly stretches under jet force and squashes back as weights land. Scaling a

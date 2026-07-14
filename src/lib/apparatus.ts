@@ -31,6 +31,8 @@ export const MESH = {
   spring: 'deflector_spring',
   rod: 'deflector_rod',
   pointer: 'Pointer',
+  /** The thin vertical pin the pointer arm is clamped to — the arm swings about it. */
+  pointerPin: 'JET Force 2_212',
   nozzle: 'JET Force 2_214',
   /**
    * The glass tank the jet plays inside — 0.181 wide by 0.317 tall, from y = 1.058 up to
