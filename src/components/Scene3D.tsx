@@ -175,6 +175,12 @@ export const Scene3D: React.FC<Scene3DProps> = ({
       ? (steps.find((s) => s.id === state.currentStep)?.target ?? null)
       : null;
 
+  // Step 1 is framed on the whole bench rather than the cover it points at, so the app
+  // opens — and Reset returns — to the view the operator actually stands in. The arrow and
+  // the highlight still call out the plate; it is plainly visible from here.
+  const cameraTarget: AnchorKey | null =
+    state.mode === 'guided' && state.currentStep === 1 ? 'overview' : focusTarget;
+
   return (
     <div className="canvas-container">
       <Canvas
@@ -243,7 +249,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         </Suspense>
 
         <CameraRig
-          target={focusTarget}
+          target={cameraTarget}
           coverLift={state.isCoverOpen ? COVER_LIFT : 0}
           showMonitor={state.showMonitor}
           anchors={anchors}

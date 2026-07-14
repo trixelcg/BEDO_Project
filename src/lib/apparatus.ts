@@ -49,20 +49,30 @@ export const MESH = {
 } as const;
 
 /**
- * Water jet silhouettes shipped in /public/WaterShapes.
+ * Water jet silhouettes shipped in /public/WaterShapes — one simulated plume per deflector,
+ * plus the startup trickle.
  *
- * Their heights are measured at load time rather than listed here. Each file parks its
- * mesh a long way from the origin (Water90_Flat sits at y = +117.9), and Water_low and
- * Water60_Cone are rotated a quarter turn about X, so their true vertical extents
- * (17.48 and 24.72) bear no relation to the 5.08 and 17.02 that used to be hard-coded.
- * Measuring the loaded bounding box gets both the offset and the height right.
+ * All eight are used. Three of them (30°, 120°, 135°) were not wired up at all, and their
+ * deflectors borrowed another angle's plume: 120° showed the 60° cone, 135° showed the 180°
+ * hemisphere, 30° showed the 60° cone again.
+ *
+ * Nothing about these files can be assumed:
+ *  - Some park their mesh far from the origin (Water90_Flat sits at y = +117.9).
+ *  - Some are rotated a quarter turn about X (Water_low, Water60_Cone) and some are not.
+ *  - Water30/120/135 are authored lying down — their long axis is Z with no rotation node,
+ *    so they render on their side unless stood upright.
+ * Orientation, offset and size are therefore all measured from the loaded geometry rather
+ * than trusted; see waterFit in DeviceModel.
  */
 export const WATER_SHAPES = {
   low: { url: '/WaterShapes/Water_low.glb' },
-  flat: { url: '/WaterShapes/Water90_Flat.glb' },
-  hemi: { url: '/WaterShapes/Water180_HemiSphere.glb' },
-  cone: { url: '/WaterShapes/Water60_Cone.glb' },
-  oblique: { url: '/WaterShapes/Water45_Oblique.glb' },
+  d30: { url: '/WaterShapes/Water30.glb' },
+  d45: { url: '/WaterShapes/Water45_Oblique.glb' },
+  d60: { url: '/WaterShapes/Water60_Cone.glb' },
+  d90: { url: '/WaterShapes/Water90_Flat.glb' },
+  d120: { url: '/WaterShapes/Water120_HemiSphere.glb' },
+  d135: { url: '/WaterShapes/Water135_Conical.glb' },
+  d180: { url: '/WaterShapes/Water180_HemiSphere.glb' },
 } as const;
 
 export type WaterShapeKey = keyof typeof WATER_SHAPES;
@@ -112,7 +122,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: sinSquared(45), // 0.5
     shelf: 'Oblique_surface_deflector_45_base',
     installed: 'Oblique_surface_deflector_45.001',
-    water: 'oblique',
+    water: 'd45',
   },
   {
     id: 90,
@@ -122,7 +132,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: 1.0,
     shelf: 'Flat_surface_deflector_90_base',
     installed: 'Flat_surface_deflector_90.001',
-    water: 'flat',
+    water: 'd90',
   },
   {
     id: 135,
@@ -132,7 +142,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: oneMinusCos(135), // 1.707
     shelf: 'Conical_deflector_135_base',
     installed: 'Conical_deflector_135.001',
-    water: 'hemi',
+    water: 'd135',
   },
   {
     id: 120,
@@ -142,7 +152,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: oneMinusCos(120), // 1.5
     shelf: 'Hemi_sphere_deflector_120_base',
     installed: 'Hemi_sphere_deflector_120.001',
-    water: 'cone',
+    water: 'd120',
   },
   {
     id: 180,
@@ -152,7 +162,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: oneMinusCos(180), // 2.0
     shelf: 'Hemi_sphere_deflector_180_base',
     installed: 'Hemi_sphere_deflector_180.001',
-    water: 'hemi',
+    water: 'd180',
   },
   {
     id: 30,
@@ -162,7 +172,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: sinSquared(30), // 0.25
     shelf: 'Cone_surface_deflector_30_base',
     installed: 'Cone_surface_deflector_30.001',
-    water: 'cone',
+    water: 'd30',
   },
   {
     id: 60,
@@ -172,7 +182,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     factor: sinSquared(60), // 0.75
     shelf: 'Cone_surface_deflector_60_base',
     installed: 'Cone_surface_deflector_60.001',
-    water: 'cone',
+    water: 'd60',
   },
 ];
 

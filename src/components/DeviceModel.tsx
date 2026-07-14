@@ -89,13 +89,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 }) => {
   const { scene } = useGLTF('/Bedo_baked_v2.glb') as any;
 
+  // One simulated plume per deflector, plus the startup trickle.
   const water = {
     low: useGLTF(WATER_SHAPES.low.url) as any,
-    flat: useGLTF(WATER_SHAPES.flat.url) as any,
-    hemi: useGLTF(WATER_SHAPES.hemi.url) as any,
-    cone: useGLTF(WATER_SHAPES.cone.url) as any,
-    oblique: useGLTF(WATER_SHAPES.oblique.url) as any,
+    d30: useGLTF(WATER_SHAPES.d30.url) as any,
+    d45: useGLTF(WATER_SHAPES.d45.url) as any,
+    d60: useGLTF(WATER_SHAPES.d60.url) as any,
+    d90: useGLTF(WATER_SHAPES.d90.url) as any,
+    d120: useGLTF(WATER_SHAPES.d120.url) as any,
+    d135: useGLTF(WATER_SHAPES.d135.url) as any,
+    d180: useGLTF(WATER_SHAPES.d180.url) as any,
   };
+  const waterGltfs = Object.values(water);
 
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
@@ -186,20 +191,64 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
   }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
 
-  const waterMaterial = useMemo(
-    () =>
-      new THREE.MeshStandardMaterial({
-        color: '#2f7fdd',
-        transparent: true,
-        opacity: 0.85,
-        roughness: 0.15,
-        metalness: 0.0,
-      }),
-    []
-  );
+  /**
+   * Water, rather than blue plastic.
+   *
+   * Physically-based glass with water's index of refraction, so the jet actually refracts
+   * the tank and deflector behind it and picks up the environment along its edges. The
+   * vertex ripple keeps the stream alive — the plumes are static baked meshes, and without
+   * it a jet at full flow reads as a solid frozen sculpture. The ripple fades out at the
+   * nozzle so the column stays welded to it, and grows toward the impact where the water
+   * actually breaks up.
+   */
+  const waterTime = useRef({ value: 0 });
+  const waterMaterial = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color('#63bdff'),
+      transparent: true,
+      opacity: 0.86,
+      roughness: 0.05,
+      metalness: 0.0,
+      // Held deliberately low. The jet lives inside a dark tank, so a high transmission
+      // just shows that darkness through it and the water reads as smoked glass. A bright,
+      // mostly-opaque body with a hard clearcoat matches the reference, which shows a
+      // luminous blue column.
+      transmission: 0.3,
+      thickness: 0.35,
+      ior: 1.33, // water
+      attenuationColor: new THREE.Color('#2f8fdd'),
+      attenuationDistance: 0.6,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.04,
+      specularIntensity: 1.0,
+      envMapIntensity: 1.6,
+      // A touch of self-illumination so the stream stays legible against the dark tank.
+      emissive: new THREE.Color('#0d4a86'),
+      emissiveIntensity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = waterTime.current;
+      shader.vertexShader =
+        'uniform float uTime;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           // The mesh is authored ~20 units tall and centred, so normalise height to 0..1
+           // from the nozzle end and let the ripple build along the stream.
+           float rise = clamp(position.y * 0.05 + 0.5, 0.0, 1.0);
+           float amp = 0.28 * rise;
+           transformed.x += sin(position.y * 0.9 + uTime * 5.5) * amp;
+           transformed.z += cos(position.y * 0.7 + uTime * 4.2) * amp;`
+        );
+    };
+    return mat;
+  }, []);
 
   useEffect(() => {
-    [water.low, water.flat, water.hemi, water.cone, water.oblique].forEach((gltf: any) => {
+    waterGltfs.forEach((gltf: any) => {
       gltf?.scene?.traverse((child: any) => {
         if (child.isMesh) {
           child.material = waterMaterial;
@@ -208,7 +257,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }
       });
     });
-  }, [water.low, water.flat, water.hemi, water.cone, water.oblique, waterMaterial]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...waterGltfs, waterMaterial]);
 
   /**
    * Each jet shape's own offset and height, measured off a detached clone.
@@ -221,25 +271,45 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const waterFit = useMemo(() => {
     const fit = {} as Record<
       WaterShapeKey,
-      { center: THREE.Vector3; height: number; width: number }
+      { center: THREE.Vector3; height: number; width: number; upright: boolean }
     >;
+
+    const measure = (source: THREE.Object3D, upright: boolean) => {
+      const holder = new THREE.Group();
+      const inner = new THREE.Group();
+      // A quarter turn about X maps the mesh's Z axis onto Y, standing the jet up.
+      if (upright) inner.rotation.x = -Math.PI / 2;
+      inner.add(source.clone(true));
+      holder.add(inner);
+      holder.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(holder);
+      if (box.isEmpty()) return null;
+      return { box, size: box.getSize(new THREE.Vector3()) };
+    };
+
     (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
       const source = (water as any)[key]?.scene;
       if (!source) return;
-      const probe = source.clone(true);
-      probe.updateWorldMatrix(true, true);
-      const box = new THREE.Box3().setFromObject(probe);
-      if (box.isEmpty()) return;
-      const size = box.getSize(new THREE.Vector3());
+
+      const asIs = measure(source, false);
+      if (!asIs) return;
+
+      // A jet is long along the flow. If the mesh is longer across Z than up Y it was
+      // authored lying down (Water30/120/135 all are), so stand it up and measure again.
+      const upright = asIs.size.z > asIs.size.y * 1.15;
+      const final = upright ? measure(source, true) : asIs;
+      if (!final) return;
+
       fit[key] = {
-        center: box.getCenter(new THREE.Vector3()),
-        height: Math.max(size.y, 1e-6),
-        width: Math.max(size.x, size.z, 1e-6),
+        center: final.box.getCenter(new THREE.Vector3()),
+        height: Math.max(final.size.y, 1e-6),
+        width: Math.max(final.size.x, final.size.z, 1e-6),
+        upright,
       };
     });
     return fit;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [water.low, water.flat, water.hemi, water.cone, water.oblique]);
+  }, [...waterGltfs]);
 
   /**
    * Let the valves and the switch turn on the spot.
@@ -591,10 +661,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       }
     });
 
-    const pulse = Math.sin(t * 6.0) * 0.28 + 0.55;
+    // Enough to read as "click me", not enough to repaint the part blue.
+    const pulse = Math.sin(t * 5.0) * 0.12 + 0.26;
     wanted.forEach((key) => {
       highlighted.current.add(key);
-      setGlow(key, key === hoveredKey ? 1.25 : pulse);
+      setGlow(key, key === hoveredKey ? 0.7 : pulse);
     });
 
     // --- Unscrew / re-seat sequence -------------------------------------------
@@ -733,7 +804,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // spreads across. Scaling uniformly instead (height and width from the same
         // factor) blew the plume out to nearly three times the tank's diameter.
         let scaleY = gap / fit.height;
-        let scaleXZ = plateWidth / fit.width;
+        // Width is keyed to the plate the jet spreads across — but a little wider than the
+        // plate itself, because the water carries on past its edge. Pinning it exactly to
+        // the plate flattened every plume into a plain cylinder and threw away the shape
+        // each mesh was simulated for. (Scaling uniformly is the other extreme: that blew
+        // the plume out to nearly three times the tank's diameter.)
+        const swell = 0.7 + 0.3 * Math.min(1, state.valveOpening / SECOND_READING_VALVE);
+        let scaleXZ = (plateWidth * 1.55 * swell) / fit.width;
 
         if (shape === 'low') {
           // A startup trickle: short, and barely wider than the nozzle.
@@ -742,6 +819,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           scaleXZ *= 0.3;
           tmp.mid.y -= gap * (1 - startup) * 0.5; // keep the rising jet on the nozzle
         }
+
+        // Ripple faster the harder the jet runs.
+        waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
 
         waterGroupRef.current.position.copy(tmp.mid);
         waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
@@ -807,8 +887,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         })}
       </group>
 
-      {/* Each shape is re-centred on its own origin so the outer group can simply be
-          parked at the midpoint of the nozzle/deflector gap. */}
+      {/* Each plume is stood upright, then re-centred on its own origin, so the outer group
+          can simply be parked at the midpoint of the nozzle/deflector gap. */}
       <group ref={waterGroupRef} visible={false}>
         {(Object.keys(WATER_SHAPES) as WaterShapeKey[]).map((key) => {
           const fit = waterFit[key];
@@ -819,7 +899,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               key={key}
               position={fit ? [-fit.center.x, -fit.center.y, -fit.center.z] : [0, 0, 0]}
             >
-              <primitive object={source} />
+              <group rotation={fit?.upright ? [-Math.PI / 2, 0, 0] : [0, 0, 0]}>
+                <primitive object={source} />
+              </group>
             </group>
           );
         })}
