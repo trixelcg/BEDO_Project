@@ -108,6 +108,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const highlighted = useRef<Set<string>>(new Set());
   /** Nozzle exit, in the apparatus's local space. */
   const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
+  /** The glass tank the water fills, in the apparatus's local space. */
+  const [tankBounds, setTankBounds] = useState<{
+    cx: number;
+    cz: number;
+    baseY: number;
+    width: number;
+    height: number;
+  } | null>(null);
   /** Groups that let a part spin about its own centre — see makePivot. */
   const pivots = useRef<Record<string, THREE.Group>>({});
 
@@ -438,6 +446,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       setNozzleLip([lip.x, lip.y, lip.z]);
     }
 
+    // The tank the water fills.
+    if (localBox([MESH.tank])) {
+      tmp.box.getCenter(tmp.center);
+      tmp.box.getSize(tmp.size);
+      const floor = group.worldToLocal(
+        new THREE.Vector3(tmp.center.x, tmp.box.min.y, tmp.center.z)
+      );
+      setTankBounds({
+        cx: floor.x,
+        cz: floor.z,
+        baseY: floor.y,
+        width: Math.max(tmp.size.x, tmp.size.z) / modelScale,
+        height: tmp.size.y / modelScale,
+      });
+    }
+
     const spot = (name: string, action: Action, minRadius: number): Hotspot | null => {
       if (!localBox([name])) return null;
       tmp.box.getCenter(tmp.center);
@@ -711,10 +735,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       volPivot.rotation.x = damp(volPivot.rotation.x, target, 6);
     }
 
+    // The switch is a rotary knob on the panel, and the panel faces -X. A knob turns about
+    // the axis it sits on — so X, the panel's normal. Turning it about Z tipped it over
+    // sideways out of its housing.
     const powerPivot = pivots.current[MESH.powerSwitch];
     if (powerPivot) {
       const target = state.isPowerOn ? -QUARTER_TURN : 0;
-      powerPivot.rotation.z = damp(powerPivot.rotation.z, target, 12);
+      powerPivot.rotation.x = damp(powerPivot.rotation.x, target, 12);
     }
 
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
@@ -763,68 +790,66 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       );
     }
 
-    // --- Water jet --------------------------------------------------------------
-    // Two things had to be true here and neither was.
+    // --- Water ------------------------------------------------------------------
+    // The deflector meshes are not jets. Rendered on their own, Water90_Flat is a fat
+    // cylinder and Water180 a cylinder capped with a cone: they are the *body of water
+    // filling the tank*, its top surface shaped by whatever the jet is striking. That is
+    // what the reference video shows at the second reading — a tank full of blue water,
+    // not a thin stream. Only Water_low (5.1 x 17.5 x 5.1) is an actual jet.
     //
-    // The jet group is a child of the apparatus, so it must be placed in the group's
-    // local space; the old code copied world positions straight in, so the group's own
-    // transform applied a second time and threw the jet clear of the tank.
+    // So they scale against the tank, uniformly, and stand on its floor. Stretching them
+    // across the nozzle/deflector gap — which is what this did — squashed a tank-sized
+    // volume into a thin ribbon and destroyed the shape each one was simulated for.
     //
-    // And because the GLB is baked, every node shares the same origin — asking the
-    // nozzle and the deflector for getWorldPosition() returned the *same* point, so
-    // the gap between them measured zero and the jet was scaled to nothing. The real
-    // positions only live in the geometry, so measure the bounding boxes instead.
+    // Everything is computed in the apparatus's local space: the water group is a child of
+    // it, so world coordinates would have its transform applied a second time. And because
+    // the GLB is baked, every node shares one origin, so getWorldPosition() cannot be used
+    // to locate anything — only the geometry's bounding box can.
     const group = groupRef.current;
     const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
 
-    if (flowing && group && activeDef && nozzleLip && waterGroupRef.current) {
-      tmp.box.setFromObject(activeDef);
-      tmp.box.getCenter(tmp.defPos);
-      tmp.box.getSize(tmp.size);
-      tmp.defPos.setY(tmp.box.min.y); // the face the jet strikes
-      group.worldToLocal(tmp.defPos);
-
-      tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
-
-      const gap = tmp.defPos.y - tmp.nozzlePos.y;
-      /** Deflector diameter, back in the apparatus's local units. */
-      const plateWidth = Math.max(tmp.size.x, tmp.size.z) / modelScale;
-
-      // Below a trickle the jet has no shape; above it the plume takes the form of
-      // whichever deflector is mounted.
+    if (flowing && group && activeDef && nozzleLip && tankBounds && waterGroupRef.current) {
+      // Below a trickle the water has no shape yet — it is still a stream climbing from the
+      // nozzle. Above it, the tank fills and the surface takes the deflector's form.
       const shape: WaterShapeKey = state.valveOpening > 0.22 ? deflector.water : 'low';
       const fit = waterFit[shape];
 
-      if (gap > 0.001 && fit) {
+      if (fit) {
         waterGroupRef.current.visible = true;
 
-        tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
-
-        // Height spans the nozzle/deflector gap; width is driven by the plate the jet
-        // spreads across. Scaling uniformly instead (height and width from the same
-        // factor) blew the plume out to nearly three times the tank's diameter.
-        let scaleY = gap / fit.height;
-        // Width is keyed to the plate the jet spreads across — but a little wider than the
-        // plate itself, because the water carries on past its edge. Pinning it exactly to
-        // the plate flattened every plume into a plain cylinder and threw away the shape
-        // each mesh was simulated for. (Scaling uniformly is the other extreme: that blew
-        // the plume out to nearly three times the tank's diameter.)
-        const swell = 0.7 + 0.3 * Math.min(1, state.valveOpening / SECOND_READING_VALVE);
-        let scaleXZ = (plateWidth * 1.55 * swell) / fit.width;
-
         if (shape === 'low') {
-          // A startup trickle: short, and barely wider than the nozzle.
+          // A stream from the nozzle lip up to the plate it strikes.
+          tmp.box.setFromObject(activeDef);
+          tmp.box.getCenter(tmp.defPos);
+          tmp.defPos.setY(tmp.box.min.y);
+          group.worldToLocal(tmp.defPos);
+          tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
+
+          const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
           const startup = Math.min(1, state.valveOpening * 4.5);
-          scaleY = (gap * startup) / fit.height;
-          scaleXZ *= 0.3;
-          tmp.mid.y -= gap * (1 - startup) * 0.5; // keep the rising jet on the nozzle
+          const scaleY = (gap * startup) / fit.height;
+          const scaleXZ = (tankBounds.width * 0.10) / fit.width;
+
+          tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
+          tmp.mid.y -= gap * (1 - startup) * 0.5; // keep the rising stream on the nozzle
+          waterGroupRef.current.position.copy(tmp.mid);
+          waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
+        } else {
+          // The tank fills. Uniform, so each mesh keeps the proportions it was simulated
+          // at, sized to sit just inside the glass and standing on the tank floor.
+          const fill = 0.86 + 0.14 * Math.min(1, state.valveOpening / SECOND_READING_VALVE);
+          const k = ((tankBounds.width * 0.9) / fit.width) * fill;
+
+          waterGroupRef.current.position.set(
+            tankBounds.cx,
+            tankBounds.baseY + (fit.height * k) / 2,
+            tankBounds.cz
+          );
+          waterGroupRef.current.scale.setScalar(k);
         }
 
         // Ripple faster the harder the jet runs.
         waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
-
-        waterGroupRef.current.position.copy(tmp.mid);
-        waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
 
         (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
           const gltf = (water as any)[key];

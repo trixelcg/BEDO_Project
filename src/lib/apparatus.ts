@@ -32,6 +32,11 @@ export const MESH = {
   rod: 'deflector_rod',
   pointer: 'Pointer',
   nozzle: 'JET Force 2_214',
+  /**
+   * The glass tank the jet plays inside — 0.181 wide by 0.317 tall, from y = 1.058 up to
+   * the cover. The water meshes are sized to fill it, so this is what they scale against.
+   */
+  tank: 'JET Force 2_205',
   // The flow control valve's lever, on the black pipe under the bench, on the left.
   flowValve: 'Valve',
   /**
