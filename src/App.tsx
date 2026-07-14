@@ -1,24 +1,58 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import type { SimulationState, SceneConfig } from './types/index';
+import type { ErrorCode, ExperimentId, SimulationState, SceneConfig } from './types/index';
 import { MenuSettings } from './components/MenuSettings';
 import { Sliders, X } from 'lucide-react';
-import { DEFAULT_DEFLECTOR_ID, getDeflector } from './lib/apparatus';
+import { getDeflector } from './lib/apparatus';
+import { buildSteps, getExperiment, deflectorsFor } from './lib/experiments';
 import {
   FIRST_READING_VALVE,
   ROW_VALVE_SETTINGS,
   SECOND_READING_VALVE,
+  TOTAL_FLOW_L_MIN,
   VALVE_SNAP_MARGIN,
   computeRow,
 } from './lib/physics';
 import './index.css';
 
-const initialState = (language: SimulationState['language'] = 'en'): SimulationState => ({
+/**
+ * The five guards from BEDO's state machine document. Every control stays clickable at
+ * all times — these are what stop an unsafe action, in both Free and Guided mode.
+ */
+const ERRORS: Record<ErrorCode, { en: string; ar: string }> = {
+  error1: {
+    en: 'You can’t add weights while the tank is open.',
+    ar: 'لا يمكن إضافة الأوزان أثناء فتح الخزان.',
+  },
+  error2: {
+    en: 'Remove the tank cover first.',
+    ar: 'يرجى إزالة غطاء الخزان أولاً.',
+  },
+  error3: {
+    en: 'You can’t open the tank while the power is on.',
+    ar: 'لا يمكن فتح الخزان أثناء تشغيل الطاقة.',
+  },
+  error4: {
+    en: 'You can’t turn on the power while the tank is open.',
+    ar: 'لا يمكن تشغيل الطاقة أثناء فتح الخزان.',
+  },
+  error5: {
+    en: 'Remove all weights first before opening the tank.',
+    ar: 'يرجى إزالة جميع الأوزان قبل فتح الخزان.',
+  },
+};
+
+const initialState = (
+  language: SimulationState['language'] = 'en',
+  experimentId: ExperimentId = 'flat'
+): SimulationState => ({
+  mode: 'guided',
+  experimentId,
   currentStep: 1,
   language,
-  selectedDeflectorId: DEFAULT_DEFLECTOR_ID,
+  selectedDeflectorId: getExperiment(experimentId).defaultAngle,
   isCoverOpen: false,
   isPowerOn: false,
   valveOpening: 0.0,
@@ -28,7 +62,11 @@ const initialState = (language: SimulationState['language'] = 'en'): SimulationS
   recordedRows: [],
   currentRecordIndex: 0,
   showMonitor: false,
+  isCalculated: false,
+  quizAnswer: null,
+  params: { qTotal: TOTAL_FLOW_L_MIN, customWeightG: 25 },
   warningMessage: null,
+  notice: null,
 });
 
 /** Steps where the student is loading weights, and the table row each one fills in. */
@@ -97,8 +135,14 @@ export default function App() {
     }
   };
 
-  // Keep the results table in step with the apparatus. The row the student is
-  // currently balancing shows the live weights; rows already taken keep theirs.
+  const experiment = useMemo(() => getExperiment(state.experimentId), [state.experimentId]);
+  const steps = useMemo(() => {
+    const d = getDeflector(state.selectedDeflectorId);
+    return buildSteps(d.nameEn, d.nameAr);
+  }, [state.selectedDeflectorId]);
+
+  // Keep the results table in step with the apparatus. The row the student is currently
+  // balancing shows the live weights; rows already taken keep theirs.
   useEffect(() => {
     setState((prev) => {
       const activeRow = BALANCE_ROW[prev.currentStep];
@@ -111,93 +155,103 @@ export default function App() {
               ? (prev.recordedRows[idx]?.loadedWeights ?? [])
               : [];
 
-        return computeRow(idx, n, prev.selectedDeflectorId, weights);
+        return computeRow(idx, n, prev.selectedDeflectorId, weights, prev.params.qTotal);
       });
 
       return { ...prev, recordedRows };
     });
-  }, [state.selectedDeflectorId, state.loadedWeights, state.currentStep, state.currentRecordIndex]);
+  }, [
+    state.selectedDeflectorId,
+    state.loadedWeights,
+    state.currentStep,
+    state.currentRecordIndex,
+    state.params.qTotal,
+  ]);
 
-  const triggerWarning = (en: string, ar: string) =>
-    setState((prev) => ({ ...prev, warningMessage: { en, ar } }));
+  const raise = useCallback((code: ErrorCode) => {
+    setState((prev) => ({ ...prev, warningMessage: { ...ERRORS[code], code } }));
+  }, []);
 
-  const clearWarning = () => setState((prev) => ({ ...prev, warningMessage: null }));
+  const clearWarning = useCallback(
+    () => setState((prev) => ({ ...prev, warningMessage: null })),
+    []
+  );
+  const clearNotice = useCallback(() => setState((prev) => ({ ...prev, notice: null })), []);
 
-  // Steps 1 and 3 — unscrew and re-seat the tank cover.
+  /** Raise the step's observation popup, if it has one and we are guiding. */
+  const noticeFor = (prev: SimulationState, step: number) => {
+    if (prev.mode !== 'guided') return null;
+    const s = steps.find((x) => x.id === step);
+    return s?.noticeEn ? { en: s.noticeEn, ar: s.noticeAr ?? s.noticeEn } : null;
+  };
+
+  /** In guided mode, advance only when the action matches the step being asked for. */
+  const advance = (prev: SimulationState, from: number, to: number): Partial<SimulationState> =>
+    prev.mode === 'guided' && prev.currentStep === from
+      ? { currentStep: to, notice: noticeFor(prev, from) }
+      : {};
+
+  // --- Cover (steps 1 and 3) --------------------------------------------------
   const handleCoverClick = () => {
     clearWarning();
 
-    if (state.isPowerOn) {
-      triggerWarning(
-        'Error: You cannot open the tank cover while pump power is active!',
-        'خطأ: لا يمكن فتح غطاء الخزان أثناء تشغيل مضخة المياه!'
-      );
-      return;
-    }
-
-    if (!state.isCoverOpen && state.loadedWeights.length > 0) {
-      triggerWarning(
-        'Error: Remove all weights from the tray before opening the tank!',
-        'خطأ: يرجى إزالة جميع الأوزان من الصينية قبل فتح الخزان!'
-      );
-      return;
+    if (!state.isCoverOpen) {
+      if (state.isPowerOn) return raise('error3');
+      if (state.loadedWeights.length > 0) return raise('error5');
     }
 
     setState((prev) => {
       const isCoverOpen = !prev.isCoverOpen;
-      let currentStep = prev.currentStep;
-      if (prev.currentStep === 1 && isCoverOpen) currentStep = 2;
-      else if (prev.currentStep === 3 && !isCoverOpen) currentStep = 4;
-      return { ...prev, isCoverOpen, currentStep };
+      return {
+        ...prev,
+        isCoverOpen,
+        ...(isCoverOpen ? advance(prev, 1, 2) : advance(prev, 3, 4)),
+      };
     });
   };
 
-  // Step 2 — pick a deflector off the tray.
+  // --- Deflector (step 2) ------------------------------------------------------
   const handleSelectDeflector = (id: number) => {
     clearWarning();
-    if (state.currentStep !== 2) return;
+    // Error 2: the rod is inside the tank, so the cover has to come off first.
+    if (!state.isCoverOpen) return raise('error2');
     setState((prev) => ({ ...prev, selectedDeflectorId: id }));
   };
 
-  // Step 4 — pump power.
+  // --- Power (step 4) ----------------------------------------------------------
   const handleTogglePower = () => {
     clearWarning();
-
-    if (!state.isPowerOn && state.isCoverOpen) {
-      triggerWarning(
-        'Error: You cannot turn on power while the tank cover is open!',
-        'خطأ: لا يمكن تشغيل الطاقة أثناء فتح غطاء الخزان الأسطواني!'
-      );
-      return;
-    }
+    if (!state.isPowerOn && state.isCoverOpen) return raise('error4');
 
     setState((prev) => {
       const isPowerOn = !prev.isPowerOn;
       return {
         ...prev,
         isPowerOn,
-        currentStep: prev.currentStep === 4 && isPowerOn ? 5 : prev.currentStep,
         valveOpening: isPowerOn ? prev.valveOpening : 0.0,
+        ...(isPowerOn ? advance(prev, 4, 5) : {}),
       };
     });
   };
 
-  // Step 5 — volumetric control valve.
+  // --- Volumetric valve (step 5) ----------------------------------------------
   const handleToggleVolumetricValve = () => {
     clearWarning();
-    if (state.currentStep !== 5) return;
     setState((prev) => ({ ...prev, isVolumetricValveOpen: !prev.isVolumetricValveOpen }));
   };
 
-  // Steps 6 and 8 — flow control valve.
+  // --- Flow valve (steps 6 and 8) ---------------------------------------------
   const handleSetValve = (val: number) => {
     clearWarning();
-
     if (!state.isPowerOn && val > 0) {
-      triggerWarning(
-        'Error: Cannot flow water. Turn on the power switch first!',
-        'خطأ: لا يمكن تدفق المياه. يرجى تشغيل مفتاح الطاقة أولاً!'
-      );
+      // Not one of the five documented guards — the pump simply isn't running.
+      setState((prev) => ({
+        ...prev,
+        notice: {
+          en: 'Turn on the power switch before opening the valve.',
+          ar: 'يرجى تشغيل مفتاح الطاقة قبل فتح الصمام.',
+        },
+      }));
       return;
     }
 
@@ -215,20 +269,10 @@ export default function App() {
   const handleFlowValveClick = () =>
     handleSetValve(state.currentStep === 8 ? SECOND_READING_VALVE : FIRST_READING_VALVE);
 
-  // Steps 7 and 9 — balance the pointer with weights.
+  // --- Weights (steps 7 and 9) -------------------------------------------------
   const handleAddWeight = (weight: number) => {
     clearWarning();
-
-    if (BALANCE_ROW[state.currentStep] === undefined) return;
-
-    if (state.isCoverOpen) {
-      triggerWarning(
-        'Error: Cannot load weights on tray while tank cover is open!',
-        'خطأ: لا يمكن وضع الأوزان على الصينية وغطاء الخزان مفتوح!'
-      );
-      return;
-    }
-
+    if (state.isCoverOpen) return raise('error1');
     setState((prev) => ({ ...prev, loadedWeights: [...prev.loadedWeights, weight] }));
   };
 
@@ -237,8 +281,10 @@ export default function App() {
     setState((prev) => ({ ...prev, loadedWeights: [] }));
   };
 
+  // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => {
     clearWarning();
+    clearNotice();
 
     setState((prev) => {
       const next: SimulationState = { ...prev };
@@ -272,22 +318,54 @@ export default function App() {
           break;
         case 10:
           next.showMonitor = true;
+          next.currentStep = 11;
+          break;
+        case 11:
+          next.currentStep = 12;
           break;
       }
 
+      next.notice = noticeFor(prev, prev.currentStep);
       return next;
     });
   };
 
-  const handleToggleMonitor = () => {
-    clearWarning();
-    setState((prev) => ({ ...prev, showMonitor: !prev.showMonitor }));
+  /** Step 11 — record F_ac in the table. */
+  const handleCalculate = () => {
+    setState((prev) => ({
+      ...prev,
+      isCalculated: true,
+      ...(prev.mode === 'guided' && prev.currentStep === 11
+        ? { currentStep: 12, notice: noticeFor(prev, 11) }
+        : {}),
+    }));
   };
 
-  const handleReset = () => {
+  const handleAnswerQuiz = (choice: number) =>
+    setState((prev) => ({ ...prev, quizAnswer: choice }));
+
+  const handleToggleMonitor = () => {
     clearWarning();
-    setState(initialState(state.language));
+    setState((prev) => ({
+      ...prev,
+      showMonitor: !prev.showMonitor,
+      ...(prev.mode === 'guided' && prev.currentStep === 10 && !prev.showMonitor
+        ? { currentStep: 11 }
+        : {}),
+    }));
   };
+
+  const handleSetMode = (mode: SimulationState['mode']) =>
+    setState((prev) => ({ ...prev, mode, warningMessage: null, notice: null }));
+
+  /** Switching experiment reloads the rig with that sheet's deflector. */
+  const handleSelectExperiment = (experimentId: ExperimentId) =>
+    setState((prev) => initialState(prev.language, experimentId));
+
+  const handleSetParams = (params: Partial<SimulationState['params']>) =>
+    setState((prev) => ({ ...prev, params: { ...prev.params, ...params } }));
+
+  const handleReset = () => setState(initialState(state.language, state.experimentId));
 
   const deflector = getDeflector(state.selectedDeflectorId);
   const deflectorName = state.language === 'ar' ? deflector.nameAr : deflector.nameEn;
@@ -296,6 +374,7 @@ export default function App() {
     <div className="app-container">
       <Scene3D
         state={state}
+        steps={steps}
         sceneConfig={sceneConfig}
         onCoverClick={handleCoverClick}
         onSelectDeflector={handleSelectDeflector}
@@ -337,7 +416,13 @@ export default function App() {
 
       <UIOverlay
         state={state}
+        steps={steps}
+        experiment={experiment}
+        availableDeflectors={deflectorsFor(state.experimentId)}
         onSelectLanguage={(lang) => setState((prev) => ({ ...prev, language: lang }))}
+        onSetMode={handleSetMode}
+        onSelectExperiment={handleSelectExperiment}
+        onSetParams={handleSetParams}
         onSelectDeflector={handleSelectDeflector}
         onSetValve={handleSetValve}
         onAddWeight={handleAddWeight}
@@ -347,14 +432,17 @@ export default function App() {
         onToggleMonitor={handleToggleMonitor}
         onReset={handleReset}
         clearWarning={clearWarning}
+        clearNotice={clearNotice}
         onOkClick={handleStepOkClick}
       />
 
       {state.showMonitor && (
         <SoftwareMonitor
-          language={state.language}
+          state={state}
+          experiment={experiment}
           deflectorName={deflectorName}
-          recordedRows={state.recordedRows}
+          onCalculate={handleCalculate}
+          onAnswerQuiz={handleAnswerQuiz}
           onClose={handleToggleMonitor}
           onReset={handleReset}
         />

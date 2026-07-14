@@ -29,11 +29,8 @@ export const BALANCE_TOLERANCE_G = 10;
  * Valve opening n (0..1) to volumetric flow. Verified against the reference
  * simulator: n = 0.5 gives 27.024 L/min, which is exactly the row it records.
  */
-export const flowRateLMin = (n: number): number =>
-  Math.max(
-    0,
-    TOTAL_FLOW_L_MIN * (-4.9138 * n ** 4 + 8.8783 * n ** 3 - 3.7629 * n ** 2 + 0.7265 * n)
-  );
+export const flowRateLMin = (n: number, qTotal: number = TOTAL_FLOW_L_MIN): number =>
+  Math.max(0, qTotal * (-4.9138 * n ** 4 + 8.8783 * n ** 3 - 3.7629 * n ** 2 + 0.7265 * n));
 
 /**
  * Valve opening for each row of the results table. Rows 1 and 2 are the two readings
@@ -70,8 +67,12 @@ export interface JetState {
  * The reference simulator's own table confirms the linear form: it reports
  * v0 = 5.74 and v = 5.679, and sqrt(5.74^2 - 2*9.81*0.035) = 5.679.
  */
-export function jetState(valveOpen: number, deflectorId: number): JetState {
-  const flowRateQLMin = flowRateLMin(valveOpen);
+export function jetState(
+  valveOpen: number,
+  deflectorId: number,
+  qTotal: number = TOTAL_FLOW_L_MIN
+): JetState {
+  const flowRateQLMin = flowRateLMin(valveOpen, qTotal);
   const flowRateQM3 = flowRateQLMin / 60000;
   const theoreticalVo = flowRateQM3 / NOZZLE_AREA_M2;
 
@@ -90,16 +91,20 @@ export function jetState(valveOpen: number, deflectorId: number): JetState {
 }
 
 /** Mass of weights that balances the jet at this setting, rounded to the nearest 10 g. */
-export const targetMassG = (valveOpen: number, deflectorId: number): number =>
-  Math.round(((jetState(valveOpen, deflectorId).fth / GRAVITY) * 1000) / 10) * 10;
+export const targetMassG = (
+  valveOpen: number,
+  deflectorId: number,
+  qTotal: number = TOTAL_FLOW_L_MIN
+): number => Math.round(((jetState(valveOpen, deflectorId, qTotal).fth / GRAVITY) * 1000) / 10) * 10;
 
 export function computeRow(
   index: number,
   valveOpen: number,
   deflectorId: number,
-  weights: number[]
+  weights: number[],
+  qTotal: number = TOTAL_FLOW_L_MIN
 ): RecordRow {
-  const jet = jetState(valveOpen, deflectorId);
+  const jet = jetState(valveOpen, deflectorId, qTotal);
 
   const mass = (jet.fth / GRAVITY) * 1000;
   const idealMass = Math.round(mass / 10) * 10;
@@ -110,7 +115,7 @@ export function computeRow(
 
   return {
     index,
-    totalFlowValue: TOTAL_FLOW_L_MIN,
+    totalFlowValue: qTotal,
     valveOpen,
     ...jet,
     weightsN,

@@ -216,37 +216,36 @@ export type AnchorKey =
 
 export type Anchors = Partial<Record<AnchorKey, [number, number, number]>>;
 
-export interface StepFocus {
-  anchor: AnchorKey;
+export interface AnchorView {
   /** Camera position relative to the anchor, in model units (scaled by the group). */
   offset: [number, number, number];
   /**
    * Where the guide arrow floats relative to the anchor. Defaults to hovering above.
    * The valves live in the few centimetres under the bench top, so an arrow directly
-   * above them is buried inside the cabinet — those steps push it out towards the
-   * viewer instead.
+   * above them is buried inside the cabinet — those push it out towards the viewer.
    */
   arrowOffset?: [number, number, number];
 }
 
 export const DEFAULT_ARROW_OFFSET: [number, number, number] = [0, 0.09, 0];
 
-// Camera framing per step, mirroring how the reference video moves the view to
-// whichever part the student has to touch next.
-//
-// The unit faces -Z: the control panel, both valves and the bench front all look that
-// way, and the pipework is boxed in behind them. Framing the valves from +Z puts the
-// camera inside the sump tank staring at the back of the cabinet, so those steps take
-// negative-Z offsets. The tray and cover sit on top and read fine from either side.
-export const STEP_FOCUS: Record<number, StepFocus> = {
-  1: { anchor: 'cover', offset: [0.28, 0.24, 0.62] },
-  2: { anchor: 'tray', offset: [0.02, 0.30, 0.42] },
-  3: { anchor: 'cover', offset: [0.34, 0.28, 0.70] },
-  4: { anchor: 'power', offset: [-0.30, 0.26, -0.58] },
-  5: { anchor: 'volumetricValve', offset: [-0.28, 0.30, -0.90], arrowOffset: [0, 0.03, -0.11] },
-  6: { anchor: 'flowValve', offset: [-0.24, 0.26, -0.78], arrowOffset: [0, 0.03, -0.10] },
-  7: { anchor: 'weights', offset: [0.22, 0.38, 0.80] },
-  8: { anchor: 'flowValve', offset: [-0.24, 0.26, -0.78], arrowOffset: [0, 0.03, -0.10] },
-  9: { anchor: 'weights', offset: [0.22, 0.38, 0.80] },
-  10: { anchor: 'overview', offset: [0.35, 0.75, 1.75] },
+/**
+ * How to frame each part, so the camera can fly to whichever one the current step is
+ * about — the way the reference simulator reframes between steps.
+ *
+ * The unit faces -Z: the control panel, both valves and the bench front all look that
+ * way, and the pipework is boxed in behind them. Framing the valves from +Z puts the
+ * camera inside the sump tank staring at the back of the cabinet, so those take
+ * negative-Z offsets. The tray and cover sit on top and read fine from either side.
+ */
+export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
+  cover: { offset: [0.28, 0.24, 0.62] },
+  tray: { offset: [0.02, 0.30, 0.42] },
+  power: { offset: [-0.30, 0.26, -0.58] },
+  volumetricValve: { offset: [-0.28, 0.30, -0.90], arrowOffset: [0, 0.03, -0.11] },
+  flowValve: { offset: [-0.24, 0.26, -0.78], arrowOffset: [0, 0.03, -0.10] },
+  weights: { offset: [0.22, 0.38, 0.80] },
+  pointer: { offset: [0.20, 0.26, 0.60] },
+  pan: { offset: [0.20, 0.26, 0.60] },
+  overview: { offset: [0.35, 0.75, 1.75] },
 };

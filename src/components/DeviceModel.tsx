@@ -4,12 +4,12 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { SimulationState } from '../types/index';
 import {
+  ANCHOR_VIEW,
   COVER_LIFT,
   DEFAULT_ARROW_OFFSET,
   DEFLECTORS,
   MESH,
   SCREW_LIFT,
-  STEP_FOCUS,
   WATER_SHAPES,
   WEIGHTS,
   getDeflector,
@@ -44,6 +44,8 @@ interface Hotspot {
 
 interface DeviceModelProps {
   state: SimulationState;
+  /** Part the current guided step is about — null in free mode. */
+  focusTarget: AnchorKey | null;
   groupRef: React.RefObject<THREE.Group | null>;
   anchors: Anchors;
   onAnchors: (anchors: Anchors) => void;
@@ -64,6 +66,7 @@ interface DeviceModelProps {
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
+  focusTarget,
   groupRef,
   anchors,
   onAnchors,
@@ -91,8 +94,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     oblique: useGLTF(WATER_SHAPES.oblique.url) as any,
   };
 
-  const [hoveredCover, setHoveredCover] = useState(false);
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
+  /** Meshes currently carrying a highlight material, so they can be put back. */
+  const highlighted = useRef<Set<string>>(new Set());
   /** Nozzle exit, in the apparatus's local space. */
   const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
 
@@ -337,25 +342,44 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     setHotspots(list.filter((h): h is Hotspot => h !== null));
   }, [scene, groupRef, onAnchors, tmp, modelScale]);
 
-  /** Parts the current step expects the student to touch — drives the pointer cursor. */
+  /**
+   * Parts the student is invited to touch right now.
+   *
+   * In free mode that is everything — the state machine lets any control be clicked at
+   * any time, and the guards decide. In guided mode it is only what the step asks for,
+   * which is what the pulsing highlight and the pointer cursor key off.
+   */
   const liveKeys = useMemo<Set<string>>(() => {
-    const s = state.currentStep;
     if (state.showMonitor) return new Set();
+
+    const trayDeflectors = DEFLECTORS.map((d) => d.shelf);
+    const trayWeights = WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!);
+
+    if (state.mode === 'free') {
+      return new Set([
+        MESH.tankCover,
+        MESH.powerSwitch,
+        MESH.flowValve,
+        MESH.volumetricValve,
+        ...trayDeflectors,
+        ...trayWeights,
+      ]);
+    }
+
+    const s = state.currentStep;
     if (s === 1 || s === 3) return new Set([MESH.tankCover]);
-    if (s === 2) return new Set(DEFLECTORS.map((d) => d.shelf));
+    if (s === 2) return new Set(trayDeflectors);
     if (s === 4) return new Set([MESH.powerSwitch]);
     if (s === 5) return new Set([MESH.volumetricValve]);
     if (s === 6 || s === 8) return new Set([MESH.flowValve]);
-    if (s === 7 || s === 9) return new Set(WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!));
+    if (s === 7 || s === 9) return new Set(trayWeights);
     return new Set();
-  }, [state.currentStep, state.showMonitor]);
+  }, [state.mode, state.currentStep, state.showMonitor]);
 
-  /** Where the guide arrow floats — null once the step's action is done. */
+  /** Where the guide arrow floats — null in free mode, or once the step is satisfied. */
   const arrowPos = useMemo<[number, number, number] | null>(() => {
-    if (state.showMonitor) return null;
+    if (state.showMonitor || state.mode !== 'guided' || !focusTarget) return null;
     const step = state.currentStep;
-    const focus = STEP_FOCUS[step];
-    if (!focus) return null;
 
     const done =
       (step === 1 && state.isCoverOpen) ||
@@ -366,14 +390,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       (step === 8 && state.valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) ||
       (step === 7 && !!state.recordedRows[1]?.balanced) ||
       (step === 9 && !!state.recordedRows[2]?.balanced) ||
-      step === 10;
+      step >= 10;
 
-    const anchor = anchors[focus.anchor];
+    const anchor = anchors[focusTarget];
     if (done || !anchor) return null;
 
-    const off = focus.arrowOffset ?? DEFAULT_ARROW_OFFSET;
+    const off = ANCHOR_VIEW[focusTarget]?.arrowOffset ?? DEFAULT_ARROW_OFFSET;
     return [anchor[0] + off[0], anchor[1] + off[1], anchor[2] + off[2]];
-  }, [state, anchors]);
+  }, [state, anchors, focusTarget]);
 
   const handleHotspot = (action: Action) => {
     switch (action.kind) {
@@ -445,6 +469,45 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       .filter((w): w is { key: string; object: THREE.Object3D; meshName: string; idx: number } => w !== null);
   }, [scene, state.loadedWeights]);
 
+  /**
+   * Glow a clickable part, the way the reference simulator does (it uses HighlightPlus).
+   *
+   * The GLB's materials are shared across meshes — a single baked atlas — so tinting one
+   * in place would light up unrelated parts too. Swap in a per-object clone the first
+   * time it lights up, and put the original back when it stops.
+   */
+  const setGlow = useCallback(
+    (name: string, intensity: number) => {
+      const obj = pick(name);
+      obj?.traverse((child: any) => {
+        if (!child.isMesh || !child.material) return;
+        if (!child.userData.__baseMat) {
+          child.userData.__baseMat = child.material;
+          child.material = child.material.clone();
+        }
+        const mat = child.material;
+        if (mat.emissive) {
+          mat.emissive.set('#1e7fd6');
+          mat.emissiveIntensity = intensity;
+        }
+      });
+    },
+    [pick]
+  );
+
+  const clearGlow = useCallback(
+    (name: string) => {
+      const obj = pick(name);
+      obj?.traverse((child: any) => {
+        if (!child.isMesh || !child.userData.__baseMat) return;
+        child.material?.dispose?.();
+        child.material = child.userData.__baseMat;
+        delete child.userData.__baseMat;
+      });
+    },
+    [pick]
+  );
+
   useFrame((three, rawDelta) => {
     if (!scene) return;
     const t = three.clock.getElapsedTime();
@@ -462,25 +525,34 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const damp = (current: number, target: number, rate: number) =>
       THREE.MathUtils.damp(current, target, rate, delta);
 
-    // --- Cover highlight ------------------------------------------------------
-    const cover = pick(MESH.tankCover) as THREE.Mesh | undefined;
-    const coverMat = cover?.material as any;
-    if (coverMat?.emissive) {
-      const invite = (state.currentStep === 1 && !state.isCoverOpen) || hoveredCover;
-      if (invite) {
-        coverMat.color.set('#9fdcff');
-        coverMat.emissive.set('#0b3f7a');
-        coverMat.emissiveIntensity = hoveredCover ? 1.2 : Math.sin(t * 6.0) * 0.25 + 0.6;
-      } else {
-        coverMat.color.set('#ffffff');
-        coverMat.emissive.set('#000000');
-        coverMat.emissiveIntensity = 0;
-      }
+    // --- Highlights -------------------------------------------------------------
+    // The part under the cursor glows steadily; in guided mode the part the step is
+    // asking for pulses, so it is obvious where to click next.
+    const wanted = new Set<string>();
+    if (!state.showMonitor) {
+      if (hoveredKey) wanted.add(hoveredKey);
+      if (state.mode === 'guided' && focusTarget) liveKeys.forEach((k) => wanted.add(k));
     }
 
+    highlighted.current.forEach((key) => {
+      if (!wanted.has(key)) {
+        clearGlow(key);
+        highlighted.current.delete(key);
+      }
+    });
+
+    const pulse = Math.sin(t * 6.0) * 0.28 + 0.55;
+    wanted.forEach((key) => {
+      highlighted.current.add(key);
+      setGlow(key, key === hoveredKey ? 1.25 : pulse);
+    });
+
     // --- Unscrew / re-seat sequence -------------------------------------------
+    // The sequence timer runs on real time, not the clamped delta: clamping is there to
+    // keep the easing stable, and feeding it to a stopwatch would stretch the animation
+    // out on any machine rendering below 10 fps.
     if (animActiveRef.current) {
-      animTimeRef.current += delta;
+      animTimeRef.current += rawDelta;
       const a = animTimeRef.current;
       if (a > 0.05) {
         screwOffsetRef.current = damp(screwOffsetRef.current, SCREW_LIFT, 4);
@@ -717,12 +789,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           position={h.position}
           onPointerOver={(e) => {
             e.stopPropagation();
-            if (liveKeys.has(h.key)) document.body.style.cursor = 'pointer';
-            if (h.key === MESH.tankCover) setHoveredCover(true);
+            if (liveKeys.has(h.key)) {
+              document.body.style.cursor = 'pointer';
+              setHoveredKey(h.key);
+            }
           }}
           onPointerOut={() => {
             document.body.style.cursor = 'default';
-            if (h.key === MESH.tankCover) setHoveredCover(false);
+            setHoveredKey((k) => (k === h.key ? null : k));
           }}
           onClick={(e) => {
             e.stopPropagation();

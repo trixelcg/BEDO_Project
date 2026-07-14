@@ -4,10 +4,12 @@ import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
 import type { SimulationState, SceneConfig } from '../types/index';
-import { STEP_FOCUS, type Anchors } from '../lib/apparatus';
+import { ANCHOR_VIEW, type AnchorKey, type Anchors } from '../lib/apparatus';
+import type { ExperimentStep } from '../lib/experiments';
 
 interface Scene3DProps {
   state: SimulationState;
+  steps: ExperimentStep[];
   sceneConfig: SceneConfig;
   onCoverClick: () => void;
   onSelectDeflector: (id: number) => void;
@@ -65,11 +67,11 @@ const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 
  * OrbitControls afterwards, and aborts the flight if the student grabs the view.
  */
 const CameraRig: React.FC<{
-  step: number;
+  target: AnchorKey | null;
   showMonitor: boolean;
   anchors: Anchors;
   groupRef: React.RefObject<THREE.Group | null>;
-}> = ({ step, showMonitor, anchors, groupRef }) => {
+}> = ({ target, showMonitor, anchors, groupRef }) => {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as any;
 
@@ -79,13 +81,11 @@ const CameraRig: React.FC<{
   const to = useMemo(() => ({ pos: new THREE.Vector3(), target: new THREE.Vector3() }), []);
   const scratch = useMemo(() => new THREE.Vector3(), []);
 
-  // Queue a flight whenever the step changes and its anchor is known.
+  // Queue a flight whenever the focused part changes and its anchor is known.
   useEffect(() => {
-    if (showMonitor) return;
-    const focus = STEP_FOCUS[step];
-    if (!focus || !anchors[focus.anchor]) return;
+    if (showMonitor || !target || !anchors[target]) return;
     pending.current = true;
-  }, [step, showMonitor, anchors]);
+  }, [target, showMonitor, anchors]);
 
   // A drag or scroll means the student wants to look somewhere else — stop fighting them.
   useEffect(() => {
@@ -103,9 +103,9 @@ const CameraRig: React.FC<{
     if (!controls || !group) return;
 
     if (pending.current) {
-      const focus = STEP_FOCUS[step];
-      const anchor = focus && anchors[focus.anchor];
-      if (!focus || !anchor) return;
+      const anchor = target ? anchors[target] : undefined;
+      const view = target ? ANCHOR_VIEW[target] : undefined;
+      if (!anchor || !view) return;
 
       from.pos.copy(camera.position);
       from.target.copy(controls.target);
@@ -115,9 +115,9 @@ const CameraRig: React.FC<{
       to.pos.copy(
         group.localToWorld(
           scratch.set(
-            anchor[0] + focus.offset[0],
-            anchor[1] + focus.offset[1],
-            anchor[2] + focus.offset[2]
+            anchor[0] + view.offset[0],
+            anchor[1] + view.offset[1],
+            anchor[2] + view.offset[2]
           )
         )
       );
@@ -140,6 +140,7 @@ const CameraRig: React.FC<{
 
 export const Scene3D: React.FC<Scene3DProps> = ({
   state,
+  steps,
   sceneConfig,
   onCoverClick,
   onSelectDeflector,
@@ -151,6 +152,12 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
   const handleAnchors = useCallback((next: Anchors) => setAnchors(next), []);
+
+  // Only the guided flow drives the camera; in free mode the student owns the view.
+  const focusTarget =
+    state.mode === 'guided'
+      ? (steps.find((s) => s.id === state.currentStep)?.target ?? null)
+      : null;
 
   return (
     <div className="canvas-container">
@@ -193,6 +200,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         <Suspense fallback={<ModelLoadingPlaceholder />}>
           <DeviceModel
             state={state}
+            focusTarget={focusTarget}
             groupRef={apparatusRef}
             anchors={anchors}
             onAnchors={handleAnchors}
@@ -217,7 +225,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         </Suspense>
 
         <CameraRig
-          step={state.currentStep}
+          target={focusTarget}
           showMonitor={state.showMonitor}
           anchors={anchors}
           groupRef={apparatusRef}
