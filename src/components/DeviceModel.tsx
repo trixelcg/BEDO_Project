@@ -790,7 +790,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       entries.push({
         key: `${idx}-${grams}`,
         object,
-        offset: [pan[0] - centre.x, pan[1] + cum + h / 2 - centre.y, pan[2] - centre.z],
+        offset: [pan[0] - proto.position.x, pan[1] + cum + h / 2 - centre.y, pan[2] - proto.position.z],
       });
       cum += h;
     });
@@ -928,11 +928,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       volPivot.rotation.x = damp(volPivot.rotation.x, target, 6);
     }
 
-    // The switch is a rotary knob on the panel, and the panel faces Z. A knob turns about
-    // the axis it sits on — so Z, the panel's normal (perpendicular to the XY plane).
+    // The switch is a rotary knob on the panel, rotating about its local Z axis.
     const powerPivot = pivots.current[MESH.powerSwitch];
     if (powerPivot) {
       const target = state.isPowerOn ? -QUARTER_TURN : 0;
+      powerPivot.rotation.x = 0;
       powerPivot.rotation.z = damp(powerPivot.rotation.z, target, 12);
     }
 
