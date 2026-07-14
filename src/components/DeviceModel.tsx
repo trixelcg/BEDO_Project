@@ -984,21 +984,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     lift(MESH.tankCover, coverOffsetRef.current);
     lift(MESH.screws, screwOffsetRef.current);
 
-    // Central rod and pointer pin stay down and move with deflection
+    // Central rod and pointer pin move with cover offset and deflection
     const rodObj = pick(MESH.rod);
     if (rodObj) {
-      rodObj.position.y = baseY(rodObj, MESH.rod) + deflection;
+      rodObj.position.y = baseY(rodObj, MESH.rod) + coverOffsetRef.current + deflection;
     }
     const pinObj = pick(MESH.pointerPin);
     if (pinObj) {
-      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + deflection;
+      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + coverOffsetRef.current + deflection;
     }
 
-    // The spring stays inside the tank with the rod, compressing/deflecting under weights.
+    // The spring rises with the cover offset and moves with deflection
     const springPivot = pivots.current[MESH.spring];
     const springInfo = springInfoRef.current;
     if (springPivot && springInfo) {
-      springPivot.position.y = baseY(springPivot, 'pivot:spring');
+      springPivot.position.y = baseY(springPivot, 'pivot:spring') + coverOffsetRef.current + deflection;
       const stretch = 1 + deflection / springInfo.restH;
       if (springInfo.morph) {
         const inf = springInfo.morph.mesh.morphTargetInfluences;
@@ -1011,10 +1011,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const deflector = getDeflector(state.selectedDeflectorId);
     const activeDef = pick(deflector.installed);
     if (activeDef) {
-      // The deflector moves only with spring deflection
+      // The deflector moves with cover offset and spring deflection
       activeDef.position.y = damp(
         activeDef.position.y,
-        baseY(activeDef, deflector.installed) + deflection,
+        baseY(activeDef, deflector.installed) + coverOffsetRef.current + deflection,
         10
       );
     }
@@ -1080,7 +1080,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     // --- Loaded weights ride the pan --------------------------------------------
     if (weightStackRef.current) {
-      weightStackRef.current.position.set(0, deflection, 0);
+      weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
     }
 
     // Update original table weights visibility based on loaded state
