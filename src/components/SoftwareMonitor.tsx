@@ -161,7 +161,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               <ul>
                 <li>Impact velocity accounts for gravitational deceleration across the 0.035m travel height: v = &radic;(v₀&sup2; - 2&middot;g&middot;s)</li>
                 <li>{"Measured force F_exp represents the added weights under balancing conditions (F_exp = m_weights · 9.81)"}</li>
-                <li>{"Theoretical force F_th = (1 - cos θ) · ρ · A · v², where θ is the deflection angle (45°: 0.293, 90°: 1.0, 120°: 1.5, 135°: 1.707, 180°: 2.0)"}</li>
+                <li>{"Theoretical force F_th = k · ρ · A · v². Each deflector family has its own law: flat (90°) k=1; oblique (30/45/60°) k=sin²θ → 0.25/0.5/0.75; semi-circular (120/180°) k=1−cos β → 1.5/2.0; conical (135°) k=1.707"}</li>
               </ul>
             )}
           </div>

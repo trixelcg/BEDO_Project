@@ -59,12 +59,16 @@ export const WATER_SHAPES = {
 
 export type WaterShapeKey = keyof typeof WATER_SHAPES;
 
+/** Which experiment a deflector belongs to — each family has its own force law. */
+export type DeflectorFamily = 'flat' | 'oblique' | 'semi' | 'conical';
+
 export interface DeflectorDef {
   /** Deflection angle in degrees — also used as the stable id. */
   id: number;
+  family: DeflectorFamily;
   nameEn: string;
   nameAr: string;
-  /** Momentum factor 1 - cos(theta). */
+  /** Momentum factor: F = factor * rho * A * v^2. */
   factor: number;
   /** Mesh resting on the tray, selectable by the student. */
   shelf: string;
@@ -73,70 +77,91 @@ export interface DeflectorDef {
   water: WaterShapeKey;
 }
 
-const factorFor = (deg: number) => Math.round((1 - Math.cos((deg * Math.PI) / 180)) * 1000) / 1000;
+/**
+ * The momentum factor is NOT one formula across the board — each experiment derives its
+ * own, per BEDO's Phase 2 documents, and Jet force_Mathematical model.xlsx tabulates the
+ * same values:
+ *
+ *   Flat (90°)                F = rho*A*V^2                 -> 1
+ *   Oblique (30/45/60°)       Fx = rho*A*V^2 * sin^2(theta) -> 0.25 / 0.5 / 0.75
+ *   Semi-circular (120/180°)  F = rho*A*V^2 * (1 - cos B)   -> 1.5 / 2
+ *   Conical (135°)            F = 1.707 * rho*A*V^2         -> 1.707  (= 1 - cos 135)
+ *
+ * Applying 1 - cos(theta) to the oblique family — the obvious-looking generalisation —
+ * understates it badly: it gives 0.134 / 0.293 / 0.5 instead of 0.25 / 0.5 / 0.75.
+ */
+const sinSquared = (deg: number) => Math.round(Math.sin((deg * Math.PI) / 180) ** 2 * 1000) / 1000;
+const oneMinusCos = (deg: number) => Math.round((1 - Math.cos((deg * Math.PI) / 180)) * 1000) / 1000;
 
 // The tray holds seven deflectors, matching the reference simulator's chart.
 // Ordered left-to-right as they physically sit on the tray (by world x).
 export const DEFLECTORS: DeflectorDef[] = [
   {
     id: 45,
-    nameEn: 'Oblique Plate (45°)',
-    nameAr: 'لوح مائل (45 درجة)',
-    factor: factorFor(45),
+    family: 'oblique',
+    nameEn: 'Oblique surface (45°)',
+    nameAr: 'عاكس منحرف (45 درجة)',
+    factor: sinSquared(45), // 0.5
     shelf: 'Oblique_surface_deflector_45_base',
     installed: 'Oblique_surface_deflector_45.001',
     water: 'oblique',
   },
   {
     id: 90,
-    nameEn: 'Flat Plate (90°)',
-    nameAr: 'لوحة مسطحة (90 درجة)',
-    factor: factorFor(90),
+    family: 'flat',
+    nameEn: 'Flat surface (90°)',
+    nameAr: 'عاكس مسطح (90 درجة)',
+    factor: 1.0,
     shelf: 'Flat_surface_deflector_90_base',
     installed: 'Flat_surface_deflector_90.001',
     water: 'flat',
   },
   {
     id: 135,
-    nameEn: 'Conical Deflector (135°)',
+    family: 'conical',
+    nameEn: 'Conical surface (135°)',
     nameAr: 'عاكس مخروطي (135 درجة)',
-    factor: factorFor(135),
+    factor: oneMinusCos(135), // 1.707
     shelf: 'Conical_deflector_135_base',
     installed: 'Conical_deflector_135.001',
     water: 'hemi',
   },
   {
     id: 120,
-    nameEn: 'Hemi-sphere (120°)',
-    nameAr: 'نصف كروي (120 درجة)',
-    factor: factorFor(120),
+    family: 'semi',
+    nameEn: 'Semi-circular (120°)',
+    nameAr: 'عاكس نصف دائري (120 درجة)',
+    factor: oneMinusCos(120), // 1.5
     shelf: 'Hemi_sphere_deflector_120_base',
     installed: 'Hemi_sphere_deflector_120.001',
     water: 'cone',
   },
   {
     id: 180,
-    nameEn: 'Hemispherical Cup (180°)',
-    nameAr: 'كوب نصف كروي (180 درجة)',
-    factor: factorFor(180),
+    family: 'semi',
+    nameEn: 'Semi-circular (180°)',
+    nameAr: 'عاكس نصف دائري (180 درجة)',
+    factor: oneMinusCos(180), // 2.0
     shelf: 'Hemi_sphere_deflector_180_base',
     installed: 'Hemi_sphere_deflector_180.001',
     water: 'hemi',
   },
   {
     id: 30,
-    nameEn: 'Cone (30°)',
-    nameAr: 'مخروط (30 درجة)',
-    factor: factorFor(30),
+    family: 'oblique',
+    nameEn: 'Oblique surface (30°)',
+    nameAr: 'عاكس منحرف (30 درجة)',
+    factor: sinSquared(30), // 0.25
     shelf: 'Cone_surface_deflector_30_base',
     installed: 'Cone_surface_deflector_30.001',
     water: 'cone',
   },
   {
     id: 60,
-    nameEn: 'Cone (60°)',
-    nameAr: 'مخروط (60 درجة)',
-    factor: factorFor(60),
+    family: 'oblique',
+    nameEn: 'Oblique surface (60°)',
+    nameAr: 'عاكس منحرف (60 درجة)',
+    factor: sinSquared(60), // 0.75
     shelf: 'Cone_surface_deflector_60_base',
     installed: 'Cone_surface_deflector_60.001',
     water: 'cone',
