@@ -773,9 +773,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!proto) return;
 
       const object = proto.clone(true);
-      object.position.set(0, 0, 0);
-      object.rotation.set(0, 0, 0);
-      object.scale.set(0.01, 0.01, 0.01);
       object.traverse((child: any) => {
         if (child.isMesh) {
           child.visible = true;
@@ -994,11 +991,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       pinObj.position.y = baseY(pinObj, MESH.pointerPin) + coverOffsetRef.current + deflection;
     }
 
-    // The spring rises with the cover offset and moves with deflection
+    // The spring rises with the cover offset
     const springPivot = pivots.current[MESH.spring];
     const springInfo = springInfoRef.current;
     if (springPivot && springInfo) {
-      springPivot.position.y = baseY(springPivot, 'pivot:spring') + coverOffsetRef.current + deflection;
+      springPivot.position.y = baseY(springPivot, 'pivot:spring') + coverOffsetRef.current;
       const stretch = 1 + deflection / springInfo.restH;
       if (springInfo.morph) {
         const inf = springInfo.morph.mesh.morphTargetInfluences;
