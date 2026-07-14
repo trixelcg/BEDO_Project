@@ -125,9 +125,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     restH: number;
     morph: { mesh: THREE.Mesh; index: number } | null;
   } | null>(null);
-  const foamRingRef = useRef<THREE.Mesh>(null);
-  const foamRing2Ref = useRef<THREE.Mesh>(null);
-  const dropsRef = useRef<THREE.InstancedMesh>(null);
 
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
@@ -220,6 +217,71 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * actually breaks up.
    */
   const waterTime = useRef({ value: 0 });
+
+  /**
+   * Tileable animated-water texture, generated at runtime — the project ships none.
+   *
+   * One RGBA map carries everything: RG is the surface normal of a fractal ripple field,
+   * B its height. Built on a periodic lattice so it wraps seamlessly, because the shader
+   * scrolls two copies of it forever.
+   */
+  const waterTex = useMemo(() => {
+    const N = 256;
+    const lattice = (period: number) => {
+      const g = new Float32Array(period * period);
+      for (let i = 0; i < g.length; i++) g[i] = Math.random();
+      return (u: number, v: number) => {
+        const x = u * period;
+        const y = v * period;
+        const xi = Math.floor(x) % period;
+        const yi = Math.floor(y) % period;
+        const xf = x - Math.floor(x);
+        const yf = y - Math.floor(y);
+        const sx = xf * xf * (3 - 2 * xf);
+        const sy = yf * yf * (3 - 2 * yf);
+        const a = g[yi * period + xi];
+        const b = g[yi * period + ((xi + 1) % period)];
+        const c = g[((yi + 1) % period) * period + xi];
+        const d = g[((yi + 1) % period) * period + ((xi + 1) % period)];
+        return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+      };
+    };
+    const o1 = lattice(6);
+    const o2 = lattice(13);
+    const o3 = lattice(27);
+
+    const h = new Float32Array(N * N);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const u = x / N;
+        const v = y / N;
+        h[y * N + x] = o1(u, v) * 0.5 + o2(u, v) * 0.32 + o3(u, v) * 0.18;
+      }
+    }
+
+    const img = new Uint8ClampedArray(N * N * 4);
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const i = y * N + x;
+        const dx = h[y * N + ((x + 1) % N)] - h[y * N + ((x - 1 + N) % N)];
+        const dy = h[((y + 1) % N) * N + x] - h[((y - 1 + N) % N) * N + x];
+        img[i * 4] = 128 + dx * 760;
+        img[i * 4 + 1] = 128 + dy * 760;
+        img[i * 4 + 2] = h[i] * 255;
+        img[i * 4 + 3] = 255;
+      }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = N;
+    canvas.getContext('2d')!.putImageData(new ImageData(img, N, N), 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = true;
+    return tex;
+  }, []);
+
   const waterMaterial = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
       color: new THREE.Color('#4fb2f5'),
@@ -247,10 +309,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       depthWrite: false,
     });
 
-    // Aerated water, not tinted resin: rising flow streaks, a fresnel-bright silhouette,
-    // and white churn on the upward-facing top surface where the jet breaks it up.
+    // The classic dual-scroll water: two copies of one tileable ripple map drift over the
+    // surface at different scales and directions — one across the surface plane, one down
+    // the column so the pattern climbs with the flow. Their normals bend the lighting, so
+    // the glints and the environment reflection shimmer; their heights drive soft caustic
+    // sparkle and a little foam where crests coincide near the churning top.
+    //
+    // Sampling is planar in world space, not by UV — these baked simulation meshes carry
+    // no usable UVs.
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
+      shader.uniforms.uWaterTex = { value: waterTex };
 
       shader.vertexShader =
         'uniform float uTime;\nvarying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
@@ -258,95 +327,65 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           '#include <begin_vertex>',
           `#include <begin_vertex>
            // The meshes are authored ~20 units tall and centred, so normalise height to
-           // 0..1 from the bottom and let the ripple build toward the surface.
+           // 0..1 from the bottom and let a gentle ripple build toward the surface.
            float rise = clamp(position.y * 0.05 + 0.5, 0.0, 1.0);
-           float amp = 0.22 * rise;
-           transformed.x += sin(position.y * 0.9 + uTime * 5.5) * amp;
-           transformed.z += cos(position.y * 0.7 + uTime * 4.2) * amp;
+           float amp = 0.16 * rise;
+           transformed.x += sin(position.y * 0.9 + uTime * 5.0) * amp;
+           transformed.z += cos(position.y * 0.7 + uTime * 3.9) * amp;
            vRise = rise;
            vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vWNorm = normalize(mat3(modelMatrix) * objectNormal);`
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nvarying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
-        'float waterHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' +
-        // Interpolated value noise — the raw cell hash reads as hard square pixels.
-        'float waterNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);\n' +
-        '  return mix(mix(waterHash(i), waterHash(i+vec2(1.,0.)), f.x),\n' +
-        '             mix(waterHash(i+vec2(0.,1.)), waterHash(i+vec2(1.,1.)), f.x), f.y); }\n' +
-        shader.fragmentShader.replace(
-          '#include <opaque_fragment>',
-          `#include <opaque_fragment>
-           {
-             vec3 V = normalize(cameraPosition - vWPos);
-             vec3 N = normalize(vWNorm);
+        'uniform float uTime;\nuniform sampler2D uWaterTex;\n' +
+        'varying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        shader.fragmentShader
+          .replace(
+            '#include <normal_fragment_maps>',
+            `#include <normal_fragment_maps>
+             {
+               // Two scrolling ripple layers bend the shading normal (view space).
+               vec2 uvTop = vWPos.xz * 7.0 + vec2(uTime * 0.11, uTime * 0.08);
+               vec2 uvSide = vec2(vWPos.x + vWPos.z, vWPos.y * 1.6) * 5.5
+                           - vec2(0.0, uTime * 0.5);
+               vec2 grad = (texture2D(uWaterTex, uvTop).rg - 0.5) * 1.5
+                         + (texture2D(uWaterTex, uvSide).rg - 0.5) * 1.1;
+               vec3 bump = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
+               normal = normalize(normal + bump * 0.85);
+             }`
+          )
+          .replace(
+            '#include <opaque_fragment>',
+            `#include <opaque_fragment>
+             {
+               vec3 V = normalize(cameraPosition - vWPos);
+               vec3 N = normalize(vWNorm);
 
-             // Bubbles dragged along by the flow: soft bright wisps racing upward.
-             float streak = smoothstep(0.55, 1.0,
-               waterNoise(vec2(atan(vWPos.z + 0.229, vWPos.x - 0.01) * 5.0,
-                               vWPos.y * 26.0 - uTime * 3.2)));
-             streak *= (0.25 + 0.75 * vRise) * 0.4;
+               float hTop = texture2D(uWaterTex,
+                 vWPos.xz * 5.0 + vec2(uTime * 0.09, -uTime * 0.06)).b;
+               float hSide = texture2D(uWaterTex,
+                 vec2(vWPos.x - vWPos.z, vWPos.y * 1.7) * 4.5 - vec2(0.0, uTime * 0.45)).b;
 
-             // Edge foam: water's silhouette against glass goes white, not dark.
-             float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.5;
+               // Sparkle where drifting crests coincide.
+               float glint = smoothstep(0.62, 0.95, hTop * 0.55 + hSide * 0.55) * 0.3;
 
-             // Churn on the top surface, drifting so it boils rather than sits still.
-             float upFace = smoothstep(0.5, 0.85, N.y) * smoothstep(0.65, 0.95, vRise);
-             float boil =
-               waterNoise(vWPos.xz * 55.0 + vec2(uTime * 1.6, -uTime * 2.1)) * 0.65 +
-               waterNoise(vWPos.xz * 130.0 - vec2(uTime * 2.7, uTime * 1.2)) * 0.35;
-             float churn = upFace * smoothstep(0.5, 0.8, boil);
+               // The silhouette against the glass reads bright, never dark.
+               float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.38;
 
-             float foam = clamp(streak + rim + churn * 0.9, 0.0, 0.85);
-             gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.97, 0.99, 1.0), foam);
-             gl_FragColor.a = mix(gl_FragColor.a, 0.96, foam);
-           }`
-        );
+               // Soft foam only near the churning top, where the crests pile up.
+               float foam = smoothstep(0.45, 0.85, N.y)
+                          * smoothstep(0.7, 0.95, vRise)
+                          * smoothstep(0.9, 1.3, hTop + hSide) * 0.55;
+
+               float lum = clamp(glint + rim + foam, 0.0, 0.7);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.95, 0.98, 1.0), lum);
+               gl_FragColor.a = mix(gl_FragColor.a, 0.94, lum);
+             }`
+          );
     };
     return mat;
-  }, []);
-
-  /** Soft blotchy foam sprite, generated at runtime — no texture assets exist for this. */
-  const foamTexture = useMemo(() => {
-    const c = document.createElement('canvas');
-    c.width = c.height = 256;
-    const g = c.getContext('2d')!;
-    g.clearRect(0, 0, 256, 256);
-    for (let i = 0; i < 340; i++) {
-      // Bias blobs toward a ring, denser at the middle radius, like a splash crown.
-      const a = Math.random() * Math.PI * 2;
-      const r = 40 + Math.random() * 78;
-      const x = 128 + Math.cos(a) * r;
-      const y = 128 + Math.sin(a) * r;
-      const size = 2 + Math.random() * 9;
-      const grad = g.createRadialGradient(x, y, 0, x, y, size);
-      grad.addColorStop(0, `rgba(255,255,255,${0.25 + Math.random() * 0.5})`);
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = grad;
-      g.beginPath();
-      g.arc(x, y, size, 0, Math.PI * 2);
-      g.fill();
-    }
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }, []);
-
-  /** Ballistic launch parameters for the splash droplets — fixed per droplet. */
-  const DROP_COUNT = 130;
-  const drops = useMemo(
-    () =>
-      Array.from({ length: DROP_COUNT }, (_, i) => ({
-        azimuth: (i / DROP_COUNT) * Math.PI * 2 + (i % 7) * 0.83,
-        radial: 0.05 + ((i * 37) % 100) / 100 * 0.11,
-        up: 0.05 + ((i * 61) % 100) / 100 * 0.09,
-        phase: ((i * 89) % 100) / 100,
-        size: 0.45 + ((i * 53) % 100) / 100 * 0.8,
-      })),
-    []
-  );
-  const dropDummy = useMemo(() => new THREE.Object3D(), []);
+  }, [waterTex]);
 
   useEffect(() => {
     waterGltfs.forEach((gltf: any) => {
@@ -993,13 +1032,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (fit) {
         waterGroupRef.current.visible = true;
 
-        // The impact point — the deflector's underside — anchors the splash in both modes.
+        // The impact point — the deflector's underside — anchors the startup stream.
         tmp.box.setFromObject(activeDef);
         tmp.box.getCenter(tmp.defPos);
-        tmp.box.getSize(tmp.size);
         tmp.defPos.setY(tmp.box.min.y);
         group.worldToLocal(tmp.defPos);
-        const plateWidth = Math.max(tmp.size.x, tmp.size.z) / modelScale;
 
         if (shape === 'low') {
           // A stream from the nozzle lip up to the plate it strikes.
@@ -1036,53 +1073,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           if (gltf?.scene) gltf.scene.visible = key === shape;
         });
 
-        // --- Foam crown at the impact -----------------------------------------
-        // Two counter-rotating blotchy discs; additive, so overlaps flare white.
-        const vigor = Math.min(1, state.valveOpening / SECOND_READING_VALVE);
-        const crown = plateWidth * (1.15 + 0.25 * Math.sin(t * 9.0) * vigor + 0.5 * vigor);
-        if (foamRingRef.current && foamRing2Ref.current) {
-          foamRingRef.current.visible = true;
-          foamRing2Ref.current.visible = true;
-          foamRingRef.current.position.set(tmp.defPos.x, tmp.defPos.y + 0.004, tmp.defPos.z);
-          foamRing2Ref.current.position.set(tmp.defPos.x, tmp.defPos.y + 0.007, tmp.defPos.z);
-          foamRingRef.current.scale.setScalar(crown);
-          foamRing2Ref.current.scale.setScalar(crown * 0.72);
-          foamRingRef.current.rotation.z = t * 0.9;
-          foamRing2Ref.current.rotation.z = -t * 1.4;
-        }
-
-        // --- Splash droplets -----------------------------------------------------
-        // Fixed launch parameters per droplet, looped over a one-second ballistic arc:
-        // out from the plate rim, up, then gravity takes it.
-        if (dropsRef.current) {
-          dropsRef.current.visible = true;
-          const rim = plateWidth * 0.5;
-          const rate = 0.55 + vigor * 0.75;
-          for (let i = 0; i < DROP_COUNT; i++) {
-            const d = drops[i];
-            const p = (t * rate + d.phase) % 1;
-            const r = rim + d.radial * (0.35 + vigor) * p;
-            const y = (d.up * (0.5 + vigor) * p - 0.16 * p * p) * 1.2;
-            dropDummy.position.set(
-              tmp.defPos.x + Math.cos(d.azimuth) * r,
-              tmp.defPos.y + 0.004 + y,
-              tmp.defPos.z + Math.sin(d.azimuth) * r
-            );
-            const s = d.size * (1 - p * 0.7);
-            dropDummy.scale.setScalar(s);
-            dropDummy.updateMatrix();
-            dropsRef.current.setMatrixAt(i, dropDummy.matrix);
-          }
-          dropsRef.current.instanceMatrix.needsUpdate = true;
-        }
       } else {
         waterGroupRef.current.visible = false;
       }
     } else if (waterGroupRef.current) {
       waterGroupRef.current.visible = false;
-      if (foamRingRef.current) foamRingRef.current.visible = false;
-      if (foamRing2Ref.current) foamRing2Ref.current.visible = false;
-      if (dropsRef.current) dropsRef.current.visible = false;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
@@ -1122,37 +1117,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           </group>
         ))}
       </group>
-
-      {/* Splash: a churning foam crown where the jet strikes the deflector, and a spray of
-          ballistic droplets thrown off it. The foam texture is generated at runtime. */}
-      <mesh ref={foamRingRef} visible={false} rotation-x={-Math.PI / 2}>
-        <circleGeometry args={[0.5, 48]} />
-        <meshBasicMaterial
-          map={foamTexture}
-          alphaMap={foamTexture}
-          color="#eaf7ff"
-          transparent
-          opacity={0.85}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      <mesh ref={foamRing2Ref} visible={false} rotation-x={-Math.PI / 2}>
-        <circleGeometry args={[0.5, 48]} />
-        <meshBasicMaterial
-          map={foamTexture}
-          alphaMap={foamTexture}
-          color="#dff2ff"
-          transparent
-          opacity={0.6}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </mesh>
-      <instancedMesh ref={dropsRef} args={[undefined, undefined, DROP_COUNT]} visible={false}>
-        <sphereGeometry args={[0.0045, 6, 5]} />
-        <meshBasicMaterial color="#e8f6ff" transparent opacity={0.85} depthWrite={false} />
-      </instancedMesh>
 
       {/* Each plume is stood upright, then re-centred on its own origin, so the outer group
           can simply be parked at the midpoint of the nozzle/deflector gap. */}
