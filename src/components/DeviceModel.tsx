@@ -118,6 +118,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   } | null>(null);
   /** Groups that let a part spin about its own centre — see makePivot. */
   const pivots = useRef<Record<string, THREE.Group>>({});
+  /** 0 = pointer parked over the rod, 1 = swung 90° clear of the plate. */
+  const pointerSwingRef = useRef(0);
+  /** Spring rest height (model units) and, if the GLB ever ships one, its morph target. */
+  const springInfoRef = useRef<{
+    restH: number;
+    morph: { mesh: THREE.Mesh; index: number } | null;
+  } | null>(null);
+  const foamRingRef = useRef<THREE.Mesh>(null);
+  const foamRing2Ref = useRef<THREE.Mesh>(null);
+  const dropsRef = useRef<THREE.InstancedMesh>(null);
 
   const waterGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
@@ -212,10 +222,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const waterTime = useRef({ value: 0 });
   const waterMaterial = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color('#63bdff'),
+      color: new THREE.Color('#4fb2f5'),
       transparent: true,
-      opacity: 0.86,
-      roughness: 0.05,
+      opacity: 0.8,
+      roughness: 0.08,
       metalness: 0.0,
       // Held deliberately low. The jet lives inside a dark tank, so a high transmission
       // just shows that darkness through it and the water reads as smoked glass. A bright,
@@ -232,28 +242,111 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       envMapIntensity: 1.6,
       // A touch of self-illumination so the stream stays legible against the dark tank.
       emissive: new THREE.Color('#0d4a86'),
-      emissiveIntensity: 0.35,
+      emissiveIntensity: 0.3,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
 
+    // Aerated water, not tinted resin: rising flow streaks, a fresnel-bright silhouette,
+    // and white churn on the upward-facing top surface where the jet breaks it up.
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
+
       shader.vertexShader =
-        'uniform float uTime;\n' +
+        'uniform float uTime;\nvarying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           // The mesh is authored ~20 units tall and centred, so normalise height to 0..1
-           // from the nozzle end and let the ripple build along the stream.
+           // The meshes are authored ~20 units tall and centred, so normalise height to
+           // 0..1 from the bottom and let the ripple build toward the surface.
            float rise = clamp(position.y * 0.05 + 0.5, 0.0, 1.0);
-           float amp = 0.28 * rise;
+           float amp = 0.22 * rise;
            transformed.x += sin(position.y * 0.9 + uTime * 5.5) * amp;
-           transformed.z += cos(position.y * 0.7 + uTime * 4.2) * amp;`
+           transformed.z += cos(position.y * 0.7 + uTime * 4.2) * amp;
+           vRise = rise;
+           vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+           vWNorm = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+      shader.fragmentShader =
+        'uniform float uTime;\nvarying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        'float waterHash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n' +
+        // Interpolated value noise — the raw cell hash reads as hard square pixels.
+        'float waterNoise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);\n' +
+        '  return mix(mix(waterHash(i), waterHash(i+vec2(1.,0.)), f.x),\n' +
+        '             mix(waterHash(i+vec2(0.,1.)), waterHash(i+vec2(1.,1.)), f.x), f.y); }\n' +
+        shader.fragmentShader.replace(
+          '#include <opaque_fragment>',
+          `#include <opaque_fragment>
+           {
+             vec3 V = normalize(cameraPosition - vWPos);
+             vec3 N = normalize(vWNorm);
+
+             // Bubbles dragged along by the flow: soft bright wisps racing upward.
+             float streak = smoothstep(0.55, 1.0,
+               waterNoise(vec2(atan(vWPos.z + 0.229, vWPos.x - 0.01) * 5.0,
+                               vWPos.y * 26.0 - uTime * 3.2)));
+             streak *= (0.25 + 0.75 * vRise) * 0.4;
+
+             // Edge foam: water's silhouette against glass goes white, not dark.
+             float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.5;
+
+             // Churn on the top surface, drifting so it boils rather than sits still.
+             float upFace = smoothstep(0.5, 0.85, N.y) * smoothstep(0.65, 0.95, vRise);
+             float boil =
+               waterNoise(vWPos.xz * 55.0 + vec2(uTime * 1.6, -uTime * 2.1)) * 0.65 +
+               waterNoise(vWPos.xz * 130.0 - vec2(uTime * 2.7, uTime * 1.2)) * 0.35;
+             float churn = upFace * smoothstep(0.5, 0.8, boil);
+
+             float foam = clamp(streak + rim + churn * 0.9, 0.0, 0.85);
+             gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.97, 0.99, 1.0), foam);
+             gl_FragColor.a = mix(gl_FragColor.a, 0.96, foam);
+           }`
         );
     };
     return mat;
   }, []);
+
+  /** Soft blotchy foam sprite, generated at runtime — no texture assets exist for this. */
+  const foamTexture = useMemo(() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d')!;
+    g.clearRect(0, 0, 256, 256);
+    for (let i = 0; i < 340; i++) {
+      // Bias blobs toward a ring, denser at the middle radius, like a splash crown.
+      const a = Math.random() * Math.PI * 2;
+      const r = 40 + Math.random() * 78;
+      const x = 128 + Math.cos(a) * r;
+      const y = 128 + Math.sin(a) * r;
+      const size = 2 + Math.random() * 9;
+      const grad = g.createRadialGradient(x, y, 0, x, y, size);
+      grad.addColorStop(0, `rgba(255,255,255,${0.25 + Math.random() * 0.5})`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(x, y, size, 0, Math.PI * 2);
+      g.fill();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }, []);
+
+  /** Ballistic launch parameters for the splash droplets — fixed per droplet. */
+  const DROP_COUNT = 130;
+  const drops = useMemo(
+    () =>
+      Array.from({ length: DROP_COUNT }, (_, i) => ({
+        azimuth: (i / DROP_COUNT) * Math.PI * 2 + (i % 7) * 0.83,
+        radial: 0.05 + ((i * 37) % 100) / 100 * 0.11,
+        up: 0.05 + ((i * 61) % 100) / 100 * 0.09,
+        phase: ((i * 89) % 100) / 100,
+        size: 0.45 + ((i * 53) % 100) / 100 * 0.8,
+      })),
+    []
+  );
+  const dropDummy = useMemo(() => new THREE.Object3D(), []);
 
   useEffect(() => {
     waterGltfs.forEach((gltf: any) => {
@@ -334,7 +427,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   useEffect(() => {
     if (!scene) return;
 
-    const install = (authored: string) => {
+    /** worldPoint overrides where the hinge sits; default is the part's own centre. */
+    const install = (authored: string, worldPoint?: THREE.Vector3) => {
       const obj = pick(authored);
       if (!obj || pivots.current[authored]) return;
       const parent = obj.parent;
@@ -344,7 +438,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const box = new THREE.Box3().setFromObject(obj);
       if (box.isEmpty()) return;
 
-      const centre = parent.worldToLocal(box.getCenter(new THREE.Vector3()));
+      const centre = parent.worldToLocal(
+        (worldPoint ?? box.getCenter(new THREE.Vector3())).clone()
+      );
 
       const pivot = new THREE.Group();
       pivot.name = `${authored}__pivot`;
@@ -360,7 +456,41 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     install(MESH.flowValve);
     install(MESH.volumetricValve);
     install(MESH.powerSwitch);
-  }, [scene, pick]);
+
+    // The pointer is an arm clamped to the deflector rod: swinging it out of the way
+    // means rotating it about the ROD's vertical axis, not the arm's own centre.
+    const rod = pick(MESH.rod);
+    const pointer = pick(MESH.pointer);
+    if (rod && pointer) {
+      const rodBox = new THREE.Box3().setFromObject(rod);
+      const ptrBox = new THREE.Box3().setFromObject(pointer);
+      if (!rodBox.isEmpty() && !ptrBox.isEmpty()) {
+        const rodC = rodBox.getCenter(new THREE.Vector3());
+        const ptrC = ptrBox.getCenter(new THREE.Vector3());
+        install(MESH.pointer, new THREE.Vector3(rodC.x, ptrC.y, rodC.z));
+      }
+    }
+
+    // The spring compresses against its seat, so it scales about its bottom end. If a
+    // future GLB export carries a real morph target on it, that is used instead.
+    const springObj = pick(MESH.spring);
+    if (springObj) {
+      const sBox = new THREE.Box3().setFromObject(springObj);
+      if (!sBox.isEmpty()) {
+        const sC = sBox.getCenter(new THREE.Vector3());
+        const sSize = sBox.getSize(new THREE.Vector3());
+        install(MESH.spring, new THREE.Vector3(sC.x, sBox.min.y, sC.z));
+
+        let morph: { mesh: THREE.Mesh; index: number } | null = null;
+        springObj.traverse((child: any) => {
+          if (!morph && child.isMesh && child.morphTargetInfluences?.length) {
+            morph = { mesh: child, index: 0 };
+          }
+        });
+        springInfoRef.current = { restH: sSize.y / modelScale, morph };
+      }
+    }
+  }, [scene, pick, modelScale]);
 
   // The chosen deflector leaves the tray and appears mounted on the rod.
   useEffect(() => {
@@ -576,12 +706,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
   };
 
-  /** Local position of each interactive part, keyed by mesh name. */
-  const partPos = useMemo(
-    () => Object.fromEntries(hotspots.map((h) => [h.key, h.position])),
-    [hotspots]
-  );
-
   /**
    * Weights the student has loaded, as clones of the real tray objects.
    *
@@ -592,26 +716,48 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * transform, and we shift it by the pan-minus-tray delta.
    */
   const stack = useMemo(() => {
-    if (!scene) return [];
-    return state.loadedWeights
-      .map((grams, idx) => {
-        const def = WEIGHTS.find((w) => w.grams === grams);
-        const meshName = def?.mesh ?? 'Weight_Custom';
-        const proto = pick(meshName);
-        if (!proto) return null;
+    if (!scene || !anchors.pan) return [];
+    const pan = anchors.pan;
+    const entries: { key: string; object: THREE.Object3D; offset: [number, number, number] }[] =
+      [];
 
-        const object = proto.clone(true);
-        object.traverse((child: any) => {
-          if (child.isMesh) {
-            child.visible = true;
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-        return { key: `${idx}-${grams}`, object, meshName, idx };
-      })
-      .filter((w): w is { key: string; object: THREE.Object3D; meshName: string; idx: number } => w !== null);
-  }, [scene, state.loadedWeights]);
+    // Each disc seats on top of the one before it, using its measured thickness — the
+    // denominations are different heights, so a fixed increment either embeds them in
+    // each other or floats them apart.
+    //
+    // The clone is measured DETACHED: a clone loses its ancestors' transforms, and in
+    // this baked GLB those carry real offsets, so the in-scene position of the original
+    // says nothing about where the clone will land once mounted under our own group.
+    let cum = 0.001; // clear the pan's top face
+    state.loadedWeights.forEach((grams, idx) => {
+      const def = WEIGHTS.find((w) => w.grams === grams);
+      const proto = pick(def?.mesh ?? 'Weight_Custom');
+      if (!proto) return;
+
+      const object = proto.clone(true);
+      object.traverse((child: any) => {
+        if (child.isMesh) {
+          child.visible = true;
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
+      object.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(object);
+      if (box.isEmpty()) return;
+      const centre = box.getCenter(new THREE.Vector3());
+      const h = Math.max(box.getSize(new THREE.Vector3()).y, 0.002);
+
+      entries.push({
+        key: `${idx}-${grams}`,
+        object,
+        offset: [pan[0] - centre.x, pan[1] + cum + h / 2 - centre.y, pan[2] - centre.z],
+      });
+      cum += h;
+    });
+    return entries;
+  }, [scene, pick, anchors.pan, state.loadedWeights]);
 
   /**
    * Glow a clickable part, the way the reference simulator does (it uses HighlightPlus).
@@ -699,7 +845,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (animActiveRef.current) {
       animTimeRef.current += rawDelta;
       const a = animTimeRef.current;
+      // The pointer arm swings 90° clear of the plate FIRST — it sits over the plate, so
+      // the plate cannot lift through it — then the screws come out, then the plate rises.
       if (a > 0.05) {
+        pointerSwingRef.current = damp(pointerSwingRef.current, 1, 6);
         screwOffsetRef.current = damp(screwOffsetRef.current, SCREW_LIFT, 4);
       }
       if (a > 0.8) {
@@ -712,9 +861,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     } else if (state.isCoverOpen) {
       screwOffsetRef.current = SCREW_LIFT;
       coverOffsetRef.current = COVER_LIFT;
+      pointerSwingRef.current = 1;
     } else {
       screwOffsetRef.current = damp(screwOffsetRef.current, 0, 6);
       coverOffsetRef.current = damp(coverOffsetRef.current, 0, 6);
+      // Closing runs in reverse: the pointer only swings back over the plate once the
+      // plate has finished seating.
+      if (coverOffsetRef.current < 0.02) {
+        pointerSwingRef.current = damp(pointerSwingRef.current, 0, 6);
+      }
     }
 
     // --- Valves, switch, lamp --------------------------------------------------
@@ -761,13 +916,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const netForce = jetForceN - weightForceN;
     const deflection = THREE.MathUtils.clamp(netForce / SPRING_RATE_N_PER_M, -0.06, 0.075);
 
-    const pointer = pick(MESH.pointer);
-    if (pointer) {
-      pointer.position.y = damp(
-        pointer.position.y,
-        baseY(pointer, MESH.pointer) + coverOffsetRef.current + deflection,
+    // The pointer rides the moving assembly and swings about the rod axis it is clamped
+    // to. Rotating the mesh itself would orbit the GLB's distant shared origin, so the
+    // swing goes through its pivot (planted on the rod axis at install time).
+    const pointerPivot = pivots.current[MESH.pointer];
+    if (pointerPivot) {
+      pointerPivot.position.y = damp(
+        pointerPivot.position.y,
+        baseY(pointerPivot, 'pivot:pointer') + coverOffsetRef.current + deflection,
         10
       );
+      pointerPivot.rotation.y = -pointerSwingRef.current * QUARTER_TURN;
     }
 
     // --- Cover assembly rises as one ------------------------------------------
@@ -777,8 +936,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     };
     lift(MESH.tankCover, coverOffsetRef.current);
     lift(MESH.screws, screwOffsetRef.current);
-    lift(MESH.spring, coverOffsetRef.current);
     lift(MESH.rod, coverOffsetRef.current);
+
+    // The spring's bottom stays seated while its top follows the moving assembly, so it
+    // visibly stretches under jet force and squashes back as weights land. Scaling a
+    // helix about its fixed end is exactly what a compress/stretch morph target encodes;
+    // if a future GLB export ships a real one on deflector_spring, it takes over here.
+    const springPivot = pivots.current[MESH.spring];
+    const springInfo = springInfoRef.current;
+    if (springPivot && springInfo) {
+      springPivot.position.y =
+        baseY(springPivot, 'pivot:spring') + coverOffsetRef.current;
+      const stretch = THREE.MathUtils.clamp(1 + deflection / springInfo.restH, 0.55, 1.35);
+      if (springInfo.morph) {
+        const inf = springInfo.morph.mesh.morphTargetInfluences;
+        if (inf) inf[springInfo.morph.index] = THREE.MathUtils.clamp(1 - stretch, 0, 1);
+      } else {
+        springPivot.scale.y = damp(springPivot.scale.y, stretch, 10);
+      }
+    }
 
     const deflector = getDeflector(state.selectedDeflectorId);
     const activeDef = pick(deflector.installed);
@@ -817,12 +993,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (fit) {
         waterGroupRef.current.visible = true;
 
+        // The impact point — the deflector's underside — anchors the splash in both modes.
+        tmp.box.setFromObject(activeDef);
+        tmp.box.getCenter(tmp.defPos);
+        tmp.box.getSize(tmp.size);
+        tmp.defPos.setY(tmp.box.min.y);
+        group.worldToLocal(tmp.defPos);
+        const plateWidth = Math.max(tmp.size.x, tmp.size.z) / modelScale;
+
         if (shape === 'low') {
           // A stream from the nozzle lip up to the plate it strikes.
-          tmp.box.setFromObject(activeDef);
-          tmp.box.getCenter(tmp.defPos);
-          tmp.defPos.setY(tmp.box.min.y);
-          group.worldToLocal(tmp.defPos);
           tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
 
           const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
@@ -855,11 +1035,54 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           const gltf = (water as any)[key];
           if (gltf?.scene) gltf.scene.visible = key === shape;
         });
+
+        // --- Foam crown at the impact -----------------------------------------
+        // Two counter-rotating blotchy discs; additive, so overlaps flare white.
+        const vigor = Math.min(1, state.valveOpening / SECOND_READING_VALVE);
+        const crown = plateWidth * (1.15 + 0.25 * Math.sin(t * 9.0) * vigor + 0.5 * vigor);
+        if (foamRingRef.current && foamRing2Ref.current) {
+          foamRingRef.current.visible = true;
+          foamRing2Ref.current.visible = true;
+          foamRingRef.current.position.set(tmp.defPos.x, tmp.defPos.y + 0.004, tmp.defPos.z);
+          foamRing2Ref.current.position.set(tmp.defPos.x, tmp.defPos.y + 0.007, tmp.defPos.z);
+          foamRingRef.current.scale.setScalar(crown);
+          foamRing2Ref.current.scale.setScalar(crown * 0.72);
+          foamRingRef.current.rotation.z = t * 0.9;
+          foamRing2Ref.current.rotation.z = -t * 1.4;
+        }
+
+        // --- Splash droplets -----------------------------------------------------
+        // Fixed launch parameters per droplet, looped over a one-second ballistic arc:
+        // out from the plate rim, up, then gravity takes it.
+        if (dropsRef.current) {
+          dropsRef.current.visible = true;
+          const rim = plateWidth * 0.5;
+          const rate = 0.55 + vigor * 0.75;
+          for (let i = 0; i < DROP_COUNT; i++) {
+            const d = drops[i];
+            const p = (t * rate + d.phase) % 1;
+            const r = rim + d.radial * (0.35 + vigor) * p;
+            const y = (d.up * (0.5 + vigor) * p - 0.16 * p * p) * 1.2;
+            dropDummy.position.set(
+              tmp.defPos.x + Math.cos(d.azimuth) * r,
+              tmp.defPos.y + 0.004 + y,
+              tmp.defPos.z + Math.sin(d.azimuth) * r
+            );
+            const s = d.size * (1 - p * 0.7);
+            dropDummy.scale.setScalar(s);
+            dropDummy.updateMatrix();
+            dropsRef.current.setMatrixAt(i, dropDummy.matrix);
+          }
+          dropsRef.current.instanceMatrix.needsUpdate = true;
+        }
       } else {
         waterGroupRef.current.visible = false;
       }
     } else if (waterGroupRef.current) {
       waterGroupRef.current.visible = false;
+      if (foamRingRef.current) foamRingRef.current.visible = false;
+      if (foamRing2Ref.current) foamRing2Ref.current.visible = false;
+      if (dropsRef.current) dropsRef.current.visible = false;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
@@ -893,24 +1116,43 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       <primitive object={scene} />
 
       <group ref={weightStackRef}>
-        {stack.map(({ key, object, meshName, idx }) => {
-          const from = partPos[meshName];
-          const pan = anchors.pan;
-          if (!from || !pan) return null;
-          return (
-            <group
-              key={key}
-              position={[
-                pan[0] - from[0],
-                pan[1] - from[1] + 0.006 + idx * 0.008,
-                pan[2] - from[2],
-              ]}
-            >
-              <primitive object={object} />
-            </group>
-          );
-        })}
+        {stack.map(({ key, object, offset }) => (
+          <group key={key} position={offset}>
+            <primitive object={object} />
+          </group>
+        ))}
       </group>
+
+      {/* Splash: a churning foam crown where the jet strikes the deflector, and a spray of
+          ballistic droplets thrown off it. The foam texture is generated at runtime. */}
+      <mesh ref={foamRingRef} visible={false} rotation-x={-Math.PI / 2}>
+        <circleGeometry args={[0.5, 48]} />
+        <meshBasicMaterial
+          map={foamTexture}
+          alphaMap={foamTexture}
+          color="#eaf7ff"
+          transparent
+          opacity={0.85}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      <mesh ref={foamRing2Ref} visible={false} rotation-x={-Math.PI / 2}>
+        <circleGeometry args={[0.5, 48]} />
+        <meshBasicMaterial
+          map={foamTexture}
+          alphaMap={foamTexture}
+          color="#dff2ff"
+          transparent
+          opacity={0.6}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </mesh>
+      <instancedMesh ref={dropsRef} args={[undefined, undefined, DROP_COUNT]} visible={false}>
+        <sphereGeometry args={[0.0045, 6, 5]} />
+        <meshBasicMaterial color="#e8f6ff" transparent opacity={0.85} depthWrite={false} />
+      </instancedMesh>
 
       {/* Each plume is stood upright, then re-centred on its own origin, so the outer group
           can simply be parked at the midpoint of the nozzle/deflector gap. */}
