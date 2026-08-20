@@ -179,7 +179,7 @@ authorised by the evidence rule.** Tracked as **BEDO‑009**.
 
 ---
 
-## 5. `stateMachine.ts` (new)
+## 5. `stateMachine.ts` — implemented in BEDO‑006 (`docs/30`)
 
 The state machine document defines a machine that is **independent of the lesson script**. Transcribed exactly:
 
@@ -202,23 +202,39 @@ The current five guards in `App.tsx` match this exactly. Two behaviours are miss
 - **weight-on-holder → removal** (`R‑3`) → **BEDO‑023**
 - **water drains on power-off** (`R‑13`) → **BEDO‑010**
 
+**Both are still unimplemented after BEDO‑006, deliberately.** `tests/unit/state-machine.spec.ts` asserts
+their *absence*, so the gap is a checked fact rather than an assumption, and implementing either one has to
+update that file. The full CURRENT transition table — which differs from the table above in exactly those two
+rows — is in `docs/30 §6`.
+
+As built (`src/domain/stateMachine.ts`):
+
 ```ts
-// domain/stateMachine.ts
-export type Action =
-  | { kind: 'togglePower' } | { kind: 'setValve'; opening: ValveOpening }
-  | { kind: 'toggleVolumetricValve' } | { kind: 'selectDeflector'; id: number }
-  | { kind: 'addWeight'; grams: Grams } | { kind: 'removeWeight'; index: number }
-  | { kind: 'toggleCover' } | { kind: 'openMonitor' } | { kind: 'closeMonitor' };
+export type ApparatusAction =
+  | { type: 'OPEN_COVER' }            | { type: 'CLOSE_COVER' }
+  | { type: 'POWER_ON' }              | { type: 'POWER_OFF' }
+  | { type: 'SET_VALVE'; opening: number }
+  | { type: 'OPEN_VOLUMETRIC_VALVE' } | { type: 'CLOSE_VOLUMETRIC_VALVE' }
+  | { type: 'SELECT_DEFLECTOR'; deflectorId: number }
+  | { type: 'ADD_WEIGHT'; massG: number }
+  | { type: 'REMOVE_ALL_WEIGHTS' };
 
-export type Outcome =
-  | { ok: true;  next: ApparatusState; events: DomainEvent[] }
-  | { ok: false; error: ErrorCode; state: ApparatusState };
+export type TransitionResult =
+  | { ok: true;  state: ApparatusState; changed: boolean }
+  | { ok: false; state: ApparatusState; reason: RejectionReason };
 
-export function attempt(state: ApparatusState, action: Action): Outcome;
+export function attempt(state: ApparatusState, action: ApparatusAction): TransitionResult;
 ```
 
-Pure, synchronous, exhaustively testable. **Both** the UI and the 3D layer route through it, which is what
-removes the `BUG‑04` gap (3D clicks bypassing the gate) and the `CQ‑06` duplication.
+Differences from the sketch above, all deliberate: **intents rather than toggles** (`OPEN_COVER` and
+`CLOSE_COVER` have different rules, and only one can be refused); **typed `RejectionReason` codes rather than
+`ErrorCode`**, because `errorN` is BEDO's numbering of five *messages* and the domain carries no copy — the
+mapping lives in `src/lib/apparatusGate.ts`; **no `DomainEvent` stream**, since every caller already knows what
+it dispatched; and **no monitor actions**, which are UI, not apparatus.
+
+Pure, synchronous, exhaustively tested (61 cases). `App.tsx` routes every apparatus action through it, and the
+3D hotspots call the same handlers — so apparatus *safety* now has a single gate. **`BUG‑04` is prepared, not
+fixed:** 3D clicks still bypass *lesson* gating, which needs the lesson runner (`BEDO‑018`/`BEDO‑020`).
 
 ---
 

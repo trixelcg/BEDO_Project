@@ -24,6 +24,7 @@ tests/
 │   ├── scene-config.spec.ts    the frozen scene values (added by BEDO-003)
 │   ├── units.spec.ts           what unit each domain field holds (BEDO-005)
 │   ├── domain-boundary.spec.ts the domain imports nothing it shouldn't (BEDO-005)
+│   ├── state-machine.spec.ts   the apparatus rules themselves (BEDO-006)
 │   ├── api-surface.spec.ts     the endpoints BEDO-001 removed stay removed
 │   └── bundle.spec.ts          what production output must and must not contain
 ├── integration/                Vitest, jsdom — the real App, Scene3D doubled
@@ -42,7 +43,7 @@ Three layers, three jobs:
 
 | Layer | Answers | Cost |
 |---|---|---|
-| unit | "is the domain still correct?" | 10 files, ~1.5 s |
+| unit | "is the domain still correct?" | 11 files, ~1.5 s |
 | integration | "does the lesson engine still behave?" | 3 files, ~6 s |
 | e2e | "does it still work in a browser?" | 3 files, ~1.4 min |
 
@@ -93,7 +94,8 @@ Notes.
 | Balancing mass and the ±10 g window | `physics.spec.ts` | Judging balance against the rounded target, which "balanced" an empty tray |
 | Four experiments, angles, quizzes | `experiments.spec.ts` | A sheet losing its Arabic half, an unanswerable quiz, an angle outside its family |
 | The twelve steps | `experiments.spec.ts`, `lesson-flow.spec.tsx`, `lesson.e2e.ts` | Reordering, renumbering, or dropping a step |
-| Five safety guards | `safety-guards.spec.tsx` | Any guard weakening — each is checked refused / state-unchanged / message / then allowed |
+| Five safety guards, as rules | `state-machine.spec.ts` | The rules themselves: every action against valid and invalid states, guard precedence, immutability against frozen inputs, determinism, totality |
+| Five safety guards, through React | `safety-guards.spec.tsx` | That the UI adapter still maps onto those rules — kept alongside the domain tests so the two cannot drift apart |
 | **GLB node names** | `glb-contract.spec.ts` | ★ A Blender re-export renaming or deleting a node the runtime drives |
 | Asset presence | `assets.spec.ts` | A media URL in `src/` with no file behind it |
 | Removed API routes | `api-surface.spec.ts` | Reintroducing `/api/{chat,tts,upload,crawl,register,gcsStorage}` |

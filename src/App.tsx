@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import type { ErrorCode, ExperimentId, SimulationState } from './types/index';
+import type { ExperimentId, SimulationState } from './types/index';
+import { attempt, type ApparatusAction } from './domain/stateMachine';
+import {
+  toApparatusState,
+  withApparatusState,
+  withRejection,
+} from './lib/apparatusGate';
 import { getDeflector } from './domain/apparatus';
 import { buildSteps, getExperiment, deflectorsFor } from './domain/experiments';
 import { markReady } from './lib/readiness';
@@ -16,33 +22,6 @@ import {
   computeRow,
 } from './domain/physics';
 import './index.css';
-
-/**
- * The five guards from BEDO's state machine document. Every control stays clickable at
- * all times — these are what stop an unsafe action, in both Free and Guided mode.
- */
-const ERRORS: Record<ErrorCode, { en: string; ar: string }> = {
-  error1: {
-    en: 'You can’t add weights while the tank is open.',
-    ar: 'لا يمكن إضافة الأوزان أثناء فتح الخزان.',
-  },
-  error2: {
-    en: 'Remove the tank cover first.',
-    ar: 'يرجى إزالة غطاء الخزان أولاً.',
-  },
-  error3: {
-    en: 'You can’t open the tank while the power is on.',
-    ar: 'لا يمكن فتح الخزان أثناء تشغيل الطاقة.',
-  },
-  error4: {
-    en: 'You can’t turn on the power while the tank is open.',
-    ar: 'لا يمكن تشغيل الطاقة أثناء فتح الخزان.',
-  },
-  error5: {
-    en: 'Remove all weights first before opening the tank.',
-    ar: 'يرجى إزالة جميع الأوزان قبل فتح الخزان.',
-  },
-};
 
 const initialState = (
   language: SimulationState['language'] = 'en',
@@ -107,9 +86,36 @@ export default function App() {
     state.params.pumpFlowLMin,
   ]);
 
-  const raise = useCallback((code: ErrorCode) => {
-    setState((prev) => ({ ...prev, warningMessage: { ...ERRORS[code], code } }));
-  }, []);
+  /**
+   * Every apparatus action goes through the domain state machine (BEDO-006).
+   *
+   * `attempt` decides whether the rig allows it and returns either the new apparatus
+   * state or a typed reason; this turns that into application state — the refusal banner,
+   * and any guided step the successful action completes. The 3D scene and the control
+   * panel both arrive here, so they cannot disagree about the rules.
+   *
+   * `advanceOnSuccess` is the lesson's business, not the apparatus's: the state machine
+   * has no idea what step the student is on, and this is where the two meet.
+   */
+  const dispatchApparatus = useCallback(
+    (
+      action: ApparatusAction,
+      advanceOnSuccess?: (prev: SimulationState) => Partial<SimulationState>
+    ) => {
+      setState((prev) => {
+        const result = attempt(toApparatusState(prev), action);
+        if (!result.ok) return withRejection(prev, result.reason);
+
+        const next = withApparatusState(prev, result.state);
+        return {
+          ...next,
+          warningMessage: null,
+          ...(advanceOnSuccess?.(prev) ?? {}),
+        };
+      });
+    },
+    []
+  );
 
   const clearWarning = useCallback(
     () => setState((prev) => ({ ...prev, warningMessage: null })),
@@ -132,93 +138,93 @@ export default function App() {
 
   // --- Cover (steps 1 and 3) --------------------------------------------------
   const handleCoverClick = () => {
-    clearWarning();
-
-    if (!state.isCoverOpen) {
-      if (state.isPowerOn) return raise('error3');
-      if (state.loadedWeightsG.length > 0) return raise('error5');
-    }
-
+    // One control, two intents: which one a click means depends on where the plate is.
     setState((prev) => {
-      const isCoverOpen = !prev.isCoverOpen;
+      const action: ApparatusAction = prev.isCoverOpen
+        ? { type: 'CLOSE_COVER' }
+        : { type: 'OPEN_COVER' };
+      const result = attempt(toApparatusState(prev), action);
+      if (!result.ok) return withRejection(prev, result.reason);
+
+      const next = withApparatusState(prev, result.state);
       return {
-        ...prev,
-        isCoverOpen,
-        ...(isCoverOpen ? advance(prev, 1, 2) : advance(prev, 3, 4)),
+        ...next,
+        warningMessage: null,
+        ...(next.isCoverOpen ? advance(prev, 1, 2) : advance(prev, 3, 4)),
       };
     });
   };
 
   // --- Deflector (step 2) ------------------------------------------------------
-  const handleSelectDeflector = (id: number) => {
-    clearWarning();
-    // Error 2: the rod is inside the tank, so the cover has to come off first.
-    if (!state.isCoverOpen) return raise('error2');
-    setState((prev) => ({ ...prev, selectedDeflectorId: id }));
-  };
+  const handleSelectDeflector = (id: number) =>
+    dispatchApparatus({ type: 'SELECT_DEFLECTOR', deflectorId: id });
 
   // --- Power (step 4) ----------------------------------------------------------
   const handleTogglePower = () => {
-    clearWarning();
-    if (!state.isPowerOn && state.isCoverOpen) return raise('error4');
-
     setState((prev) => {
-      const isPowerOn = !prev.isPowerOn;
+      const action: ApparatusAction = prev.isPowerOn ? { type: 'POWER_OFF' } : { type: 'POWER_ON' };
+      const result = attempt(toApparatusState(prev), action);
+      if (!result.ok) return withRejection(prev, result.reason);
+
+      const next = withApparatusState(prev, result.state);
       return {
-        ...prev,
-        isPowerOn,
-        valveOpening: isPowerOn ? prev.valveOpening : 0.0,
-        ...(isPowerOn ? advance(prev, 4, 5) : {}),
+        ...next,
+        warningMessage: null,
+        ...(next.isPowerOn ? advance(prev, 4, 5) : {}),
       };
     });
   };
 
   // --- Volumetric valve (step 5) ----------------------------------------------
-  const handleToggleVolumetricValve = () => {
-    clearWarning();
-    setState((prev) => ({ ...prev, isVolumetricValveOpen: !prev.isVolumetricValveOpen }));
-  };
+  const handleToggleVolumetricValve = () =>
+    setState((prev) => {
+      const action: ApparatusAction = prev.isVolumetricValveOpen
+        ? { type: 'CLOSE_VOLUMETRIC_VALVE' }
+        : { type: 'OPEN_VOLUMETRIC_VALVE' };
+      const result = attempt(toApparatusState(prev), action);
+      if (!result.ok) return withRejection(prev, result.reason);
+      return { ...withApparatusState(prev, result.state), warningMessage: null };
+    });
 
   // --- Flow valve (steps 6 and 8) ---------------------------------------------
-  const handleSetValve = (val: number) => {
-    clearWarning();
-    if (!state.isPowerOn && val > 0) {
-      // Not one of the five documented guards — the pump simply isn't running.
-      setState((prev) => ({
-        ...prev,
-        notice: {
-          en: 'Turn on the power switch before opening the valve.',
-          ar: 'يرجى تشغيل مفتاح الطاقة قبل فتح الصمام.',
-        },
-      }));
-      return;
+  /**
+   * The valve snaps to a reading setpoint once the student is within the margin of it.
+   *
+   * That is a **lesson** rule, not an apparatus one — it exists so steps 6 and 8 land on
+   * the exact openings the results table is computed at — so it is applied here, before
+   * the domain sees the value. The state machine only asks whether the pump is running.
+   */
+  const snapToReadingSetpoint = (opening: number, step: number): number => {
+    if (step === 6 && opening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) {
+      return FIRST_READING_VALVE;
     }
-
-    setState((prev) => {
-      let valveOpening = val;
-      if (prev.currentStep === 6 && val >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) {
-        valveOpening = FIRST_READING_VALVE;
-      } else if (prev.currentStep === 8 && val >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) {
-        valveOpening = SECOND_READING_VALVE;
-      }
-      return { ...prev, valveOpening };
-    });
+    if (step === 8 && opening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) {
+      return SECOND_READING_VALVE;
+    }
+    return opening;
   };
+
+  const handleSetValve = (val: number) =>
+    setState((prev) => {
+      const result = attempt(toApparatusState(prev), { type: 'SET_VALVE', opening: val });
+      if (!result.ok) return withRejection(prev, result.reason);
+
+      // Snap after the gate, so a rejected setting never moves the valve at all.
+      const opening = snapToReadingSetpoint(val, prev.currentStep);
+      const snapped = attempt(toApparatusState(prev), { type: 'SET_VALVE', opening });
+      if (!snapped.ok) return withRejection(prev, snapped.reason);
+
+      return { ...withApparatusState(prev, snapped.state), warningMessage: null };
+    });
 
   const handleFlowValveClick = () =>
     handleSetValve(state.currentStep === 8 ? SECOND_READING_VALVE : FIRST_READING_VALVE);
 
   // --- Weights (steps 7 and 9) -------------------------------------------------
-  const handleAddWeight = (weight: number) => {
-    clearWarning();
-    if (state.isCoverOpen) return raise('error1');
-    setState((prev) => ({ ...prev, loadedWeightsG: [...prev.loadedWeightsG, weight] }));
-  };
+  const handleAddWeight = (weight: number) =>
+    dispatchApparatus({ type: 'ADD_WEIGHT', massG: weight });
 
-  const handleClearWeights = () => {
-    clearWarning();
-    setState((prev) => ({ ...prev, loadedWeightsG: [] }));
-  };
+  const handleClearWeights = () => dispatchApparatus({ type: 'REMOVE_ALL_WEIGHTS' });
 
   // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => {

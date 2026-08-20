@@ -124,7 +124,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   340 tests green. **Unit branding is naming only — the branded scalar types of `docs/13 §3` are not
   implemented.** Lever arm resolved as 1:1 from BEDO's own simulator (`docs/29 §8`). Detail: `docs/29`.
 
-### ☐ BEDO‑006 — Extract `domain/stateMachine.ts` `P1`
+### ✅ BEDO‑006 — Extract `domain/stateMachine.ts` `P1`
 - **Objective** Implement `attempt(state, action)` transcribing the state machine document exactly (A/B/C/D + Error1‑5 + J).
 - **Reason** The five guards are duplicated in `App.tsx` and `DeviceModel.tsx` (`CQ‑06 #1`), which is why 3D clicks bypass gating (`BUG‑04`).
 - **Affected** `src/domain/stateMachine.ts` (new); `App.tsx` handlers delegate to it.
@@ -132,6 +132,16 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** every cell of the transition table passes; existing app behaviour unchanged.
 - **Tests** `stateMachine.spec.ts` — full matrix.
 - **Perf** none.
+- **Status** ✅ Complete. `src/domain/stateMachine.ts` — `attempt(state, action)`, pure and total over a
+  six-field `ApparatusState`, ten intents and six typed `RejectionReason` codes. A refusal returns the input
+  state **by identity**; legal-but-nothing-to-do returns `changed: false`. All five guards extracted, including
+  their precedence (error3 before error5) and the power-off valve reset. Copy moved to
+  `src/lib/apparatusGate.ts`, character for character, keeping the warning/notice distinction. **Valve snapping
+  stayed on the lesson side** — it is keyed on the step, so it was never an apparatus rule (`docs/30 §7`).
+  61 pure tests added; the 17 React guard tests pass **unchanged**, which is the behaviour-preservation proof.
+  The two behaviours BEDO's document specifies and the app has never had (single-weight removal, drain on
+  power-off) are asserted *absent* — still `BEDO‑023`/`BEDO‑010`. Scene fingerprint identical; 404 tests green.
+  Detail: `docs/30`.
 
 ### ☐ BEDO‑007 — Correct the spring model to spec `P1`
 - **Objective** `X = h_F − h_w` clamped to `[0, maxTravel]`, `maxTravel` injected from measured geometry.
@@ -470,7 +480,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `BUG‑01`/`UX‑01` black screen | BEDO‑011 + 032/033 |
 | `BUG‑02` weights 2.18 m off | **BEDO‑016** |
 | `BUG‑03` jet 18× too wide | **BEDO‑017** |
-| `BUG‑04` gating bypass | BEDO‑020 |
+| `BUG‑04` gating bypass | BEDO‑020 — apparatus-safety half gated in ✅ BEDO‑006; lesson gating still open |
 | `BUG‑05` cross-experiment deflector | BEDO‑022 |
 | `BUG‑06` Free mode records nothing | BEDO‑023 |
 | `BUG‑07`/`08`/`10`/`11`/`12` UI/CSS | BEDO‑025, 026 |

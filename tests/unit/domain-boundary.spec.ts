@@ -62,7 +62,13 @@ describe('src/domain imports nothing from the outside world', () => {
   it('has the domain modules it is supposed to have', () => {
     // Guards the guard: if the directory is empty or renamed, the checks below would
     // pass by doing nothing.
-    expect(files.sort()).toEqual(['apparatus.ts', 'experiments.ts', 'physics.ts', 'units.ts']);
+    expect(files.sort()).toEqual([
+      'apparatus.ts',
+      'experiments.ts',
+      'physics.ts',
+      'stateMachine.ts',
+      'units.ts',
+    ]);
   });
 
   it.each(domainFiles())('%s imports only other domain modules', (file) => {
@@ -122,10 +128,12 @@ describe('the dependency direction', () => {
     const physics = await import('../../src/domain/physics');
     const apparatus = await import('../../src/domain/apparatus');
     const experiments = await import('../../src/domain/experiments');
+    const machine = await import('../../src/domain/stateMachine');
 
     expect(typeof document).toBe('undefined');
     expect(physics.computeRow(1, 0.4, 90, [50, 20, 10]).isBalanced).toBe(true);
     expect(apparatus.getDeflector(90).momentumFactor).toBe(1);
     expect(experiments.EXPERIMENTS).toHaveLength(4);
+    expect(machine.attempt(machine.restingState(90), { type: 'POWER_ON' }).ok).toBe(true);
   });
 });
