@@ -3,7 +3,8 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
-import type { SimulationState, SceneConfig } from '../types/index';
+import type { SimulationState } from '../types/index';
+import type { SceneConfig } from '../lib/sceneConfig';
 import { ANCHOR_VIEW, COVER_LIFT, type AnchorKey, type Anchors } from '../lib/apparatus';
 import type { ExperimentStep } from '../lib/experiments';
 

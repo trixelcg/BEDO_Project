@@ -47,6 +47,53 @@ describeBuilt('the production bundle', () => {
     expect(combined).toContain('-ready`');
   });
 
+  it('contains no developer settings panel', () => {
+    // BEDO-003 deleted MenuSettings and the scene-config editor. If any of these strings
+    // reappear, the editing surface — and with it a mutable scene — is back in the
+    // product build.
+    for (const source of sources()) {
+      expect(source, 'MenuSettings is back in the bundle').not.toContain('MenuSettings');
+      expect(source, 'the settings drawer markup is back').not.toContain(
+        'settings-panel-sidebar'
+      );
+      expect(source, 'the settings toggle is back').not.toContain('floating-settings-toggle');
+      expect(source).not.toContain('Capture Camera');
+      expect(source).not.toContain('Save Config');
+      expect(source).not.toContain('Apparatus Transformations');
+    }
+  });
+
+  it('makes no request to a configuration endpoint', () => {
+    for (const source of sources()) {
+      expect(source, 'the /config.json fetch is back').not.toContain('config.json');
+      expect(source).not.toContain('save-config');
+      // A string literal beginning `/api/` — i.e. a request path this app would call.
+      // Matching the bare substring would hit react-three-fiber's docs URL
+      // (https://docs.pmnd.rs/react-three-fiber/api/objects), which is not a request.
+      expect(source, 'an API call is back in the client').not.toMatch(/["'`]\/api\//);
+    }
+  });
+
+  it('keeps the frozen scene configuration values', () => {
+    // The apparatus transform must still be in the shipped code — if tree-shaking or a
+    // refactor dropped it, the scene would fall back to three.js defaults and move.
+    const combined = sources().join('');
+    expect(combined).toContain('1.8');
+    expect(combined).toContain('#d1f2f7');
+  });
+
+  it('ships no stylesheet rules for the removed panel', () => {
+    const css = readdirSync(path.join(DIST, 'assets'))
+      .filter((f) => f.endsWith('.css'))
+      .map((f) => readFileSync(path.join(DIST, 'assets', f), 'utf8'))
+      .join('');
+    expect(css).not.toContain('settings-panel');
+    expect(css).not.toContain('floating-settings-toggle');
+    expect(css).not.toContain('settings-section-card');
+    // ...while the classes the training UI shares with it stay.
+    expect(css).toContain('section-title');
+  });
+
   it('emits a single entry chunk, as docs/11 §3.4 records', () => {
     // Not a target — a pin. Code splitting is BEDO-011's job, and when it lands this
     // number changes deliberately rather than by accident.

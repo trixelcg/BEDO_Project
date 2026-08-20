@@ -14,6 +14,9 @@ const PORT = Number(process.env.BEDO_E2E_PORT ?? 5179);
 
 export default defineConfig({
   testDir: './tests/e2e',
+  // Playwright empties its output directory at the start of every run, so it gets a
+  // subfolder of its own. Measurement artefacts live in measurements/ and must survive.
+  outputDir: './test-results/playwright',
   testMatch: /.*\.e2e\.ts/,
   // The lesson is a single stateful walkthrough; one worker keeps the dev server's
   // module graph and the 26 MB model cache warm and the run reproducible.

@@ -29,3 +29,4 @@ docs/reference/*.mp4
 # Test and measurement output
 test-results
 playwright-report
+measurements

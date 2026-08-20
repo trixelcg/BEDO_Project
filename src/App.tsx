@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import type { ErrorCode, ExperimentId, SimulationState, SceneConfig } from './types/index';
-import { MenuSettings } from './components/MenuSettings';
-import { Sliders, X } from 'lucide-react';
+import type { ErrorCode, ExperimentId, SimulationState } from './types/index';
 import { getDeflector } from './lib/apparatus';
 import { buildSteps, getExperiment, deflectorsFor } from './lib/experiments';
 import { markReady } from './lib/readiness';
+import { SCENE_CONFIG } from './lib/sceneConfig';
 import {
   FIRST_READING_VALVE,
   ROW_VALVE_SETTINGS,
@@ -75,66 +74,6 @@ const BALANCE_ROW: Record<number, number> = { 7: 1, 9: 2 };
 
 export default function App() {
   const [state, setState] = useState<SimulationState>(() => initialState());
-
-  const [sceneConfig, setSceneConfig] = useState<SceneConfig>({
-    exposure: 1.0,
-    selfIllumination: 0.15,
-    hdrLight: 1.0,
-    hdrRotation: 0,
-    reflection: 1.0,
-    contrast: 1.0,
-    ambientColor: '#d1f2f7',
-    characterPosition: [0, -1.8, 0],
-    characterRotation: [0, 0, 0],
-    characterScale: [1.8, 1.8, 1.8],
-    glassSpecular: 1.0,
-    glassRoughness: 0.02,
-    glassIor: 1.52,
-  });
-
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-
-  useEffect(() => {
-    fetch('/config.json')
-      .then((res) => {
-        if (res.ok) return res.json();
-        throw new Error('No config');
-      })
-      .then((data) => {
-        if (data?.sceneConfig) setSceneConfig(data.sceneConfig);
-      })
-      .catch(() => {
-        console.log('Using default client-side scene configuration.');
-      });
-  }, []);
-
-  const handleSaveConfig = async () => {
-    const fullConfig = {
-      sceneConfig,
-      ttsConfig: { apiKey: '' },
-      aiConfig: { apiKey: '' },
-      characterUrl: '/Bedo_baked_v2.glb',
-      locationUrl: '',
-      hdrUrl: '/rosendal_plains_2_4k.webp',
-      visemeMap: {},
-    };
-
-    try {
-      const res = await fetch('/api/save-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fullConfig),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        alert('Configurations saved successfully to disk and GCS!');
-      } else {
-        alert(`Failed to save configuration: ${data.error || 'Unknown error'}`);
-      }
-    } catch (err: any) {
-      alert(`Save error: ${err.message}`);
-    }
-  };
 
   const experiment = useMemo(() => getExperiment(state.experimentId), [state.experimentId]);
   const steps = useMemo(() => {
@@ -398,7 +337,7 @@ export default function App() {
       <Scene3D
         state={state}
         steps={steps}
-        sceneConfig={sceneConfig}
+        sceneConfig={SCENE_CONFIG}
         onCoverClick={handleCoverClick}
         onSelectDeflector={handleSelectDeflector}
         onPowerClick={handleTogglePower}
@@ -406,36 +345,6 @@ export default function App() {
         onVolumetricValveClick={handleToggleVolumetricValve}
         onAddWeight={handleAddWeight}
       />
-
-      <button
-        className="floating-settings-toggle"
-        onClick={() => setShowSettings(!showSettings)}
-        title={state.language === 'ar' ? 'إعدادات المشهد' : 'Scene Settings'}
-      >
-        <Sliders size={15} />
-        <span>{state.language === 'ar' ? 'إعدادات المشهد' : 'Scene Settings'}</span>
-      </button>
-
-      {showSettings && (
-        <div className="settings-panel-sidebar">
-          <div className="settings-panel-header">
-            <h3>{state.language === 'ar' ? 'إعدادات المشهد والظلال' : 'Scene Settings'}</h3>
-            <button onClick={() => setShowSettings(false)}>
-              <X size={18} />
-            </button>
-          </div>
-          <div className="settings-panel-body">
-            <MenuSettings
-              config={sceneConfig}
-              setConfig={setSceneConfig}
-              onSaveConfig={handleSaveConfig}
-              onSaveCurrentCamera={() => {
-                alert('Camera angles captured. Save config to write permanently.');
-              }}
-            />
-          </div>
-        </div>
-      )}
 
       <UIOverlay
         state={state}

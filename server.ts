@@ -9,15 +9,6 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 8080;
 
-/**
- * The only API routes this server will serve.
- *
- * Previously the router imported `./api/${apiName}.ts` for whatever path segment
- * arrived, which made every file in api/ a public endpoint automatically. An
- * allow-list means adding a file to api/ no longer publishes it by accident.
- */
-const API_ROUTES = new Set(['save-config']);
-
 const bucketName = process.env.GCS_BUCKET_NAME || 'bedo-project-assets-2026';
 let storage: Storage | null = null;
 try {
@@ -26,90 +17,32 @@ try {
   console.warn("GCP Storage client could not be initialized in server.ts. Using local fallback.", e);
 }
 
-// Helper to parse query parameters and raw body data
-const parseRequest = (req: http.IncomingMessage) => {
-  return new Promise<{ body: any; query: any }>((resolve) => {
-    const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
-    const query = Object.fromEntries(urlObj.searchParams.entries());
-    
-    let bodyData = '';
-    req.on('data', (chunk) => {
-      bodyData += chunk;
-    });
-    req.on('end', () => {
-      let body = {};
-      try {
-        if (bodyData) {
-          body = JSON.parse(bodyData);
-        }
-      } catch (e) {
-        body = bodyData;
-      }
-      resolve({ body, query });
-    });
-  });
-};
-
 const server = http.createServer(async (req, res) => {
   const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
   const pathname = urlObj.pathname;
 
-  // Mock res object to match Vercel handler interface (res.status, res.json, res.send)
-  const responseWrapper = {
-    statusCode: 200,
-    headers: {} as Record<string, string>,
-    setHeader(name: string, value: string) {
-      this.headers[name] = value;
-      res.setHeader(name, value);
-      return this;
-    },
-    status(code: number) {
-      this.statusCode = code;
-      res.statusCode = code;
-      return this;
-    },
-    json(data: any) {
-      res.setHeader('Content-Type', 'application/json');
-      res.writeHead(this.statusCode);
-      res.end(JSON.stringify(data));
-      return this;
-    },
-    send(data: any) {
-      res.writeHead(this.statusCode);
-      res.end(data);
-      return this;
-    }
-  };
-
-  // 1. Route API requests
-  if (pathname.startsWith('/api/')) {
-    const parts = pathname.split('/');
-    const apiName = parts[2]?.split('?')[0];
-    
-    if (apiName && API_ROUTES.has(apiName)) {
-      try {
-        const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
-        const query = Object.fromEntries(urlObj.searchParams.entries());
-        const { body } = await parseRequest(req);
-
-        const requestWrapper = Object.assign(req, { body, query });
-
-        const modulePath = `./api/${apiName}.ts`;
-        const module = await import(modulePath);
-        await module.default(requestWrapper, responseWrapper);
-        return;
-      } catch (err: any) {
-        console.error(`Error handling API route ${pathname}:`, err);
-        responseWrapper.status(500).json({ error: 'Internal server error' });
-        return;
-      }
-    }
-
-    responseWrapper.status(404).json({ error: 'Not found' });
+  /**
+   * This server has no API.
+   *
+   * It served six inherited handlers until BEDO-001 deleted them, then one
+   * (`save-config`) until BEDO-003 deleted that too — it existed to let a developer
+   * panel write the scene configuration to disk and to a public GCS bucket, which meant
+   * any visitor could restyle the deployed site for everyone. The scene configuration is
+   * now a checked-in constant (`src/lib/sceneConfig.ts`) and nothing in the training
+   * product calls an endpoint.
+   *
+   * The prefix is still answered explicitly, rather than falling through to the static
+   * handler, so that `/api/anything` is a flat 404 and never an index.html that a client
+   * might try to parse as JSON.
+   */
+  if (pathname.startsWith('/api/') || pathname === '/api') {
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'Not found' }));
     return;
   }
 
-  // 2. Serve static frontend assets
+  // Serve static frontend assets
   let filePath = path.join(__dirname, 'public', pathname === '/' ? 'index.html' : pathname);
   
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {

@@ -9,10 +9,8 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   server: {
+    // No proxy: BEDO-003 removed the last API route, so the dev server has nothing to
+    // forward and `npm run dev` no longer starts a backend alongside it.
     port: 5179,
-    proxy: {
-      '/api': 'http://localhost:8080',
-      '/uploads': 'http://localhost:8080',
-    }
   }
 })

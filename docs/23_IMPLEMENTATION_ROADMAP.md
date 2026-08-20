@@ -64,7 +64,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   `src/lib/readiness.ts` loading markers, and a dev-only `window.__bedoTest.coverClick` adapter that
   `vite build` strips. **Full detail, tolerances, strategy and the defects it found: `docs/25`.**
 
-### ☐ BEDO‑003 — Remove the production dev panel and the config backend `P0`
+### ✅ BEDO‑003 — Remove the production dev panel and the config backend `P0`
 - **Objective** Bake `SceneConfig` into a checked-in constant; gate `MenuSettings` behind `import.meta.env.DEV`; delete `api/save-config.ts`, the `/config.json` fetch, and the four `alert()` calls.
 - **Reason** Any visitor can change the scene for everyone (`ARCH‑13`, residual risk `R‑1`); "Capture Camera" lies (`BUG‑23`); the eval PDF specifies **no backend**.
 - **Affected** `src/App.tsx:78‑136,387‑415`, `src/components/MenuSettings.tsx`, `api/save-config.ts`, `server.ts`, `vite.config.ts`.
@@ -72,6 +72,13 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** production bundle contains no `MenuSettings` and no `/api/*` call; `api/` is empty; scene renders identically.
 - **Tests** `bundle.spec.ts` asserts the string `save-config` is absent from `dist`.
 - **Perf** −~12 KB JS; removes a 404 on every load (`BUG‑24`).
+- **Status** ✅ Complete. `MenuSettings` (350 lines) and `api/save-config.ts` (224 lines) deleted; `api/` no
+  longer exists and the server answers every `/api/*` with 404. The thirteen scene values are frozen in
+  `src/lib/sceneConfig.ts` — **read out of the live three.js scene graph before removal, not copied from the
+  panel's defaults**. `scripts/scene-fingerprint.mjs` compares the before/after scene graphs: all four lights,
+  the apparatus transform, 33 mesh world transforms, 16 click hotspots, the cover material and the camera are
+  **byte-identical**; the only difference in the whole run is `/config.json` no longer being requested.
+  JS −10.6 kB, CSS −1.5 kB, one fewer request, `BUG‑23` and `BUG‑24` gone with it. Detail: `docs/26`.
 
 ### ☐ BEDO‑004 — Dead code and dead asset removal `P1`
 - **Objective** Delete ~39 MB of unreferenced assets, two unused deps, and the dead exports/types/CSS.
@@ -417,6 +424,19 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   written against.
 - **Note** Raised by BEDO‑002. Until it is decided, **the twelve-step flow is the specification** — the tests
   enforce it, and no task may quietly renumber, merge or delete a step (`docs/25 §9.7`).
+- **Status** ◐ **Investigated and documented in `docs/27`; the decision itself still belongs to BEDO.**
+  The reference walkthrough video was decoded frame by frame, and it settles the central question: BEDO's own
+  shipped simulator has **10 numbered steps and its step 5 *is* the volumetric control valve**. So the build's
+  12 = the simulator's 10 + the sheets' Calculate and closing steps. **Nothing in the build is invented, and
+  the 12th step is not the anomaly** — measured against the sheets, the extra step is step 5, which
+  `docs/14 §5` recommended deleting. That recommendation should not be actioned: it would remove an
+  instruction BEDO ships.
+  **Recommendation: RESTRUCTURE WITHOUT CHANGING LEARNING CONTENT** — demote the volumetric valve from a
+  numbered step to a prerequisite action inside step 4, giving 1–11 numbering that matches the sheets while
+  losing no instruction and matching the state machine's treatment of the valve as state-neutral.
+  ⚠️ Conditional: the experiment sheets, the state-machine document and the storyboard are **not in this
+  repository** (`Storyboard.pptx` is a 165-byte stub), so the 11-step claim rests on the transcription in
+  `docs/14 §5`. See `docs/27 §6` for what BEDO must confirm first.
 
 ---
 
@@ -446,7 +466,10 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `RND‑01`..`18` | BEDO‑015, 028, 029, 024 |
 | `UX‑04`/`UX‑12` accessibility | BEDO‑036 |
 | `CQ‑01`..`21` | BEDO‑002, 004, 005, 014, 025 |
-| Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** (decision `D‑2`) |
+| Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** — evidence in `docs/27` (decision `D‑2`) |
+| `BUG‑23` "Capture Camera" captured nothing | ✅ BEDO‑003 (removed with the panel) |
+| `BUG‑24` `/config.json` 404 on every load | ✅ BEDO‑003 |
+| `ARCH‑13` / `R‑1` anonymous scene rewrite via `save-config` | ✅ BEDO‑003 |
 | Popup hidden behind the software monitor (found by BEDO‑002) | BEDO‑027 — see `docs/25 §9.1` |
 
 ---
@@ -456,7 +479,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | # | Decision | Blocks |
 |---|---|---|
 | D‑1 | ✅ **Resolved: Zustand.** Scoped subscriptions and imperative access, so 60 Hz simulation, scene and interaction state need not be pushed through React rendering. Not Redux. Applies to future architecture work only — BEDO‑002 changed no state architecture. | BEDO‑008 |
-| D‑2 | **11 steps (per the experiment sheets) or 12 (as shipped)** — now owned by **BEDO‑041**, which reconciles the application, the sheets, the storyboard and the state machine before anything is renumbered | BEDO‑019, BEDO‑041 |
+| D‑2 | **11 steps (per the experiment sheets) or 12 (as shipped)** — evidence gathered in **`docs/27`**: BEDO's shipped simulator has 10 numbered steps *including* the volumetric valve, the sheets have 11 *excluding* it, and the build is the union. Recommendation: restructure to 11 without deleting any instruction. **Still needs BEDO's answer**, and the sheets/storyboard/state-machine documents to be recovered | BEDO‑019, BEDO‑041 |
 | D‑3 | Monitor as DOM overlay (recommended) or in-scene screen | BEDO‑027 |
 | D‑4 | Volumetric measurement in scope? | BEDO‑019 |
 | D‑5 | Balance target: hidden / hint mode / instructor toggle | BEDO‑023 |

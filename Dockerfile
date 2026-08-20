@@ -29,10 +29,10 @@ RUN npm ci --only=production
 # Install tsx globally in the runner image to execute TypeScript files (server.ts) directly
 RUN npm install -g tsx
 
-# Copy built assets and backend
+# Copy built assets and the static server
+# (no api/ — BEDO-003 removed the last endpoint; COPY of a missing path fails the build)
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/api ./api
 COPY --from=builder /app/server.ts ./server.ts
 
 EXPOSE 8080

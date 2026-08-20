@@ -78,19 +78,3 @@ export interface SimulationState {
   notice: { en: string; ar: string } | null;
 }
 
-export interface SceneConfig {
-  exposure: number;
-  selfIllumination: number;
-  hdrLight: number;
-  hdrRotation: number;
-  reflection: number;
-  contrast: number;
-  ambientColor: string;
-  characterPosition: [number, number, number];
-  characterRotation: [number, number, number];
-  characterScale: [number, number, number];
-  glassSpecular: number;
-  glassRoughness: number;
-  glassIor: number;
-}
-

@@ -242,7 +242,7 @@ async function main() {
   await browser.close();
   server?.kill('SIGTERM');
 
-  const outPath = path.join(ROOT, 'test-results', OUT ?? `perf-${result.measuredAt.replace(/[:.]/g, '-')}.json`);
+  const outPath = path.join(ROOT, 'measurements', OUT ?? `perf-${result.measuredAt.replace(/[:.]/g, '-')}.json`);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
 

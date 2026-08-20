@@ -21,6 +21,7 @@ tests/
 │   ├── experiments.spec.ts     the four sheets and the twelve-step procedure
 │   ├── glb-contract.spec.ts    ★ every node name the runtime resolves, against the real asset
 │   ├── assets.spec.ts          the files the app loads exist and are what they claim
+│   ├── scene-config.spec.ts    the frozen scene values (added by BEDO-003)
 │   ├── api-surface.spec.ts     the endpoints BEDO-001 removed stay removed
 │   └── bundle.spec.ts          what production output must and must not contain
 ├── integration/                Vitest, jsdom — the real App, Scene3D doubled
@@ -38,7 +39,7 @@ Three layers, three jobs:
 
 | Layer | Answers | Cost |
 |---|---|---|
-| unit | "is the domain still correct?" | 7 files, ~1 s |
+| unit | "is the domain still correct?" | 8 files, ~1 s |
 | integration | "does the lesson engine still behave?" | 2 files, ~2.5 s |
 | e2e | "does it still work in a browser?" | 3 files, ~1.4 min |
 
@@ -95,6 +96,9 @@ Notes.
 | Removed API routes | `api-surface.spec.ts` | Reintroducing `/api/{chat,tts,upload,crawl,register,gcsStorage}` |
 | Dev-only test adapter | `bundle.spec.ts` | Shipping the E2E seam to production |
 | Loading milestones | `readiness.e2e.ts` | Losing the markers later performance work measures against |
+| Scene configuration | `scene-config.spec.ts` | A scene value drifting after BEDO-003 froze it — every number is pinned against the live scene-graph observable it was read from (`docs/26 §2`) |
+| No config fetch at startup | `readiness.e2e.ts` | The `/config.json` request, an `/api` call, or any 4xx or console error returning to startup |
+| No developer settings UI | `bundle.spec.ts`, `readiness.e2e.ts` | The scene editor returning to a production build |
 
 ---
 
@@ -287,8 +291,10 @@ Found while writing this suite. **None is fixed here** — BEDO‑002 is additiv
    as-is; `BUG‑04` → `BEDO‑020`.
 6. **Row 4 of the results table is fabricated** (`n = 0.6`, never measured) and row 1 is a zero row. Pinned as
    today's behaviour; `BUG‑14`/`BUG‑15` → `BEDO‑009`.
-7. **Twelve steps vs eleven.** Preserved and tested at twelve, deliberately. Reconciliation is
-   `BEDO‑041` + decision `D‑2`.
+7. **Twelve steps vs eleven.** Preserved and tested at twelve, deliberately. The evidence is now gathered in
+   `docs/27`: BEDO's own shipped simulator has ten numbered steps *including* the volumetric valve, so the
+   build is the union of two differing BEDO sources rather than an invention. The decision itself
+   (`BEDO‑041` / `D‑2`) still belongs to BEDO, and these tests stay pinned to twelve until it is made.
 
 ### Not covered yet (deliberately)
 
