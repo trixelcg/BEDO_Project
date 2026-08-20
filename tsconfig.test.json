@@ -1,0 +1,26 @@
+{
+  // The test suite, typechecked separately from the app build.
+  //
+  // Kept out of tsconfig.json's references on purpose: `npm run build` must keep doing
+  // exactly what it did before BEDO-002, so a change in a spec can never break a
+  // production build. `npm run typecheck` runs both projects.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["node", "vite/client"],
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["tests", "vitest.config.ts", "playwright.config.ts"]
+}

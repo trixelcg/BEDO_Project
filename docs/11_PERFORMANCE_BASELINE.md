@@ -225,6 +225,7 @@ Append one row per optimisation task. Re‑measure with §1's exact procedure.
 | Date | Commit | Task | Draws | Tris/f | FB binds | VRAM | GLB | dist | TTFS | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026‑08‑20 | `2471bc9` | **BASELINE** | 769 | 217 055 | 22 | 764 MB | 26 MB | 95 MB | 15–20 s | frozen reference |
+| 2026‑08‑20 | `phase2/security-remediation` | BEDO‑002 (measurement only) | 769 | 217 055 | 22 | 764.45 MB | 25.92 MB | 95.28 MB | 22.2 s | `scripts/perf-baseline.mjs`, headless Playwright/SwiftShader. GPU counters reproduce the baseline exactly; timings are **not** comparable to the row above (no GPU) — 1.3 fps, `scene-ready` mark at 22 180 ms. No optimisation attempted. |
 | | | | | | | | | | | |
 
 ---
@@ -243,3 +244,14 @@ gzip -9 -c dist/assets/index-*.js | wc -c                      # gzip bundle siz
 ```
 
 For GPU counters and frame timing, use the harness in §1.2 in a **foreground** tab.
+
+Since BEDO‑002 the whole procedure is also scripted — the same counters, the same reset-and-settle sampling,
+the same VRAM computation, plus `bedo:*-ready` marks for the timings §1.4 previously took by eye:
+
+```bash
+npm run build && npm run perf:baseline                                # measures dist/
+node scripts/perf-baseline.mjs --headed --channel chrome --seconds 8  # closest to §1.1
+```
+
+It writes JSON to `test-results/` and prints a ready-made row for §5. It measures only — it asserts nothing and
+never edits this document. See `docs/25 §7`, including why headless timings are not comparable to §2.

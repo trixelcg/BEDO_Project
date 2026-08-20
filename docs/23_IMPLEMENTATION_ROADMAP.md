@@ -48,7 +48,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Perf** −784 lines; smaller image.
 - **Status** ✅ commit `93b6dbb`. See `docs/10`.
 
-### ▶ BEDO‑002 — Pin current behaviour with tests `P0`
+### ✅ BEDO‑002 — Pin current behaviour with tests `P0`
 - **Objective** Vitest + Playwright; specs for physics, apparatus contract, experiments, and one E2E walkthrough — written **against today's code**.
 - **Reason** Zero tests today. `BUG‑06/14/15/05/27` all shipped because nothing checked them. Refactoring without a pin will silently change the verified physics.
 - **Affected** `package.json`, `vitest.config.ts`, `playwright.config.ts`, `src/**/__tests__/`, `.github/workflows/ci.yml`, `src/domain/apparatus/__fixtures__/apparatus.nodes.json`.
@@ -57,6 +57,12 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Tests** *is* the test task.
 - **Perf** CI time +~2 min.
 - **Note** ★ **This is the recommended first implementation task.** Detail in `docs/22 §4`.
+- **Status** ✅ Complete. 259 unit/integration tests + 9 Playwright tests; physics pinned to the spreadsheet,
+  all 33 GLB contract names checked against the shipped asset, five guards covered, the twelve-step lesson
+  completes in a browser, removed API routes probed on a live server, and `scripts/perf-baseline.mjs`
+  reproduces the `docs/11` GPU baseline exactly. Two production seams, both behaviour-neutral:
+  `src/lib/readiness.ts` loading markers, and a dev-only `window.__bedoTest.coverClick` adapter that
+  `vite build` strips. **Full detail, tolerances, strategy and the defects it found: `docs/25`.**
 
 ### ☐ BEDO‑003 — Remove the production dev panel and the config backend `P0`
 - **Objective** Bake `SceneConfig` into a checked-in constant; gate `MenuSettings` behind `import.meta.env.DEV`; delete `api/save-config.ts`, the `/config.json` fetch, and the four `alert()` calls.
@@ -227,9 +233,10 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 ### ☐ BEDO‑019 — Reconcile the step list to the experiment sheets `P1`
 - **Objective** 11 steps per the sheets; volumetric valve becomes clickable and state-neutral; step 11 surfaces the real answer sheet PDFs.
 - **Reason** `docs/14 §5` — step 5 (volumetric valve) exists in **no** experiment sheet, and causes two of the four disorienting camera trips.
-- **Dependencies** BEDO‑018 · **⚠️ Needs decision D‑2.**
+- **Dependencies** BEDO‑018, **BEDO‑041** · **⚠️ Needs decision D‑2.**
 - **Acceptance** step list matches Exp.1–4 docx exactly, both languages.
-- **Tests** `lessonDefinition.spec.ts` compares against a transcribed fixture.
+- **Tests** `lessonDefinition.spec.ts` compares against a transcribed fixture. Today's twelve steps are pinned
+  by `experiments.spec.ts` and `lesson.e2e.ts`; both change **only** once D‑2 is decided.
 
 ### ☐ BEDO‑020 — Interaction engine + single gate `P1`
 - **Objective** Affordance registry with mandatory `a11y` descriptors; gesture recogniser; intent bus; **one** gate.
@@ -389,6 +396,28 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Reason** Brief §21 items 19–20.
 - **Dependencies** everything · **Acceptance** every budget in `docs/20 §2` met and recorded in `docs/11 §5`; the `docs/09 §7` definition of done satisfied.
 
+### ☐ BEDO‑041 — ★ Reconcile the canonical lesson structure `P1`
+- **Objective** Produce **one** authoritative step list, agreed with BEDO, by reconciling the four sources that
+  currently disagree:
+  1. **the application as it ships** — twelve steps (`src/lib/experiments.ts`, pinned by BEDO‑002),
+  2. **the experiment sheets** (Exp. 1–4) — eleven instructional steps, with **no** volumetric-valve step,
+  3. **the storyboard**,
+  4. **the state-machine document** — which defines a machine independent of the lesson script.
+  Deliverable: a transcribed fixture of the agreed list, per experiment, in both languages, plus a written
+  note of what was added, removed or merged and on whose authority.
+- **Reason** The gap is real and unresolved: step 5 (volumetric valve) appears in no experiment sheet
+  (`docs/14 §5`), while steps 11 (Calculate) and 12 (assessment question) come from the sheets and are absent
+  from the reference simulator. Deciding this by implementation accident would change what a student is taught.
+- **Affected** documentation and a fixture only. **No behaviour changes under this task.**
+- **Dependencies** none — this is a decision task and can start immediately · **Blocks** BEDO‑019.
+- **⚠️ Resolves decision D‑2.**
+- **Risks** none while it stays a paper exercise; the risk is in *not* doing it before BEDO‑018/019 rewrite the
+  lesson engine around whichever list happens to be in the code.
+- **Acceptance** D‑2 answered in writing; a step-list fixture exists that `lessonDefinition.spec.ts` can be
+  written against.
+- **Note** Raised by BEDO‑002. Until it is decided, **the twelve-step flow is the specification** — the tests
+  enforce it, and no task may quietly renumber, merge or delete a step (`docs/25 §9.7`).
+
 ---
 
 ## Traceability
@@ -417,6 +446,8 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `RND‑01`..`18` | BEDO‑015, 028, 029, 024 |
 | `UX‑04`/`UX‑12` accessibility | BEDO‑036 |
 | `CQ‑01`..`21` | BEDO‑002, 004, 005, 014, 025 |
+| Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** (decision `D‑2`) |
+| Popup hidden behind the software monitor (found by BEDO‑002) | BEDO‑027 — see `docs/25 §9.1` |
 
 ---
 
@@ -424,8 +455,8 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
 | # | Decision | Blocks |
 |---|---|---|
-| D‑1 | **Redux (per the eval PDF) or Zustand (recommended)** | BEDO‑008 |
-| D‑2 | **11 steps (per the experiment sheets) or 12** | BEDO‑019 |
+| D‑1 | ✅ **Resolved: Zustand.** Scoped subscriptions and imperative access, so 60 Hz simulation, scene and interaction state need not be pushed through React rendering. Not Redux. Applies to future architecture work only — BEDO‑002 changed no state architecture. | BEDO‑008 |
+| D‑2 | **11 steps (per the experiment sheets) or 12 (as shipped)** — now owned by **BEDO‑041**, which reconciles the application, the sheets, the storyboard and the state machine before anything is renumbered | BEDO‑019, BEDO‑041 |
 | D‑3 | Monitor as DOM overlay (recommended) or in-scene screen | BEDO‑027 |
 | D‑4 | Volumetric measurement in scope? | BEDO‑019 |
 | D‑5 | Balance target: hidden / hint mode / instructor toggle | BEDO‑023 |

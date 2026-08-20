@@ -7,6 +7,7 @@ import { MenuSettings } from './components/MenuSettings';
 import { Sliders, X } from 'lucide-react';
 import { getDeflector } from './lib/apparatus';
 import { buildSteps, getExperiment, deflectorsFor } from './lib/experiments';
+import { markReady } from './lib/readiness';
 import {
   FIRST_READING_VALVE,
   ROW_VALVE_SETTINGS,
@@ -366,6 +367,28 @@ export default function App() {
     setState((prev) => ({ ...prev, params: { ...prev.params, ...params } }));
 
   const handleReset = () => setState(initialState(state.language, state.experimentId));
+
+  // The shell is mounted and interactive from here. See src/lib/readiness.ts.
+  useEffect(() => markReady('app'), []);
+
+  /**
+   * Dev-only test adapter (BEDO-002 §7).
+   *
+   * The tank cover is the one control with no DOM equivalent — steps 1 and 3 are
+   * performed by clicking a mesh inside the WebGL canvas. Rather than have the E2E hunt
+   * for screen coordinates on a 3D view that reframes itself between steps, it calls the
+   * very handler the mesh calls, so every guard and every guided transition still runs.
+   *
+   * `import.meta.env.DEV` is compiled to the literal `false` by `vite build`, so this
+   * block is dead code the bundler drops; `tests/unit/bundle.spec.ts` asserts the symbol
+   * is absent from `dist/`.
+   */
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as Record<string, unknown>).__bedoTest = {
+      coverClick: handleCoverClick,
+    };
+  });
 
   const deflector = getDeflector(state.selectedDeflectorId);
   const deflectorName = state.language === 'ar' ? deflector.nameAr : deflector.nameEn;

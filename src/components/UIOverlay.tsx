@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { CustomParams, ExperimentId, Language, SimulationState } from '../types/index';
 import {
   Layers,
@@ -13,6 +13,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { WEIGHTS, type DeflectorDef } from '../lib/apparatus';
+import { markReady } from '../lib/readiness';
 import { EXPERIMENTS, TOTAL_STEPS, type ExperimentDef, type ExperimentStep } from '../lib/experiments';
 import {
   FIRST_READING_VALVE,
@@ -68,6 +69,9 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 }) => {
   const [showVideo, setShowVideo] = useState(false);
   const [panel, setPanel] = useState<Panel>('steps');
+
+  // The training panel is on screen and usable. See src/lib/readiness.ts.
+  useEffect(() => markReady('training'), []);
 
   const {
     mode,

@@ -1,0 +1,351 @@
+import { describe, expect, it } from 'vitest';
+import {
+  BALANCE_TOLERANCE_G,
+  FIRST_READING_VALVE,
+  GRAVITY,
+  NOZZLE_AREA_M2,
+  ROW_VALVE_SETTINGS,
+  SECOND_READING_VALVE,
+  SPRING_RATE_N_PER_M,
+  TOTAL_FLOW_L_MIN,
+  TRAVEL_HEIGHT_M,
+  VALVE_SNAP_MARGIN,
+  WATER_DENSITY,
+  computeRow,
+  flowRateLMin,
+  jetState,
+  targetMassG,
+} from '../../src/lib/physics';
+import { DEFLECTORS, getDeflector } from '../../src/lib/apparatus';
+import {
+  F_OBSERVED_FLAT_N,
+  MOMENTUM_FACTORS,
+  REFERENCE_FORCES_N,
+  REFERENCE_Q_TOTAL,
+  REFERENCE_ROWS,
+  SECOND_READING_Q_L_MIN,
+  SECOND_READING_VALVE_N,
+  SECOND_READING_V0_DISPLAYED,
+  SECOND_READING_V_FROM_DISPLAYED_V0,
+} from '../fixtures/bedo-reference';
+
+/**
+ * Physics regression suite (BEDO-002 §2).
+ *
+ * BEDO's mathematical model is authoritative: every expected value here comes from
+ * `tests/fixtures/bedo-reference.ts`, never from running the implementation. If one of
+ * these fails after an edit to `src/lib/physics.ts`, the edit is wrong until the
+ * spreadsheet says otherwise — that is the whole point of the file.
+ *
+ * Tolerances
+ *  - flow rates      1e-6 absolute. The polynomial is exact arithmetic; anything larger
+ *                    would hide a transcription error.
+ *  - velocities      1e-4 absolute, the precision the reference table is printed to.
+ *  - forces          1e-4 *relative*. BEDO's own Fth column carries sheet rounding —
+ *                    its 120 deg row implies a factor of 1.50006 rather than 1.5
+ *                    (`docs/13 §1.4`) — so an absolute tolerance would fail on their
+ *                    rounding rather than on our arithmetic. The exact relationships
+ *                    (factor ratios, the Fo - Fth identity) are pinned exactly below.
+ */
+
+const FLOW_TOLERANCE = 6;
+const VELOCITY_TOLERANCE = 4;
+const FORCE_RELATIVE_TOLERANCE = 1e-4;
+
+const expectRelativeClose = (actual: number, expected: number, tolerance: number) => {
+  const relative = Math.abs(actual - expected) / Math.abs(expected);
+  expect(
+    relative,
+    `expected ${actual} to be within ${tolerance} relative of ${expected} (was ${relative.toExponential(2)})`
+  ).toBeLessThanOrEqual(tolerance);
+};
+
+describe('constants', () => {
+  it('pins every constant BEDO fixes in the reference material', () => {
+    expect(NOZZLE_AREA_M2).toBe(0.0000785);
+    expect(GRAVITY).toBe(9.81);
+    expect(TRAVEL_HEIGHT_M).toBe(0.035);
+    expect(WATER_DENSITY).toBe(1000);
+    expect(TOTAL_FLOW_L_MIN).toBe(120);
+    expect(SPRING_RATE_N_PER_M).toBe(200);
+  });
+
+  it('nozzle area is the area of the 10 mm bore', () => {
+    // A = pi r^2 for r = 5 mm is 7.853982e-5; the sheet carries it to three figures.
+    expect(NOZZLE_AREA_M2).toBeCloseTo(Math.PI * 0.005 ** 2, 7);
+  });
+
+  it('spring rate reproduces the xlsx hW column: 0.4905 N deflects 2.4525 mm', () => {
+    expect((0.4905 / SPRING_RATE_N_PER_M) * 1000).toBeCloseTo(2.4525, 9);
+  });
+
+  it('balance tolerance is measured against the exact mass, in grams', () => {
+    expect(BALANCE_TOLERANCE_G).toBe(10);
+  });
+
+  it('pins the four table valve settings and the snap margin', () => {
+    expect(ROW_VALVE_SETTINGS).toEqual([0.0, 0.4, 0.5, 0.6]);
+    expect(FIRST_READING_VALVE).toBe(0.4);
+    expect(SECOND_READING_VALVE).toBe(0.5);
+    expect(VALVE_SNAP_MARGIN).toBe(0.02);
+  });
+});
+
+describe('flow rate Q(n)', () => {
+  it.each(REFERENCE_ROWS)(
+    'reproduces the BEDO row n=$n as $q L/min',
+    ({ n, q }) => {
+      expect(flowRateLMin(n, REFERENCE_Q_TOTAL)).toBeCloseTo(q, FLOW_TOLERANCE);
+    }
+  );
+
+  it('reproduces the reference simulator row at n = 0.5', () => {
+    expect(flowRateLMin(SECOND_READING_VALVE_N, REFERENCE_Q_TOTAL)).toBeCloseTo(
+      SECOND_READING_Q_L_MIN,
+      FLOW_TOLERANCE
+    );
+  });
+
+  it('defaults Q_total to 120 L/min', () => {
+    expect(flowRateLMin(0.4)).toBe(flowRateLMin(0.4, TOTAL_FLOW_L_MIN));
+  });
+
+  it('scales linearly with Q_total', () => {
+    for (const n of [0.2, 0.4, 0.6, 0.8, 1.0]) {
+      expect(flowRateLMin(n, 240)).toBeCloseTo(2 * flowRateLMin(n, 120), 9);
+      expect(flowRateLMin(n, 60)).toBeCloseTo(0.5 * flowRateLMin(n, 120), 9);
+    }
+  });
+
+  it('is non-decreasing across the whole valve travel', () => {
+    let previous = -1;
+    for (let n = 0; n <= 1.0000001; n += 0.001) {
+      const q = flowRateLMin(n);
+      expect(q, `Q decreased at n=${n.toFixed(3)}`).toBeGreaterThanOrEqual(previous);
+      previous = q;
+    }
+  });
+
+  it('never returns a negative flow', () => {
+    expect(flowRateLMin(-0.5)).toBe(0);
+    expect(flowRateLMin(0)).toBe(0);
+  });
+});
+
+describe('velocities', () => {
+  it.each(REFERENCE_ROWS)('reproduces v0 and v for the BEDO row n=$n', ({ n, v0, v }) => {
+    const state = jetState(n, 90, REFERENCE_Q_TOTAL);
+    expect(state.theoreticalVo).toBeCloseTo(v0, VELOCITY_TOLERANCE);
+    expect(state.theoreticalV).toBeCloseTo(v, VELOCITY_TOLERANCE);
+  });
+
+  it('applies v = sqrt(v0^2 - 2gs) with s linear, not sqrt(s)', () => {
+    // The regression this pins: `2 * g * Math.sqrt(s)` subtracts 3.67 instead of 0.687,
+    // which drives v^2 negative at low flow and clamps the jet force to zero.
+    for (const { n, v0, v } of REFERENCE_ROWS) {
+      if (n === 0) continue;
+      const expected = Math.sqrt(v0 ** 2 - 2 * GRAVITY * TRAVEL_HEIGHT_M);
+      expect(expected).toBeCloseTo(v, VELOCITY_TOLERANCE);
+    }
+  });
+
+  it('matches the reference simulator row at n = 0.5', () => {
+    const state = jetState(SECOND_READING_VALVE_N, 90, REFERENCE_Q_TOTAL);
+    // The simulator prints v0 to two decimals...
+    expect(state.theoreticalVo).toBeCloseTo(SECOND_READING_V0_DISPLAYED, 2);
+    // ...and both derivations agree with its printed v to the precision it is printed
+    // at. Squaring the displayed v0 gives 5.6799; carrying full precision, as this
+    // implementation does, gives 5.6774. The reference row reads 5.679, which is why the
+    // agreement is only claimed to two decimals.
+    expect(
+      Math.sqrt(SECOND_READING_V0_DISPLAYED ** 2 - 2 * GRAVITY * TRAVEL_HEIGHT_M)
+    ).toBeCloseTo(SECOND_READING_V_FROM_DISPLAYED_V0, 2);
+    expect(state.theoreticalV).toBeCloseTo(SECOND_READING_V_FROM_DISPLAYED_V0, 2);
+    // The implementation's own value, pinned exactly.
+    expect(state.theoreticalV).toBeCloseTo(5.677421, 5);
+  });
+
+  it('v0 is Q/A, with Q converted from L/min to m3/s', () => {
+    const state = jetState(0.4, 90, REFERENCE_Q_TOTAL);
+    expect(state.flowRateQM3).toBeCloseTo(state.flowRateQLMin / 60000, 12);
+    expect(state.theoreticalVo).toBeCloseTo(state.flowRateQM3 / NOZZLE_AREA_M2, 9);
+  });
+
+  it('clamps v to zero rather than going imaginary below the travel height', () => {
+    // At n = 0.05 the jet leaves at 0.71 m/s and cannot climb the 35 mm to the face.
+    const state = jetState(0.05, 90, REFERENCE_Q_TOTAL);
+    expect(state.theoreticalVo).toBeGreaterThan(0);
+    expect(state.theoreticalVo ** 2).toBeLessThan(2 * GRAVITY * TRAVEL_HEIGHT_M);
+    expect(state.theoreticalV).toBe(0);
+    expect(state.fth).toBe(0);
+    expect(Number.isNaN(state.theoreticalV)).toBe(false);
+  });
+});
+
+describe('momentum factors', () => {
+  it.each(Object.entries(MOMENTUM_FACTORS))(
+    'deflector %s deg carries factor %s',
+    (angle, factor) => {
+      expect(getDeflector(Number(angle)).factor).toBeCloseTo(factor, 3);
+    }
+  );
+
+  it('covers every deflector on the tray, and no others', () => {
+    expect(DEFLECTORS.map((d) => d.id).sort((a, b) => a - b)).toEqual(
+      Object.keys(MOMENTUM_FACTORS).map(Number).sort((a, b) => a - b)
+    );
+  });
+
+  it('does not generalise 1 - cos(theta) to the oblique family', () => {
+    // 1 - cos would give 0.134 / 0.293 / 0.5 instead of 0.25 / 0.5 / 0.75.
+    for (const angle of [30, 45, 60]) {
+      const oneMinusCos = 1 - Math.cos((angle * Math.PI) / 180);
+      expect(getDeflector(angle).factor).not.toBeCloseTo(oneMinusCos, 2);
+      expect(getDeflector(angle).factor).toBeCloseTo(
+        Math.sin((angle * Math.PI) / 180) ** 2,
+        3
+      );
+    }
+  });
+});
+
+describe('theoretical force F_th', () => {
+  it.each(Object.entries(REFERENCE_FORCES_N))(
+    'reproduces BEDO F_th for the %s deg deflector at n = 0.4',
+    (angle, expected) => {
+      const { fth } = jetState(FIRST_READING_VALVE, Number(angle), REFERENCE_Q_TOTAL);
+      expectRelativeClose(fth, expected, FORCE_RELATIVE_TOLERANCE);
+    }
+  );
+
+  it('is exactly factor x rho x A x v^2', () => {
+    for (const deflector of DEFLECTORS) {
+      const state = jetState(FIRST_READING_VALVE, deflector.id, REFERENCE_Q_TOTAL);
+      expect(state.fth).toBeCloseTo(
+        deflector.factor * WATER_DENSITY * NOZZLE_AREA_M2 * state.theoreticalV ** 2,
+        12
+      );
+    }
+  });
+
+  it('ratios to the flat plate are the momentum factors, exactly', () => {
+    const flat = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL).fth;
+    for (const [angle, factor] of Object.entries(MOMENTUM_FACTORS)) {
+      const fth = jetState(FIRST_READING_VALVE, Number(angle), REFERENCE_Q_TOTAL).fth;
+      expect(fth / flat).toBeCloseTo(factor, 9);
+    }
+  });
+
+  it('scales with v^2: doubling the velocity quadruples the force', () => {
+    const a = jetState(0.4, 90, REFERENCE_Q_TOTAL);
+    const b = jetState(0.4, 90, REFERENCE_Q_TOTAL * 2);
+    expect(b.theoreticalVo / a.theoreticalVo).toBeCloseTo(2, 9);
+    expect(b.fth / a.fth).toBeCloseTo((b.theoreticalV / a.theoreticalV) ** 2, 9);
+  });
+
+  it('falls back to the flat deflector for an unknown id', () => {
+    expect(jetState(0.4, 999, REFERENCE_Q_TOTAL).fth).toBe(
+      jetState(0.4, 90, REFERENCE_Q_TOTAL).fth
+    );
+  });
+});
+
+describe('observed force F_o', () => {
+  it('is rho x A x v0^2, and exceeds F_th by exactly rho x A x 2gs', () => {
+    // BEDO's sheet carries both columns; the constant 0.05390595 N gap between them is
+    // what proves the 2gs form is linear. `docs/13 §1.5`.
+    const state = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL);
+    const observed = WATER_DENSITY * NOZZLE_AREA_M2 * state.theoreticalVo ** 2;
+
+    expectRelativeClose(observed, F_OBSERVED_FLAT_N, FORCE_RELATIVE_TOLERANCE);
+    expect(observed - state.fth).toBeCloseTo(
+      WATER_DENSITY * NOZZLE_AREA_M2 * 2 * GRAVITY * TRAVEL_HEIGHT_M,
+      9
+    );
+    expect(F_OBSERVED_FLAT_N - REFERENCE_FORCES_N[90]).toBeCloseTo(0.05390595, 8);
+  });
+});
+
+describe('balancing mass', () => {
+  it('is F_th / g, in grams, rounded to the nearest 10', () => {
+    for (const n of ROW_VALVE_SETTINGS) {
+      const exact = (jetState(n, 90).fth / GRAVITY) * 1000;
+      expect(targetMassG(n, 90)).toBe(Math.round(exact / 10) * 10);
+      expect(targetMassG(n, 90) % 10).toBe(0);
+    }
+  });
+
+  it('is reachable from the weight set at both reading settings', () => {
+    // The pair of readings the guided lesson takes: 83.6 g and 257.9 g.
+    expect(targetMassG(FIRST_READING_VALVE, 90)).toBe(80);
+    expect(targetMassG(SECOND_READING_VALVE, 90)).toBe(260);
+  });
+});
+
+describe('computeRow', () => {
+  const row = (weights: number[], n = FIRST_READING_VALVE) =>
+    computeRow(1, n, 90, weights, REFERENCE_Q_TOTAL);
+
+  it('carries the jet state and the row inputs through unchanged', () => {
+    const jet = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL);
+    const r = row([50, 20, 10]);
+    expect(r.index).toBe(1);
+    expect(r.valveOpen).toBe(FIRST_READING_VALVE);
+    expect(r.totalFlowValue).toBe(REFERENCE_Q_TOTAL);
+    expect(r.flowRateQLMin).toBe(jet.flowRateQLMin);
+    expect(r.theoreticalVo).toBe(jet.theoreticalVo);
+    expect(r.theoreticalV).toBe(jet.theoreticalV);
+    expect(r.fth).toBe(jet.fth);
+    expect(r.loadedWeights).toEqual([50, 20, 10]);
+  });
+
+  it('records F_ac as the loaded mass x g', () => {
+    expect(row([50, 20, 10]).weightsN).toBeCloseTo((80 * GRAVITY) / 1000, 12);
+    expect(row([]).weightsN).toBe(0);
+  });
+
+  it('records spring deflection as F_ac / k, in millimetres', () => {
+    const r = row([50, 20, 10]);
+    expect(r.springhW).toBeCloseTo((r.weightsN / SPRING_RATE_N_PER_M) * 1000, 12);
+    expect(r.springhW).toBeCloseTo(3.924, 3);
+  });
+
+  it('reports the exact balancing mass and the displayed 10 g target separately', () => {
+    const r = row([]);
+    expect(r.mass).toBeCloseTo(83.5804, 3);
+    expect(r.idealMass).toBe(80);
+  });
+
+  it('balances within 10 g of the exact mass, not of the rounded target', () => {
+    // The regression this pins: judged against the rounded target, an empty tray
+    // "balanced" any target under 30 g and adding a weight made it worse.
+    expect(row([]).balanced).toBe(false);
+    expect(row([50, 20, 10]).balanced).toBe(true); // 80 g, 3.6 g from exact
+    expect(row([50, 20, 20]).balanced).toBe(true); // 90 g, 6.4 g from exact
+    expect(row([50, 50]).balanced).toBe(false); // 100 g, 16.4 g from exact
+    expect(row([50, 20]).balanced).toBe(false); // 70 g, 13.6 g from exact
+  });
+
+  it('balances the second reading at 260 g', () => {
+    // Exact mass here is 257.9 g, so the 10 g window spans 247.9 - 267.9 g.
+    expect(row([200, 50, 10], SECOND_READING_VALVE).balanced).toBe(true); // 260 g
+    expect(row([200, 50], SECOND_READING_VALVE).balanced).toBe(true); // 250 g
+    expect(row([200, 20, 10], SECOND_READING_VALVE).balanced).toBe(false); // 230 g
+    expect(row([200], SECOND_READING_VALVE).balanced).toBe(false); // 200 g
+    expect(row([], SECOND_READING_VALVE).mass).toBeCloseTo(257.9307, 3);
+  });
+
+  it('treats the closed-valve row as a zero row', () => {
+    const r = computeRow(0, 0, 90, [], REFERENCE_Q_TOTAL);
+    expect(r.flowRateQLMin).toBe(0);
+    expect(r.theoreticalVo).toBe(0);
+    expect(r.theoreticalV).toBe(0);
+    expect(r.fth).toBe(0);
+    expect(r.idealMass).toBe(0);
+    expect(r.balanced).toBe(true);
+  });
+
+  it('is deterministic: the same inputs give the same row', () => {
+    expect(row([50, 20, 10])).toEqual(row([50, 20, 10]));
+  });
+});

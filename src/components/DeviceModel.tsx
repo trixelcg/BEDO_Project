@@ -25,6 +25,7 @@ import {
   VALVE_SNAP_MARGIN,
   jetState,
 } from '../lib/physics';
+import { markReady } from '../lib/readiness';
 
 type Action =
   | { kind: 'cover' }
@@ -161,6 +162,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
 
   const modelScale = scale[0] || 1;
+
+  // The apparatus model is loaded and in the scene graph. See src/lib/readiness.ts.
+  useEffect(() => {
+    if (scene) markReady('scene');
+  }, [scene]);
 
   /** Look a mesh up by its authored GLB name, through three's name sanitiser. */
   const pick = useCallback(
