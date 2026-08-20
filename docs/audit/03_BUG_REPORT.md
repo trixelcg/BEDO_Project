@@ -774,7 +774,7 @@ order.
 (`DeviceModel.tsx:308‑309`), and the plume meshes have 2–3 primitives each, so back and front faces of a
 double‑sided, non‑depth‑writing surface are sorted per‑object by centroid distance — a classic ordering
 failure. The tank cover material is likewise `transparent` + `transmission: 0.98` + `depthWrite: false`
-(`:188‑201`), and the GLB ships **14 `alphaMode: BLEND` materials**, several of which do not need blending at
+(`:188‑201`), and the GLB ships **19 `alphaMode: BLEND` materials**, several of which do not need blending at
 all.
 
 **Recommended solution.** Make the jet a single closed, front‑facing, convex mesh; keep `depthWrite: true` with

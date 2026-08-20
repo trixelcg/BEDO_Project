@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Reference material (large binaries; keep out of git — see docs/19)
+docs/reference/*.mp4

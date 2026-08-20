@@ -13,7 +13,7 @@ against the real apparatus. Performance consequences of these choices are quanti
 | RND‑01 | Double lighting: real‑time lights on top of a baked lightmap | **Critical** | Easy | P0 |
 | RND‑02 | The tank cover is force‑converted to 98 % transmissive glass | **Critical** | Trivial | P0 |
 | RND‑03 | All 68 GLB materials are `doubleSided` | High | Easy | P1 |
-| RND‑04 | 14 materials are `alphaMode: BLEND` without needing it | High | Easy | P1 |
+| RND‑04 | 19 materials are `alphaMode: BLEND` without needing it | High | Easy | P1 |
 | RND‑05 | The highlight glow repaints parts solid blue | High | Easy | P1 |
 | RND‑06 | The glass tank is effectively invisible | High | Moderate | P1 |
 | RND‑07 | Shadow camera frustum is ±2 for a room‑sized scene | High | Trivial | P1 |
@@ -148,11 +148,11 @@ papering over them.
 
 ---
 
-### RND‑04 — 14 materials use `alphaMode: BLEND` unnecessarily
+### RND‑04 — 19 materials use `alphaMode: BLEND` unnecessarily
 
 **Severity:** High **Difficulty:** Easy **Priority:** P1
 
-**Description.** 14 of 68 materials are `BLEND`, including `MergedBake_Baked.002` (the room background),
+**Description.** 19 of 68 materials are `BLEND` (the other 49 are `OPAQUE`), including `MergedBake_Baked.002` (the room background),
 `base.001`, `Pitot1`, `09 - Default`, `Material #27565`, `10 - Default.001`, `14 - Default.002` and the seven
 deflector‑label materials (`30.001`, `45.001`, `60.001`, `120.001`, `135.001`, `180.001`, `0.001`).
 
@@ -264,10 +264,15 @@ choices defeat it:
    that scale, so a 0.16‑unit displacement becomes ~0.14 in X and ~0.008 in Y — the ripple is squashed into
    invisibility. `vWNorm = normalize(mat3(modelMatrix) * objectNormal)` is also wrong under non‑uniform scale
    (it needs the inverse‑transpose), so the Fresnel rim is skewed.
-2. **World‑space planar sampling on a scaled object.** `vWPos.xz * 6.0` and `vWPos.y * 2.0` sample in world
-   space (the comment says the meshes carry no usable UVs). With a 0.18 m tall object, `vWPos.y * 2.0 * 4.5`
-   spans ~1.6 UV units over the whole jet — so one and a bit texture repeats stretched over the entire column,
-   which is exactly the horizontal banding seen in screenshots.
+2. **World‑space planar sampling on a scaled object — and it is unnecessary.** `vWPos.xz * 6.0` and
+   `vWPos.y * 2.0` sample in world space. The code comment justifies this with *"these baked simulation meshes
+   carry no usable UVs"* — but **that is not true**. Verified against the binaries: every one of the eight plume
+   GLBs carries `TEXCOORD_0`, and three (`Water90_Flat`, `Water180_HemiSphere`, `Water45_Oblique`) carry
+   `TEXCOORD_1` as well. The UVs sit roughly in 0..1 with V progressing **along the flow** — `Water_low`'s three
+   primitives occupy `v[-0.02..0.20]`, `v[0.20..0.24]`, `v[0.24..0.74]`, a continuous run down the stream, which
+   is exactly the layout a flow‑aligned scroll wants. Meanwhile the world‑space fallback, on a 0.18 m tall
+   object, spans only ~1.6 UV units over the whole jet — one and a bit repeats stretched over the entire
+   column, which is precisely the horizontal banding seen in the screenshots.
 3. **`transmission: 0.3` + `emissive #0d4a86` + `opacity 0.8` + `clearcoat 1.0`** with `depthWrite: false` and
    `DoubleSide` — the code's own comment explains it was tuned "so the water reads as a luminous blue column"
    against a dark tank. It reads as frosted plastic.

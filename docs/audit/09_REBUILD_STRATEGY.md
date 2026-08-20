@@ -103,7 +103,7 @@ This is the single biggest win available and it requires no application code cha
 | 1 | KTX2 / Basis for all 42 textures (`gltf-transform`) | VRAM ↓ ~6–8×, no CPU decode |
 | 2 | Re-budget resolutions: room bake 4096²→1024²; wall chart 4800×2950→2048×1280; weights 2048²→512² **atlased onto one sheet**; LED 2048²→64² | **764 MB → ~120 MB** |
 | 3 | Drop uniform-value channels (flat metalness maps → scalar factors) | file ↓ |
-| 4 | `doubleSided: false` except where genuinely needed; audit the 14 `BLEND` materials back to `OPAQUE`/`MASK` | fragment cost ↓, sorting artefacts fixed (`RND‑03`, `RND‑04`, `BUG‑31`) |
+| 4 | `doubleSided: false` except where genuinely needed; audit the 19 `BLEND` materials back to `OPAQUE`/`MASK` | fragment cost ↓, sorting artefacts fixed (`RND‑03`, `RND‑04`, `BUG‑31`) |
 | 5 | Merge the 26 static room nodes into one mesh; merge static bench/pipework | **769 → ~200 draw calls** |
 | 6 | meshopt/Draco geometry compression | file ↓ |
 | 7 | Split into `apparatus.glb` (loads first) + `room.glb` (streams second) | perceived load ↓ |

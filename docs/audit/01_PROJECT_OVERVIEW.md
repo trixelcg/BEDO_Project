@@ -117,7 +117,7 @@ project's 48 commits**.
 * **68 materials, 57 textures, 42 embedded images** — 23 MB of the 26 MB file is texture data
 * Extensions: `KHR_materials_clearcoat`, `_transmission`, `_specular`, `_anisotropy`, `_ior`
 * **No** Draco, no meshopt, no KTX2/Basis, no animations, no skins, no cameras
-* **All 68 materials are `doubleSided: true`**; 14 are `alphaMode: BLEND`
+* **All 68 materials are `doubleSided: true`**; 19 are `alphaMode: BLEND` (49 `OPAQUE`)
 * Texture budget: **≈764 MB of VRAM** after RGBA8 expansion + mipmaps (see `04_PERFORMANCE_REPORT.md`)
   * five 4096×4096 lightmap/normal/diffuse/metalness sheets for the baked *room* alone = 426 MB
   * one 4800×2950 wall chart = 72 MB
