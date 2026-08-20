@@ -9,6 +9,15 @@ const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 8080;
 
+/**
+ * The only API routes this server will serve.
+ *
+ * Previously the router imported `./api/${apiName}.ts` for whatever path segment
+ * arrived, which made every file in api/ a public endpoint automatically. An
+ * allow-list means adding a file to api/ no longer publishes it by accident.
+ */
+const API_ROUTES = new Set(['save-config']);
+
 const bucketName = process.env.GCS_BUCKET_NAME || 'bedo-project-assets-2026';
 let storage: Storage | null = null;
 try {
@@ -77,30 +86,27 @@ const server = http.createServer(async (req, res) => {
     const parts = pathname.split('/');
     const apiName = parts[2]?.split('?')[0];
     
-    if (apiName) {
+    if (apiName && API_ROUTES.has(apiName)) {
       try {
         const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
         const query = Object.fromEntries(urlObj.searchParams.entries());
-        let body = {};
-        
-        if (apiName !== 'upload') {
-          const parsed = await parseRequest(req);
-          body = parsed.body;
-        }
-        
+        const { body } = await parseRequest(req);
+
         const requestWrapper = Object.assign(req, { body, query });
-        
-        // Dynamically import the api handler file
+
         const modulePath = `./api/${apiName}.ts`;
         const module = await import(modulePath);
         await module.default(requestWrapper, responseWrapper);
         return;
       } catch (err: any) {
         console.error(`Error handling API route ${pathname}:`, err);
-        responseWrapper.status(500).json({ error: 'Internal server error', details: err.message });
+        responseWrapper.status(500).json({ error: 'Internal server error' });
         return;
       }
     }
+
+    responseWrapper.status(404).json({ error: 'Not found' });
+    return;
   }
 
   // 2. Serve static frontend assets
