@@ -66,6 +66,7 @@ describe('src/domain imports nothing from the outside world', () => {
       'apparatus.ts',
       'experiments.ts',
       'physics.ts',
+      'spring.ts',
       'stateMachine.ts',
       'units.ts',
     ]);
@@ -135,5 +136,8 @@ describe('the dependency direction', () => {
     expect(apparatus.getDeflector(90).momentumFactor).toBe(1);
     expect(experiments.EXPERIMENTS).toHaveLength(4);
     expect(machine.attempt(machine.restingState(90), { type: 'POWER_ON' }).ok).toBe(true);
+
+    const spring = await import('../../src/domain/spring');
+    expect(spring.springDeflectionMm(0.8199, 0, 25.38)).toBeCloseTo(4.0995, 3);
   });
 });

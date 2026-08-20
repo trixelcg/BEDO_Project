@@ -143,7 +143,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   power-off) are asserted *absent* — still `BEDO‑023`/`BEDO‑010`. Scene fingerprint identical; 404 tests green.
   Detail: `docs/30`.
 
-### ☐ BEDO‑007 — Correct the spring model to spec `P1`
+### ✅ BEDO‑007 — Correct the spring model to spec `P1`
 - **Objective** `X = h_F − h_w` clamped to `[0, maxTravel]`, `maxTravel` injected from measured geometry.
 - **Reason** Storyboard sl. 8: *"If h_F ≤ h_w, X = 0 and the deflector spring will not move."* Current code allows negative deflection. **This is the one physics-adjacent change justified by evidence** (brief §4).
 - **Affected** `src/domain/physics/spring.ts` (new), `DeviceModel.tsx:952‑958`.
@@ -151,6 +151,17 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** spring never extends below rest; never exceeds cover/holder surface.
 - **Tests** `spring.spec.ts`.
 - **Perf** none.
+- **Status** ✅ Complete. Verified against the storyboard itself — sl. 8's three equations and *"If hF ≤ hw,
+  The X = 0 and the deflector spring will not move"*, sl. 19's direction of travel, and the spreadsheet's
+  `=W4/200*1000` fixing k = 200 N/m in **millimetres**. `src/domain/spring.ts` is pure and takes the travel
+  limit as a parameter, because BEDO states the ceiling as geometry (*"will not exceed the cover or holder
+  surface"*) and gives no number — so none was invented and its value is unchanged. **Only the lower clamp
+  changed**, from −45 % of rest height to 0. Two grid sweeps prove every difference from the old model is a
+  case that was below rest. In the running app only states D (overloaded) and E (weights, pump off) move:
+  spring scale.y 0.743 → 1.0 and 0.670 → 1.0, four spring-driven parts, 84 other field comparisons identical.
+  Rest-state fingerprint identical in every section; draw calls 769 unchanged. 34 tests added, 441 green.
+  Detail: `docs/31`.
+- **Note** ★ The primary sources are **not missing** — they sit one directory above the repo. `docs/31 §1`.
 
 ---
 
@@ -502,6 +513,8 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | Video modal cannot be closed (found by BEDO‑004) | BEDO‑026/027 — see `docs/28 §11` |
 | Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** — evidence in `docs/27` (decision `D‑2`) |
 | Lever-arm constant: does one exist? | ✅ BEDO‑005 — no; 1:1 per BEDO's own simulator (`docs/29 §8`) |
+| Spring travels below rest against storyboard sl. 8 | ✅ BEDO‑007 (`docs/31`) |
+| Storyboard `(200×100)` contradicts the xlsx `/200*1000` | Open — BEDO's own inconsistency (`docs/31 §2`) |
 | `BUG‑23` "Capture Camera" captured nothing | ✅ BEDO‑003 (removed with the panel) |
 | `BUG‑24` `/config.json` 404 on every load | ✅ BEDO‑003 |
 | `ARCH‑13` / `R‑1` anonymous scene rewrite via `save-config` | ✅ BEDO‑003 |

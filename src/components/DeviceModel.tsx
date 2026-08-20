@@ -18,12 +18,15 @@ import {
   COVER_LIFT,
   DEFAULT_ARROW_OFFSET,
   SCREW_LIFT,
+  SPRING_REST_HEIGHT_MODEL_UNITS,
+  mmToModelUnits,
+  springTravelLimitMm,
   type Anchors,
 } from '../lib/apparatusView';
+import { springDeflectionMm } from '../domain/spring';
 import {
   FIRST_READING_VALVE,
   SECOND_READING_VALVE,
-  SPRING_RATE_N_PER_M,
   VALVE_SNAP_MARGIN,
   jetState,
 } from '../domain/physics';
@@ -957,13 +960,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const loadedMassG = state.loadedWeightsG.reduce((a, b) => a + b, 0);
     const weightForceN = (loadedMassG * 9.81) / 1000;
 
-    // Net force on a 200 N/m spring, in metres
-    const netForce = jetForceN - weightForceN;
-
-    const restH = springInfoRef.current ? springInfoRef.current.restH : 0.065;
-    const minDeflection = -0.45 * restH;
-    const maxDeflection = 0.45 * restH;
-    const deflection = THREE.MathUtils.clamp(netForce / SPRING_RATE_N_PER_M, minDeflection, maxDeflection);
+    // X = h_F - h_w, floored at rest and capped by the geometry above the spring.
+    // The equation and the floor are BEDO's (storyboard sl. 8/19, see domain/spring.ts);
+    // the travel limit is measured from this model, which is the scene's half of it.
+    const restH = springInfoRef.current
+      ? springInfoRef.current.restH
+      : SPRING_REST_HEIGHT_MODEL_UNITS;
+    const deflection = mmToModelUnits(
+      springDeflectionMm(jetForceN, weightForceN, springTravelLimitMm(restH))
+    );
 
     // The pointer rides the moving assembly and swings about the rod axis it is clamped
     // to. Rotating the mesh itself would orbit the GLB's distant shared origin, so the

@@ -25,6 +25,8 @@ tests/
 │   ├── units.spec.ts           what unit each domain field holds (BEDO-005)
 │   ├── domain-boundary.spec.ts the domain imports nothing it shouldn't (BEDO-005)
 │   ├── state-machine.spec.ts   the apparatus rules themselves (BEDO-006)
+│   ├── spring.spec.ts          the spring, against the storyboard (BEDO-007)
+│   ├── spring-characterization.spec.ts  old model vs specification (BEDO-007)
 │   ├── api-surface.spec.ts     the endpoints BEDO-001 removed stay removed
 │   └── bundle.spec.ts          what production output must and must not contain
 ├── integration/                Vitest, jsdom — the real App, Scene3D doubled
@@ -43,7 +45,7 @@ Three layers, three jobs:
 
 | Layer | Answers | Cost |
 |---|---|---|
-| unit | "is the domain still correct?" | 11 files, ~1.5 s |
+| unit | "is the domain still correct?" | 13 files, ~1.5 s |
 | integration | "does the lesson engine still behave?" | 3 files, ~6 s |
 | e2e | "does it still work in a browser?" | 3 files, ~1.4 min |
 

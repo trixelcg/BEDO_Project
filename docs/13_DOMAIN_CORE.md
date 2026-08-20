@@ -7,8 +7,15 @@ without evidence of a defect, per the Phase 2 brief §4.
 
 ## 1. Verification against BEDO's own mathematical model
 
-`Jet force_Mathematical model.xlsx` was extracted and compared cell-by-cell against `src/lib/physics.ts` and
-`src/lib/apparatus.ts`. **The implementation reproduces BEDO's model.**
+`Jet force_Mathematical model.xlsx` was extracted and compared cell-by-cell against `src/domain/physics.ts` and
+`src/domain/apparatus.ts`. **The implementation reproduces BEDO's model.**
+
+> **Where the primary sources live.** They are not in this repository, but they are one directory above it:
+> `../Measurement of Jet Forces/Phase 1/` holds the storyboard, the mathematical model and the state-machine
+> document; `Phase 2/` holds the four experiment sheets and their answer sheets; `../Project_VL-FM009/` and
+> `../Bedo_Unity/` hold the Unity sources; `../Bedo_MJblend.blend` the model. `docs/reference/Storyboard.pptx`
+> inside the repo is a 165-byte stub, which is why `docs/27` and `docs/29` record them as missing. They are
+> not. Anything those documents marked unverifiable can now be checked — see `docs/31 §1`.
 
 ### 1.1 Flow rate — exact match on every tabulated row
 
@@ -149,7 +156,7 @@ the compiler. That remains open (`docs/29 §9`).
 
 ---
 
-## 4. Spring model (correction required)
+## 4. Spring model — corrected in BEDO‑007 (`docs/31`)
 
 The storyboard (sl. 8, 19) specifies:
 
@@ -165,17 +172,25 @@ Current code (`DeviceModel.tsx:952‑958`) computes `X = h_F − h_w` correctly 
 `±0.45 × restHeight`, permitting **negative** displacement. Per spec it should clamp at **zero** below and at
 the physical travel limit above.
 
+As built (`src/domain/spring.ts`):
+
 ```ts
-// domain/physics/spring.ts
-export const springDeflection = (
-  jetForce: Newtons, weightForce: Newtons,
-  rate: number = SPRING_RATE_N_PER_M, maxTravel: Metres,
-): Metres => clamp((jetForce - weightForce) / rate, 0, maxTravel) as Metres;
+springHeightMm(forceN, rateNPerM = 200)        // h = F/k, in millimetres
+springDeflectionMm(jetForceN, weightForceN, maxTravelMm, rateNPerM = 200)
 ```
 
 `maxTravel` is supplied by the presentation layer from the measured spring geometry — the domain does not know
 about meshes. **This is a genuine defect corrected against the spec, and is the one physics-adjacent change
-authorised by the evidence rule.** Tracked as **BEDO‑009**.
+authorised by the evidence rule.**
+
+Verified in BEDO‑007 against the storyboard itself, not against this document: sl. 8 gives the three equations
+and *"If hF ≤ hw, The X = 0 and the deflector spring will not move"*; sl. 19 gives the direction. The unit is
+millimetres, fixed by the spreadsheet's `=W4/200*1000` tabulating 2.4525 for 0.4905 N. Only the lower clamp
+changed — the equation and the ceiling are as they were. Millimetres are explicit, positional arguments avoid a
+per-frame allocation, and the ±0.45 symmetric clamp is gone.
+
+⚠️ The storyboard writes the divisor `(200×100)`, which contradicts its own spreadsheet; the spreadsheet wins.
+`docs/31 §2`.
 
 ---
 

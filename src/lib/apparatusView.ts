@@ -64,3 +64,46 @@ export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
   pan: { offset: [-0.42, 0.24, 0.30] },
   overview: { offset: [-1.45, 0.70, 0.45] },
 };
+
+// --- The spring's travel, in model terms -------------------------------------------
+//
+// The domain computes the spring's displacement in millimetres and knows nothing about
+// the model (src/domain/spring.ts). These three constants are the scene's half of that
+// contract: how long a millimetre is here, how tall the spring is, and how far it may
+// travel before it meets the surface above it.
+
+/**
+ * One model unit is one metre.
+ *
+ * Measured, not assumed: the glass tank (`JET Force 2_205`) is 0.317 model units tall and
+ * 0.181 wide, which is a ~32 cm bench-top tank. The apparatus group is then scaled by
+ * 1.8 for the scene, which is why every offset below is applied inside the group.
+ */
+export const MODEL_UNITS_PER_METRE = 1;
+export const mmToModelUnits = (mm: number): number => (mm / 1000) * MODEL_UNITS_PER_METRE;
+
+/**
+ * The spring's rest height, measured from `deflector_spring` in `Bedo_baked_v2.glb`:
+ * 0.101532 world units over an apparatus scale of 1.8.
+ *
+ * `DeviceModel` re-measures this from the loaded mesh at runtime and passes what it finds;
+ * this constant is the value the shipped model actually has, used as the fallback and by
+ * the tests, and it replaces the bare `0.065` guess the old code fell back to.
+ */
+export const SPRING_REST_HEIGHT_MODEL_UNITS = 0.056407;
+
+/**
+ * How far the spring may rise, in millimetres.
+ *
+ * BEDO's storyboard states this as geometry — *"The spring will not exceed the cover or
+ * holder surface"* (sl. 8, three times) — and gives no number, so none is invented here.
+ * The fraction below is the one the implementation has always used, kept at its existing
+ * value so that BEDO-007 changes only what the specification requires: the floor at zero.
+ *
+ * Deriving the true limit from where the cover and holder actually sit is open work; see
+ * `docs/31 §5`.
+ */
+export const SPRING_TRAVEL_FRACTION_OF_REST = 0.45;
+
+export const springTravelLimitMm = (restHeightModelUnits: number): number =>
+  (restHeightModelUnits * SPRING_TRAVEL_FRACTION_OF_REST) / MODEL_UNITS_PER_METRE * 1000;
