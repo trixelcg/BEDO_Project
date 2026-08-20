@@ -1,20 +1,5 @@
 export type Language = 'en' | 'ar';
 
-export interface DeflectorOption {
-  id: number;
-  nameEn: string;
-  nameAr: string;
-  factor: number; // multiplier for F_th calculation (e.g. 1.0, 2.0, 0.5, 1.707)
-}
-
-export interface StepDefinition {
-  id: number;
-  nameEn: string;
-  nameAr: string;
-  descEn: string;
-  descAr: string;
-}
-
 export interface RecordRow {
   index: number; // 0, 1, 2, 3 (represents rows 1 to 4)
   totalFlowValue: number; // constant flow rate like 120

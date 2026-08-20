@@ -80,7 +80,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   **byte-identical**; the only difference in the whole run is `/config.json` no longer being requested.
   JS −10.6 kB, CSS −1.5 kB, one fewer request, `BUG‑23` and `BUG‑24` gone with it. Detail: `docs/26`.
 
-### ☐ BEDO‑004 — Dead code and dead asset removal `P1`
+### ✅ BEDO‑004 — Dead code and dead asset removal `P1`
 - **Objective** Delete ~39 MB of unreferenced assets, two unused deps, and the dead exports/types/CSS.
 - **Reason** `PERF‑12`, `CQ‑04`. `dist/` 95 MB with 39 MB never requested.
 - **Affected** `public/{Bedo_M.glb,Bedo_model_optimized.glb,icons.svg}`, `public/WaterShapes/*.abc`, `src/assets/*`, `package.json` (`framer-motion`, `@react-three/postprocessing`, `@types/three` → dev), `src/types/index.ts`, `src/lib/*`, `src/index.css`, `push.sh`. Move binaries to Git LFS.
@@ -88,6 +88,18 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** `dist/` ≤ 56 MB; build green; app visually identical.
 - **Tests** existing suite; `du -sh dist` in CI.
 - **Perf** `dist` −39 MB; node_modules −6.6 MB.
+- **Status** ✅ Complete. `dist/` **95.27 → 56.25 MB** (−39.02 MB, 27 → 15 files) and every remaining file is
+  one the app actually requests. The 39 MB was **moved to `assets-source/`, not deleted** — the eight Alembic
+  caches and two superseded model exports are inputs to the asset track, and Vite copies all of `public/`
+  into `dist/`, which is the only reason they shipped. Each move required four independent proofs: no source
+  reference, no build-output reference, never requested in a full runtime trace
+  (`scripts/network-trace.mjs`, new), and no dynamic path anywhere in `src/` that could name it — every asset
+  URL in the app is a string literal, so the served set is closed and enumerable at twelve paths.
+  Runtime deps 10 → 7 (`framer-motion`, `@react-three/postprocessing` removed; `@types/three` → dev).
+  New `.dockerignore` takes the build context **584.4 → 55.4 MB**, and the runner no longer copies `public/`
+  on top of `dist/` (~−133 MB of duplicated assets in the image; the fallback was verified live).
+  Scene fingerprint and network trace both **identical** — 17 paths, 55.13 MB, zero 4xx, zero console errors,
+  before and after. JS output byte-identical. Detail: `docs/28`.
 
 ---
 
@@ -466,6 +478,8 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `RND‑01`..`18` | BEDO‑015, 028, 029, 024 |
 | `UX‑04`/`UX‑12` accessibility | BEDO‑036 |
 | `CQ‑01`..`21` | BEDO‑002, 004, 005, 014, 025 |
+| `PERF‑12` 39 MB of unrequested assets in `dist/` | ✅ BEDO‑004 |
+| Video modal cannot be closed (found by BEDO‑004) | BEDO‑026/027 — see `docs/28 §11` |
 | Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** — evidence in `docs/27` (decision `D‑2`) |
 | `BUG‑23` "Capture Camera" captured nothing | ✅ BEDO‑003 (removed with the panel) |
 | `BUG‑24` `/config.json` 404 on every load | ✅ BEDO‑003 |

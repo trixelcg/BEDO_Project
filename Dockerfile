@@ -29,10 +29,17 @@ RUN npm ci --only=production
 # Install tsx globally in the runner image to execute TypeScript files (server.ts) directly
 RUN npm install -g tsx
 
-# Copy built assets and the static server
-# (no api/ — BEDO-003 removed the last endpoint; COPY of a missing path fails the build)
+# Copy built assets and the static server.
+#
+# `dist/` only. Vite already copies everything in `public/` into `dist/`, so copying
+# public/ as well put a second identical copy of the 26 MB model and the 28 MB video in
+# the image. server.ts looks in public/ first and falls back to dist/, and serving with
+# public/ absent was verified to return every production asset with the correct bytes
+# (BEDO-004 §9).
+#
+# No api/ either — BEDO-003 removed the last endpoint, and Docker fails a COPY whose
+# source does not exist.
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/server.ts ./server.ts
 
 EXPOSE 8080

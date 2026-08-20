@@ -99,6 +99,7 @@ Notes.
 | Scene configuration | `scene-config.spec.ts` | A scene value drifting after BEDO-003 froze it — every number is pinned against the live scene-graph observable it was read from (`docs/26 §2`) |
 | No config fetch at startup | `readiness.e2e.ts` | The `/config.json` request, an `/api` call, or any 4xx or console error returning to startup |
 | No developer settings UI | `bundle.spec.ts`, `readiness.e2e.ts` | The scene editor returning to a production build |
+| The served asset set | `assets.spec.ts`, `bundle.spec.ts` | An unrequested file landing in `public/` or `dist/` again — checked from both directions, so neither a stale expected-list entry nor a new stray file can pass (`docs/28 §9`) |
 
 ---
 

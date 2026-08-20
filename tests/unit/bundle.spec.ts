@@ -104,4 +104,51 @@ describeBuilt('the production bundle', () => {
     expect(existsSync(path.join(DIST, 'Bedo_baked_v2.glb'))).toBe(true);
     expect(readdirSync(path.join(DIST, 'WaterShapes')).filter((f) => f.endsWith('.glb'))).toHaveLength(8);
   });
+
+  it('ships nothing the application never requests', () => {
+    // BEDO-004. `dist/` is what goes into the container and onto the origin, so every
+    // file in it should be one a browser can ask for. It used to carry 39 MB that no
+    // browser could: eight Alembic caches and two superseded model exports, copied in
+    // wholesale from public/.
+    const all = (dir: string, prefix = ''): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+        entry.isDirectory()
+          ? all(path.join(dir, entry.name), `${prefix}${entry.name}/`)
+          : [`${prefix}${entry.name}`]
+      );
+    const shipped = all(DIST);
+
+    expect(shipped.filter((f) => f.endsWith('.abc')), 'Alembic caches are back in dist/').toEqual(
+      []
+    );
+    for (const gone of ['Bedo_M.glb', 'Bedo_model_optimized.glb', 'icons.svg']) {
+      expect(shipped, `${gone} is back in dist/`).not.toContain(gone);
+    }
+
+    // The whole shipped set, pinned: 12 assets + the shell, one JS chunk, one stylesheet.
+    expect(shipped.sort()).toEqual(
+      [
+        'Bedo_Mesu_J.mp4',
+        'Bedo_baked_v2.glb',
+        'WaterShapes/Water120_HemiSphere.glb',
+        'WaterShapes/Water135_Conical.glb',
+        'WaterShapes/Water180_HemiSphere.glb',
+        'WaterShapes/Water30.glb',
+        'WaterShapes/Water45_Oblique.glb',
+        'WaterShapes/Water60_Cone.glb',
+        'WaterShapes/Water90_Flat.glb',
+        'WaterShapes/Water_low.glb',
+        'favicon.svg',
+        'index.html',
+        'rosendal_plains_2_4k.webp',
+        ...shipped.filter((f) => f.startsWith('assets/')),
+      ].sort()
+    );
+  });
+
+  it('does not bundle the dependencies BEDO-004 removed', () => {
+    const combined = sources().join('');
+    expect(combined, 'framer-motion is back').not.toContain('framer-motion');
+    expect(combined, '@react-three/postprocessing is back').not.toContain('postprocessing');
+  });
 });

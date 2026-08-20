@@ -1,0 +1,49 @@
+# Build context for the production image.
+#
+# The Dockerfile's builder stage does `COPY . .`, so anything not excluded here is
+# uploaded to the daemon and lands in a build layer. Before BEDO-004 that included the
+# 28 MB reference video under docs/, the 39 MB of source assets, the whole test suite and
+# every measurement artefact — none of which the build or the runtime touches.
+#
+# Keep this list aligned with what `npm run build` actually needs:
+#   package*.json, index.html, src/, public/, tsconfig{,.app,.node}.json,
+#   vite.config.ts, server.ts
+
+# Installed and generated
+node_modules
+dist
+test-results
+playwright-report
+measurements
+*.tsbuildinfo
+
+# Source assets the app does not load — see assets-source/README.md
+assets-source
+
+# Project evidence and documentation, including a 28 MB reference video
+docs
+
+# Tests and their configuration: never run inside the image
+tests
+vitest.config.ts
+playwright.config.ts
+tsconfig.test.json
+
+# Tooling that runs on a developer machine or in CI, not in the image
+scripts
+.oxlintrc.json
+cloudbuild.yaml
+push.sh
+Dockerfile
+.dockerignore
+README.md
+
+# VCS, editors, OS noise
+.git
+.gitignore
+.github
+.claude
+.vscode
+.idea
+**/.DS_Store
+*.log

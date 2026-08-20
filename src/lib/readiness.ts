@@ -27,10 +27,3 @@ export function markReady(stage: ReadyStage): void {
   root.dataset[key] = String(Math.round(performance.now()));
   performance.mark?.(READY_MARK(stage));
 }
-
-/** Test/measurement helper — milliseconds from navigation start, or null if not reached. */
-export function readyAt(stage: ReadyStage): number | null {
-  if (typeof document === 'undefined') return null;
-  const raw = document.documentElement.dataset[attribute(stage)];
-  return raw === undefined ? null : Number(raw);
-}
