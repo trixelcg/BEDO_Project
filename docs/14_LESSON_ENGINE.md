@@ -112,33 +112,42 @@ today (`BUG‑06`). The simulation and the readings list are shared; only the ru
 
 ---
 
-## 5. Reconciling the step list ⚠️ decision required
+## 5. The step list — settled (`docs/32`)
 
-The four experiment sheets define **11 steps**, and none is a volumetric-valve step. The current build has 12.
+**Eleven numbered steps**, as all four experiment sheets specify. Re-opened and resolved in
+BEDO‑041 against the primary sources; the earlier table in this section inferred the same
+count and was correct.
 
-| BEDO Exp. sheet | Current build | Note |
+| # | Stable id | Sheet step |
 |---|---|---|
-| 1. Press the upper plate to unscrew it | 1 ✅ | |
-| 2. **Drag** the 90° flat deflector to install it in the rod | 2 ✅ (copy says drag; implementation is click) | `BUG‑22` |
-| 3. Press the plate again to mount it | 3 ✅ | |
-| 4. Turn on the power switch | 4 ✅ | |
-| — | **5. Slightly open the volumetric control valve** | ⚠️ **not in any experiment sheet** |
-| 5. Slightly open the flow control valve → *Popup: jet pushes deflector upward* | 6 ✅ | |
-| 6. Add weights to balance → *Popup: shape of water impinging* | 7 ✅ | |
-| 7. Increase the flow valve opening → *Popup: jet pushes deflector upward* | 8 ✅ | |
-| 8. Add weights to balance | 9 ✅ | |
-| 9. Switch to the software monitor | 10 ✅ | |
-| 10. Click "Calculated" to record F_ac → *Popup: table/graph; Popup: Save Screen & Export Data* | 11 ✅ | |
-| 11. You finished! Click the **"Document" tab** to view the answer sheet | 12 — shows an inline quiz instead | Answer-sheet PDFs exist: `Phase 2/Exp.{1..4} (Answer sheet).pdf` |
+| 1 | `unscrew-cover` | Press the upper plate to unscrew it |
+| 2 | `install-deflector` | Drag the deflector to install it in the rod |
+| 3 | `mount-cover` | Press the plate again to mount it to the tank |
+| 4 | `power-on` | Turn on the power switch of the unit |
+| 5 | `set-flow-reading-1` | Slightly open the **flow control** valve |
+| 6 | `balance-reading-1` | Add weights to balance |
+| 7 | `increase-flow-reading-2` | Increase the opening of the flow control valve |
+| 8 | `balance-reading-2` | Add weights to balance |
+| 9 | `open-monitor` | Switch to the software monitor |
+| 10 | `record-actual-force` | Click "Calculated" to record F_ac |
+| 11 | `open-answer-sheet` | You finished! Click the "Document" tab |
 
-**Recommendation (D‑2):** follow the sheets — 11 steps. The volumetric valve remains clickable and
-state-neutral, exactly as the state machine document specifies. This also removes two of the four disorienting
-camera trips under the bench (`RND‑13`).
+**Not steps:**
 
-**Also to reconcile:** step 11 should surface the real answer sheet (four PDFs exist) in addition to, or
-instead of, the inline quiz. Needs your decision — see `docs/12 §7 D‑6`.
+- **The volumetric valve.** Absent from all four sheets and from the storyboard's state
+  tables. The state-machine document lists it only as a clickable whose transitions are
+  A→A, B→B, C→C, D→D — it turns and changes nothing. BEDO removed it from their own Unity
+  `StepsText` on 19 Oct 2025. It stays as an affordance, without a number.
+- **The assessment question.** Real BEDO content, present in every sheet, but as an
+  unnumbered block between step 10 and step 11. BEDO's Bernoulli trainer keeps its MCQ in a
+  separate `Questions` asset, outside `StepsText` — the same shape is right here.
 
----
+**Still open:** the sheets say *drag* the deflector and every implementation clicks
+(`BUG‑22`), and step 11's answer-sheet document — a blank fill-in worksheet, four PDFs —
+is not wired up at all (`D‑6`).
+
+**`step id ≠ display number`.** No rule may key on an index; `BALANCE_ROW = {7: 1, 9: 2}`
+in `App.tsx` is the current instance of exactly that problem.
 
 ## 6. Example — step 6 as data
 

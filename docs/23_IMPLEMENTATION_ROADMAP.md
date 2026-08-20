@@ -283,6 +283,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 ### ☐ BEDO‑019 — Reconcile the step list to the experiment sheets `P1`
 - **Objective** 11 steps per the sheets; volumetric valve becomes clickable and state-neutral; step 11 surfaces the real answer sheet PDFs.
 - **Reason** `docs/14 §5` — step 5 (volumetric valve) exists in **no** experiment sheet, and causes two of the four disorienting camera trips.
+- **✅ Specification settled** by BEDO‑041 (`docs/32`): 11 numbered steps with stable ids, assessment as a separate structure, one procedure shared by four experiments. **`D‑2` is no longer blocking.** The answer-sheet PDFs are blank fill-in worksheets, not answer keys — surfacing them is part of this task.
 - **Dependencies** BEDO‑018, **BEDO‑041** · **⚠️ Needs decision D‑2.**
 - **Acceptance** step list matches Exp.1–4 docx exactly, both languages.
 - **Tests** `lessonDefinition.spec.ts` compares against a transcribed fixture. Today's twelve steps are pinned
@@ -467,19 +468,16 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   written against.
 - **Note** Raised by BEDO‑002. Until it is decided, **the twelve-step flow is the specification** — the tests
   enforce it, and no task may quietly renumber, merge or delete a step (`docs/25 §9.7`).
-- **Status** ◐ **Investigated and documented in `docs/27`; the decision itself still belongs to BEDO.**
-  The reference walkthrough video was decoded frame by frame, and it settles the central question: BEDO's own
-  shipped simulator has **10 numbered steps and its step 5 *is* the volumetric control valve**. So the build's
-  12 = the simulator's 10 + the sheets' Calculate and closing steps. **Nothing in the build is invented, and
-  the 12th step is not the anomaly** — measured against the sheets, the extra step is step 5, which
-  `docs/14 §5` recommended deleting. That recommendation should not be actioned: it would remove an
-  instruction BEDO ships.
-  **Recommendation: RESTRUCTURE WITHOUT CHANGING LEARNING CONTENT** — demote the volumetric valve from a
-  numbered step to a prerequisite action inside step 4, giving 1–11 numbering that matches the sheets while
-  losing no instruction and matching the state machine's treatment of the valve as state-neutral.
-  ⚠️ Conditional: the experiment sheets, the state-machine document and the storyboard are **not in this
-  repository** (`Storyboard.pptx` is a 165-byte stub), so the 11-step claim rests on the transcription in
-  `docs/14 §5`. See `docs/27 §6` for what BEDO must confirm first.
+- **Status** ✅ **Re-opened and resolved against the primary sources — `docs/32`.**
+  The first pass (`docs/27`) concluded "keep the volumetric step, BEDO ships it", on the strength of the
+  reference video. Both of its premises were wrong: the sources were never missing (they are one directory
+  above the repo), and the video is not BEDO's current build. **`VL-FM009 StepsText 1.asset`, dated 19 Oct
+  2025, has nine steps whose fifth is the *flow* control valve — BEDO removed the volumetric step themselves.**
+  No experiment sheet contains it; the storyboard's state tables do not list the control at all; the
+  state-machine document gives it transitions A→A, B→B, C→C, D→D, meaning it turns and changes nothing.
+  **Canonical: 11 numbered steps** (9 apparatus + `record-actual-force` + `open-answer-sheet`), one reusable
+  procedure across all four experiments, assessment as a separate structure, and stable ids rather than
+  indexes. `docs/27` is retained as a record of the error.
 
 ---
 
@@ -511,7 +509,9 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `CQ‑01`..`21` | BEDO‑002, 004, 005, 014, 025 |
 | `PERF‑12` 39 MB of unrequested assets in `dist/` | ✅ BEDO‑004 |
 | Video modal cannot be closed (found by BEDO‑004) | BEDO‑026/027 — see `docs/28 §11` |
-| Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** — evidence in `docs/27` (decision `D‑2`) |
+| Lesson step count (12 shipped vs 11 canonical) | ✅ BEDO‑041 resolved (`docs/32`); implementation is BEDO‑019 |
+| R3F step 5 (volumetric valve) has no primary-source support | BEDO‑019 — remove the number, keep the affordance |
+| Answer-sheet worksheet (4 PDFs) never wired up | BEDO‑019 / `D‑6` |
 | Lever-arm constant: does one exist? | ✅ BEDO‑005 — no; 1:1 per BEDO's own simulator (`docs/29 §8`) |
 | Spring travels below rest against storyboard sl. 8 | ✅ BEDO‑007 (`docs/31`) |
 | Storyboard `(200×100)` contradicts the xlsx `/200*1000` | Open — BEDO's own inconsistency (`docs/31 §2`) |
@@ -527,7 +527,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | # | Decision | Blocks |
 |---|---|---|
 | D‑1 | ✅ **Resolved: Zustand.** Scoped subscriptions and imperative access, so 60 Hz simulation, scene and interaction state need not be pushed through React rendering. Not Redux. Applies to future architecture work only — BEDO‑002 changed no state architecture. | BEDO‑008 |
-| D‑2 | **11 steps (per the experiment sheets) or 12 (as shipped)** — evidence gathered in **`docs/27`**: BEDO's shipped simulator has 10 numbered steps *including* the volumetric valve, the sheets have 11 *excluding* it, and the build is the union. Recommendation: restructure to 11 without deleting any instruction. **Still needs BEDO's answer**, and the sheets/storyboard/state-machine documents to be recovered | BEDO‑019, BEDO‑041 |
+| D‑2 | ✅ **Resolved: 11 steps**, per all four experiment sheets and BEDO's own current Unity build (`docs/32`). The volumetric valve is an affordance, not a step. Assessment is separate. Engine keys on stable ids, not indexes | BEDO‑019, BEDO‑041 |
 | D‑3 | Monitor as DOM overlay (recommended) or in-scene screen | BEDO‑027 |
 | D‑4 | Volumetric measurement in scope? | BEDO‑019 |
 | D‑5 | Balance target: hidden / hint mode / instructor toggle | BEDO‑023 |
