@@ -12,15 +12,15 @@ import {
   SlidersHorizontal,
   ListChecks,
 } from 'lucide-react';
-import { WEIGHTS, type DeflectorDef } from '../lib/apparatus';
+import { WEIGHTS, type DeflectorDef } from '../domain/apparatus';
 import { markReady } from '../lib/readiness';
-import { EXPERIMENTS, TOTAL_STEPS, type ExperimentDef, type ExperimentStep } from '../lib/experiments';
+import { EXPERIMENTS, TOTAL_STEPS, type ExperimentDef, type ExperimentStep } from '../domain/experiments';
 import {
   FIRST_READING_VALVE,
   SECOND_READING_VALVE,
   VALVE_SNAP_MARGIN,
   flowRateLMin,
-} from '../lib/physics';
+} from '../domain/physics';
 
 interface UIOverlayProps {
   state: SimulationState;
@@ -81,7 +81,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     isCoverOpen,
     isPowerOn,
     valveOpening,
-    loadedWeights,
+    loadedWeightsG,
     recordedRows,
     warningMessage,
     notice,
@@ -92,8 +92,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   const guided = mode === 'guided';
   const activeStep = steps.find((s) => s.id === currentStep);
 
-  const totalLoadedWeight = loadedWeights.reduce((a, b) => a + b, 0);
-  const flow = flowRateLMin(valveOpening, params.qTotal);
+  const totalLoadedWeight = loadedWeightsG.reduce((a, b) => a + b, 0);
+  const flow = flowRateLMin(valveOpening, params.pumpFlowLMin);
 
   const valveReady =
     (currentStep === 6 && valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
@@ -101,7 +101,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 
   const balanceRow = currentStep === 7 ? 1 : currentStep === 9 ? 2 : null;
   const activeRow = balanceRow !== null ? recordedRows[balanceRow] : undefined;
-  const readingsTaken = [1, 2].filter((i) => (recordedRows[i]?.actualWeightMass ?? 0) > 0).length;
+  const readingsTaken = [1, 2].filter((i) => (recordedRows[i]?.loadedMassG ?? 0) > 0).length;
 
   // In Free mode every control is on the panel at once; in Guided mode only the one the
   // current step asks for.
@@ -112,7 +112,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     ((currentStep === 2 && isCoverOpen) ||
       (currentStep === 5 && state.isVolumetricValveOpen) ||
       valveReady ||
-      (balanceRow !== null && !!activeRow?.balanced) ||
+      (balanceRow !== null && !!activeRow?.isBalanced) ||
       currentStep === 10);
 
   const weightOptions = [...WEIGHTS.map((w) => w.grams), params.customWeightG].filter(
@@ -286,15 +286,15 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               <div>
                 <div className="slider-label">
                   <span>{isAr ? 'معدل تدفق المضخة Q' : 'Pump flow rate Q_total'}</span>
-                  <span className="slider-val">{params.qTotal} L/min</span>
+                  <span className="slider-val">{params.pumpFlowLMin} L/min</span>
                 </div>
                 <input
                   type="range"
                   min="20"
                   max="200"
                   step="5"
-                  value={params.qTotal}
-                  onChange={(e) => onSetParams({ qTotal: parseFloat(e.target.value) })}
+                  value={params.pumpFlowLMin}
+                  onChange={(e) => onSetParams({ pumpFlowLMin: parseFloat(e.target.value) })}
                 />
               </div>
 
@@ -535,18 +535,18 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                   {activeRow && (
                     <div
                       className={`indicator-card ${
-                        activeRow.balanced ? 'indicator-balanced' : 'indicator-unbalanced'
+                        activeRow.isBalanced ? 'indicator-balanced' : 'indicator-unbalanced'
                       }`}
                     >
                       <Scale size={16} />
                       <span>
-                        {activeRow.balanced
+                        {activeRow.isBalanced
                           ? isAr
                             ? 'المؤشر متوازن!'
                             : 'Pointer balanced!'
                           : isAr
-                            ? `غير متوازن (الهدف ≈ ${activeRow.idealMass.toFixed(0)} غ)`
-                            : `Unbalanced (target ≈ ${activeRow.idealMass.toFixed(0)} g)`}
+                            ? `غير متوازن (الهدف ≈ ${activeRow.targetMassG.toFixed(0)} غ)`
+                            : `Unbalanced (target ≈ ${activeRow.targetMassG.toFixed(0)} g)`}
                       </span>
                     </div>
                   )}
@@ -662,4 +662,4 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 };
 
 const getFactor = (list: DeflectorDef[], id: number) =>
-  list.find((d) => d.id === id)?.factor.toFixed(3) ?? '—';
+  list.find((d) => d.id === id)?.momentumFactor.toFixed(3) ?? '—';

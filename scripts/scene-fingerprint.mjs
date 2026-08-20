@@ -307,7 +307,8 @@ async function main() {
 
 /** Reads the apparatus name tables straight from source, without a TS build step. */
 async function loadApparatus() {
-  const source = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'apparatus.ts'), 'utf8');
+  // Identity lives in the domain (BEDO-005); the three.js name mapping lives in src/lib.
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'domain', 'apparatus.ts'), 'utf8');
   const mesh = Object.fromEntries(
     [...source.matchAll(/^\s{2}(\w+):\s*'([^']+)',$/gm)].map((m) => [m[1], m[2]])
   );

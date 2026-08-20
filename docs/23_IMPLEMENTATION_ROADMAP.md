@@ -105,7 +105,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
 ## Phase B — Domain core isolation
 
-### ☐ BEDO‑005 — Move `lib/` → `domain/`, add unit branding `P1`
+### ✅ BEDO‑005 — Move `lib/` → `domain/`, add unit branding `P1`
 - **Objective** Relocate physics/apparatus/experiments unchanged; add branded scalar types; rename ambiguous fields (`springhW → springDeflectionMm`, `mass → balancingMassG`, …).
 - **Reason** `ARCH‑06`, `CQ‑05`. **Equations and constants unchanged** — verified correct against BEDO's spreadsheet (`docs/13 §1`).
 - **Affected** `src/domain/**` (new), imports across `src/`.
@@ -113,6 +113,16 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** `vitest` green with **no changes to any expected value**; boundary lint passes (`domain/` imports no react/three).
 - **Tests** `physics.spec.ts` unchanged and passing.
 - **Perf** none.
+- **Status** ✅ Complete. `src/domain/{units,physics,apparatus,experiments}.ts` — four files, no React, no
+  three.js, no DOM, no clock, enforced by `domain-boundary.spec.ts` (15 tests) including a load-and-compute
+  check in a DOM-free environment. Fourteen `RecordRow` fields renamed to state their units
+  (`springhW → springDeflectionMm`, `mass → balancingMassG`, `fth → theoreticalForceN`, …) with **no value
+  converted** — the physics spec's numeric literals are identical, compared as multisets before and after.
+  The CSV schema was **pinned first** (`export-contract.spec.tsx`, 15 tests) and then decoupled behind
+  `src/lib/exportSchema.ts`; the exported file is character-identical. `gltfName()` and the camera framing
+  moved *out* of the domain to `src/lib/`, per the identity-vs-lookup split. Scene fingerprint identical;
+  340 tests green. **Unit branding is naming only — the branded scalar types of `docs/13 §3` are not
+  implemented.** Lever arm resolved as 1:1 from BEDO's own simulator (`docs/29 §8`). Detail: `docs/29`.
 
 ### ☐ BEDO‑006 — Extract `domain/stateMachine.ts` `P1`
 - **Objective** Implement `attempt(state, action)` transcribing the state machine document exactly (A/B/C/D + Error1‑5 + J).
@@ -481,6 +491,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `PERF‑12` 39 MB of unrequested assets in `dist/` | ✅ BEDO‑004 |
 | Video modal cannot be closed (found by BEDO‑004) | BEDO‑026/027 — see `docs/28 §11` |
 | Lesson step count (12 shipped vs 11 in the sheets) | **BEDO‑041** — evidence in `docs/27` (decision `D‑2`) |
+| Lever-arm constant: does one exist? | ✅ BEDO‑005 — no; 1:1 per BEDO's own simulator (`docs/29 §8`) |
 | `BUG‑23` "Capture Camera" captured nothing | ✅ BEDO‑003 (removed with the panel) |
 | `BUG‑24` `/config.json` 404 on every load | ✅ BEDO‑003 |
 | `ARCH‑13` / `R‑1` anonymous scene rewrite via `save-config` | ✅ BEDO‑003 |

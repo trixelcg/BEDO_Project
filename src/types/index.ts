@@ -1,28 +1,12 @@
-export type Language = 'en' | 'ar';
+import type { RecordRow } from '../domain/physics';
+import type { ExperimentId } from '../domain/experiments';
 
-export interface RecordRow {
-  index: number; // 0, 1, 2, 3 (represents rows 1 to 4)
-  totalFlowValue: number; // constant flow rate like 120
-  valveOpen: number; // Valve opening fraction n (0 to 1)
-  flowRateQLMin: number; // Q (L/min)
-  flowRateQM3: number; // Q (m^3/s)
-  theoreticalVo: number; // v_o (m/s)
-  theoreticalV: number; // v (m/s)
-  weightsN: number; // added weights in Newtons
-  springhW: number; // spring deflection in mm
-  fth: number; // Theoretical Force (N)
-  mass: number; // fth converted back to mass (g)
-  idealMass: number; // Target mass to balance (g)
-  actualWeightMass: number; // Mass of weights currently loaded on tray (g)
-  balanced: boolean; // whether the tray is balanced with the pointer
-  loadedWeights: number[]; // loaded weights array
-}
+export type Language = 'en' | 'ar';
 
 /** Guided walks the student through the steps; Free lets them touch anything. */
 export type Mode = 'guided' | 'free';
 
-/** Which experiment is loaded — matches BEDO's four Phase 2 sheets. */
-export type ExperimentId = 'flat' | 'semi' | 'conical' | 'oblique';
+export type { ExperimentId };
 
 /**
  * The five guards from Jet force_State machine.docx. Any control may be clicked at any
@@ -32,8 +16,8 @@ export type ErrorCode = 'error1' | 'error2' | 'error3' | 'error4' | 'error5';
 
 /** Student-adjustable inputs from the Custom Parameters panel. */
 export interface CustomParams {
-  /** Pump flow rate Q_total (L/min). */
-  qTotal: number;
+  /** Pump delivery Q_total. */
+  pumpFlowLMin: number;
   /** An extra, student-defined weight denomination (g). */
   customWeightG: number;
 }
@@ -47,8 +31,8 @@ export interface SimulationState {
   isCoverOpen: boolean;
   isPowerOn: boolean;
   valveOpening: number; // 0 to 1
-  loadedWeights: number[]; // Array of weights currently on pan (e.g. [50, 100])
-  pointerOffset: number; // deviation from zero mark (mm)
+  /** Weights currently on the pan, in grams (e.g. [50, 100]). */
+  loadedWeightsG: number[];
   isVolumetricValveOpen: boolean; // volumetric valve open state
   recordedRows: RecordRow[];
   currentRecordIndex: number;

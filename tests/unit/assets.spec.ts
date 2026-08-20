@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { WATER_SHAPES } from '../../src/lib/apparatus';
+import { WATER_SHAPES } from '../../src/domain/apparatus';
 import { REPO_ROOT, assetPath, fileSize } from '../helpers/glb';
 
 /**

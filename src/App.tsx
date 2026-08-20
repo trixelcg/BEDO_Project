@@ -3,8 +3,8 @@ import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
 import type { ErrorCode, ExperimentId, SimulationState } from './types/index';
-import { getDeflector } from './lib/apparatus';
-import { buildSteps, getExperiment, deflectorsFor } from './lib/experiments';
+import { getDeflector } from './domain/apparatus';
+import { buildSteps, getExperiment, deflectorsFor } from './domain/experiments';
 import { markReady } from './lib/readiness';
 import { SCENE_CONFIG } from './lib/sceneConfig';
 import {
@@ -14,7 +14,7 @@ import {
   TOTAL_FLOW_L_MIN,
   VALVE_SNAP_MARGIN,
   computeRow,
-} from './lib/physics';
+} from './domain/physics';
 import './index.css';
 
 /**
@@ -56,15 +56,14 @@ const initialState = (
   isCoverOpen: false,
   isPowerOn: false,
   valveOpening: 0.0,
-  loadedWeights: [],
-  pointerOffset: 0.0,
+  loadedWeightsG: [],
   isVolumetricValveOpen: false,
   recordedRows: [],
   currentRecordIndex: 0,
   showMonitor: false,
   isCalculated: false,
   quizAnswer: null,
-  params: { qTotal: TOTAL_FLOW_L_MIN, customWeightG: 25 },
+  params: { pumpFlowLMin: TOTAL_FLOW_L_MIN, customWeightG: 25 },
   warningMessage: null,
   notice: null,
 });
@@ -90,22 +89,22 @@ export default function App() {
       const recordedRows = ROW_VALVE_SETTINGS.map((n, idx) => {
         const weights =
           idx === activeRow
-            ? prev.loadedWeights
+            ? prev.loadedWeightsG
             : idx < prev.currentRecordIndex
-              ? (prev.recordedRows[idx]?.loadedWeights ?? [])
+              ? (prev.recordedRows[idx]?.loadedWeightsG ?? [])
               : [];
 
-        return computeRow(idx, n, prev.selectedDeflectorId, weights, prev.params.qTotal);
+        return computeRow(idx, n, prev.selectedDeflectorId, weights, prev.params.pumpFlowLMin);
       });
 
       return { ...prev, recordedRows };
     });
   }, [
     state.selectedDeflectorId,
-    state.loadedWeights,
+    state.loadedWeightsG,
     state.currentStep,
     state.currentRecordIndex,
-    state.params.qTotal,
+    state.params.pumpFlowLMin,
   ]);
 
   const raise = useCallback((code: ErrorCode) => {
@@ -137,7 +136,7 @@ export default function App() {
 
     if (!state.isCoverOpen) {
       if (state.isPowerOn) return raise('error3');
-      if (state.loadedWeights.length > 0) return raise('error5');
+      if (state.loadedWeightsG.length > 0) return raise('error5');
     }
 
     setState((prev) => {
@@ -213,12 +212,12 @@ export default function App() {
   const handleAddWeight = (weight: number) => {
     clearWarning();
     if (state.isCoverOpen) return raise('error1');
-    setState((prev) => ({ ...prev, loadedWeights: [...prev.loadedWeights, weight] }));
+    setState((prev) => ({ ...prev, loadedWeightsG: [...prev.loadedWeightsG, weight] }));
   };
 
   const handleClearWeights = () => {
     clearWarning();
-    setState((prev) => ({ ...prev, loadedWeights: [] }));
+    setState((prev) => ({ ...prev, loadedWeightsG: [] }));
   };
 
   // --- Guided progression ------------------------------------------------------
@@ -245,7 +244,7 @@ export default function App() {
         case 7:
           next.currentStep = 8;
           next.currentRecordIndex = 2;
-          next.loadedWeights = [];
+          next.loadedWeightsG = [];
           break;
         case 8:
           next.valveOpening = SECOND_READING_VALVE;
@@ -254,7 +253,7 @@ export default function App() {
         case 9:
           next.currentStep = 10;
           next.currentRecordIndex = 3;
-          next.loadedWeights = [];
+          next.loadedWeightsG = [];
           break;
         case 10:
           next.showMonitor = true;

@@ -1,19 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ANCHOR_VIEW,
-  COVER_LIFT,
-  DEFAULT_ARROW_OFFSET,
   DEFAULT_DEFLECTOR_ID,
   DEFLECTORS,
-  FRONT,
   MESH,
-  SCREW_LIFT,
   WATER_SHAPES,
   WEIGHTS,
   getDeflector,
-  gltfName,
   type AnchorKey,
-} from '../../src/lib/apparatus';
+} from '../../src/domain/apparatus';
+import { gltfName } from '../../src/lib/gltfNames';
+import {
+  ANCHOR_VIEW,
+  COVER_LIFT,
+  DEFAULT_ARROW_OFFSET,
+  FRONT,
+  SCREW_LIFT,
+} from '../../src/lib/apparatusView';
 import { MOMENTUM_FACTORS } from '../fixtures/bedo-reference';
 
 /**
@@ -74,7 +76,7 @@ describe('deflectors', () => {
     expect(deflector.nameAr).toMatch(/\S/);
     expect(deflector.nameEn).toContain(`${deflector.id}°`);
     expect(deflector.nameAr).toContain(String(deflector.id));
-    expect(deflector.factor).toBeCloseTo(MOMENTUM_FACTORS[deflector.id], 3);
+    expect(deflector.momentumFactor).toBeCloseTo(MOMENTUM_FACTORS[deflector.id], 3);
     expect(WATER_SHAPES[deflector.water]).toBeDefined();
   });
 
@@ -163,7 +165,7 @@ describe('anchors and geometry', () => {
   it('frames every part from in front of the bench, where the operator stands', () => {
     // The rig faces -X; a positive x offset would put the camera inside the wall.
     expect(FRONT).toEqual([-1, 0, 0]);
-    for (const [key, view] of Object.entries(ANCHOR_VIEW)) {
+    for (const [key, view] of Object.entries(ANCHOR_VIEW) as [AnchorKey, (typeof ANCHOR_VIEW)[AnchorKey]][]) {
       expect(view.offset[0], `${key} is framed from behind the rig`).toBeLessThan(0);
     }
   });

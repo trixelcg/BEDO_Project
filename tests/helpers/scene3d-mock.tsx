@@ -1,5 +1,5 @@
 import type React from 'react';
-import { DEFLECTORS, WEIGHTS } from '../../src/lib/apparatus';
+import { DEFLECTORS, WEIGHTS } from '../../src/domain/apparatus';
 
 /**
  * Stand-in for the WebGL scene, used by the jsdom integration specs.

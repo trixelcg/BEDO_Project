@@ -1,29 +1,20 @@
-// Geometry facts about Bedo_baked_v2.glb.
+// Geometry and identity facts about the VL-FM009 apparatus.
 //
-// Every name below is verified to exist as a mesh node in the GLB. Earlier code
-// referenced meshes that were never in this model at all (Upper_Plate, Cylinder005,
-// Cylinder006/008/010, Object019/020/021, Sphere010/011), so the cover never moved
-// and the pump switch animated an unrelated pipe fitting.
+// This is *what the rig is*: which deflectors sit on the tray, what each one does to the
+// jet, which weights exist, and the name each part is authored under in the model. It
+// knows nothing about three.js, about how a name is looked up in a loaded scene, or about
+// where a camera stands to look at a part — those live in `src/lib/gltfNames.ts` and
+// `src/lib/apparatusView.ts`, on the presentation side of the boundary.
 //
-// Names are written exactly as they are authored in the GLB. Always look meshes up
-// through `gltfName` — see below.
-
-/**
- * The name three.js will actually give a node.
- *
- * GLTFLoader runs every node name through PropertyBinding.sanitizeNodeName, which
- * turns whitespace into underscores and strips `. [ ] : /`. So the GLB's
- * "JET Force 2_214" is loaded as "JET_Force_2_214", and "Flat_surface_deflector_90.001"
- * as "Flat_surface_deflector_90001".
- *
- * getObjectByName on the authored name therefore returns undefined and fails silently.
- * That is why the nozzle was never found (so the jet never rendered), why the mounted
- * deflector never appeared on the rod, and why all seven mounted deflectors stayed
- * visible inside the tank at once — the code that meant to hide them never matched a
- * single node.
- */
-export const gltfName = (authored: string): string =>
-  authored.replace(/\s/g, '_').replace(/[[\]./:]/g, '');
+// Every name below is verified to exist as a node in Bedo_baked_v2.glb, and
+// tests/unit/glb-contract.spec.ts checks all 33 of them against the shipped asset on
+// every run. Earlier code referenced meshes that were never in this model at all
+// (Upper_Plate, Cylinder005, Cylinder006/008/010, Object019/020/021, Sphere010/011), so
+// the cover never moved and the pump switch animated an unrelated pipe fitting.
+//
+// Names are written exactly as they are authored in the GLB. Always resolve them through
+// `gltfName` — see src/lib/gltfNames.ts for why the authored name is not the name
+// three.js exposes.
 
 export const MESH = {
   tankCover: 'Tank_cover',
@@ -93,8 +84,8 @@ export interface DeflectorDef {
   family: DeflectorFamily;
   nameEn: string;
   nameAr: string;
-  /** Momentum factor: F = factor * rho * A * v^2. */
-  factor: number;
+  /** Momentum factor k in F = k * rho * A * v^2. Dimensionless. */
+  momentumFactor: number;
   /** Mesh resting on the tray, selectable by the student. */
   shelf: string;
   /** Mesh shown mounted on the rod inside the tank once selected. */
@@ -126,7 +117,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (45°)',
     nameAr: 'عاكس منحرف (45 درجة)',
-    factor: sinSquared(45), // 0.5
+    momentumFactor: sinSquared(45), // 0.5
     shelf: 'Oblique_surface_deflector_45_base',
     installed: 'Oblique_surface_deflector_45.001',
     water: 'd45',
@@ -136,7 +127,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'flat',
     nameEn: 'Flat surface (90°)',
     nameAr: 'عاكس مسطح (90 درجة)',
-    factor: 1.0,
+    momentumFactor: 1.0,
     shelf: 'Flat_surface_deflector_90_base',
     installed: 'Flat_surface_deflector_90.001',
     water: 'd90',
@@ -146,7 +137,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'conical',
     nameEn: 'Conical surface (135°)',
     nameAr: 'عاكس مخروطي (135 درجة)',
-    factor: oneMinusCos(135), // 1.707
+    momentumFactor: oneMinusCos(135), // 1.707
     shelf: 'Conical_deflector_135_base',
     installed: 'Conical_deflector_135.001',
     water: 'd135',
@@ -156,7 +147,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'semi',
     nameEn: 'Semi-circular (120°)',
     nameAr: 'عاكس نصف دائري (120 درجة)',
-    factor: oneMinusCos(120), // 1.5
+    momentumFactor: oneMinusCos(120), // 1.5
     shelf: 'Hemi_sphere_deflector_120_base',
     installed: 'Hemi_sphere_deflector_120.001',
     water: 'd120',
@@ -166,7 +157,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'semi',
     nameEn: 'Semi-circular (180°)',
     nameAr: 'عاكس نصف دائري (180 درجة)',
-    factor: oneMinusCos(180), // 2.0
+    momentumFactor: oneMinusCos(180), // 2.0
     shelf: 'Hemi_sphere_deflector_180_base',
     installed: 'Hemi_sphere_deflector_180.001',
     water: 'd180',
@@ -176,7 +167,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (30°)',
     nameAr: 'عاكس منحرف (30 درجة)',
-    factor: sinSquared(30), // 0.25
+    momentumFactor: sinSquared(30), // 0.25
     shelf: 'Cone_surface_deflector_30_base',
     installed: 'Cone_surface_deflector_30.001',
     water: 'd30',
@@ -186,7 +177,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (60°)',
     nameAr: 'عاكس منحرف (60 درجة)',
-    factor: sinSquared(60), // 0.75
+    momentumFactor: sinSquared(60), // 0.75
     shelf: 'Cone_surface_deflector_60_base',
     installed: 'Cone_surface_deflector_60.001',
     water: 'd60',
@@ -216,17 +207,10 @@ export const WEIGHTS: WeightDef[] = [
   { grams: 500, mesh: 'Weight_500' },
 ];
 
-// How far each assembly travels when the tank cover is unscrewed, in model units.
-// The cover carries the spring, rod and mounted deflector, so they all rise together;
-// the screws lift clear above them.
-export const COVER_LIFT = 0.286;
-export const SCREW_LIFT = 0.36;
-
 /**
- * Named points on the apparatus that the camera can focus and the guide arrow can
- * point at. Resolved at runtime from real mesh bounding boxes (see DeviceModel),
- * never hard-coded — a hard-coded hotspot is what left the old click targets
- * floating in empty space, metres from the parts they claimed to represent.
+ * Named points on the apparatus that a lesson step can be *about* — the part the step
+ * asks the student to touch. The camera framing for each one is presentation, and lives
+ * in src/lib/apparatusView.ts.
  */
 export type AnchorKey =
   | 'cover'
@@ -238,50 +222,3 @@ export type AnchorKey =
   | 'flowValve'
   | 'volumetricValve'
   | 'overview';
-
-export type Anchors = Partial<Record<AnchorKey, [number, number, number]>>;
-
-export interface AnchorView {
-  /** Camera position relative to the anchor, in model units (scaled by the group). */
-  offset: [number, number, number];
-  /**
-   * Where the guide arrow floats relative to the anchor. Defaults to hovering above.
-   * The valves live in the few centimetres under the bench top, so an arrow directly
-   * above them is buried inside the cabinet — those push it out towards the viewer.
-   */
-  arrowOffset?: [number, number, number];
-}
-
-export const DEFAULT_ARROW_OFFSET: [number, number, number] = [0, 0.09, 0];
-
-/**
- * Where the operator stands, in model space.
- *
- * The rig faces -X. Renders from each side settle it: from -X you get the view the
- * reference video opens on — the BEDO chart on the far wall, the red emergency-stop panel
- * square to you, the tank left, the deflector tray and weights right, and both valves
- * visible under the bench. Every other side looks at its back or into a wall.
- *
- * Facing +X with +Y up, the operator's right hand points along +Z. Camera offsets below
- * are read in those terms: negative X stands the camera in front, positive Z moves it to
- * the operator's right.
- */
-export const FRONT: [number, number, number] = [-1, 0, 0];
-
-/**
- * How to frame each part, so the camera can fly to whichever one the current step is
- * about — the way the reference simulator reframes between steps.
- */
-export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
-  cover: { offset: [-0.52, 0.22, 0.34] },
-  tray: { offset: [-0.34, 0.34, 0.24] },
-  power: { offset: [-0.44, 0.20, 0.12] },
-  // Both valves live under the bench and are approached from the operator's right,
-  // which is where they actually face.
-  volumetricValve: { offset: [-0.50, 0.15, 0.30], arrowOffset: [-0.09, 0.05, 0] },
-  flowValve: { offset: [-0.52, 0.22, 0.44], arrowOffset: [-0.09, 0.04, 0] },
-  weights: { offset: [-0.44, 0.34, 0.34] },
-  pointer: { offset: [-0.42, 0.24, 0.30] },
-  pan: { offset: [-0.42, 0.24, 0.30] },
-  overview: { offset: [-1.45, 0.70, 0.45] },
-};

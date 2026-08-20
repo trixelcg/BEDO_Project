@@ -6,8 +6,8 @@ import {
   deflectorsFor,
   getExperiment,
   type ExperimentDef,
-} from '../../src/lib/experiments';
-import { DEFLECTORS, getDeflector } from '../../src/lib/apparatus';
+} from '../../src/domain/experiments';
+import { DEFLECTORS, getDeflector } from '../../src/domain/apparatus';
 
 /**
  * Experiment definitions (BEDO-002 §3).

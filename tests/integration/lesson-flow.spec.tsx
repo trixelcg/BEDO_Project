@@ -1,20 +1,20 @@
 // @vitest-environment jsdom
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TOTAL_STEPS } from '../../src/lib/experiments';
+import { TOTAL_STEPS } from '../../src/domain/experiments';
 import {
   click,
   clickMesh,
   coverState,
   clickOk,
   currentStep,
-  dismissPopup,
   expectStep,
   loadedWeightG,
   okButton,
   renderApp,
   setValve,
   stubConfigFetch,
+  walkLesson as walk,
   warning,
 } from '../helpers/app-harness';
 
@@ -41,48 +41,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-
-/** Walks the lesson from `from` up to and including `to`, asserting each transition. */
-const walk = (from: number, to: number) => {
-  const actions: Record<number, () => void> = {
-    1: () => clickMesh('scene-cover'),
-    2: () => clickOk(),
-    3: () => clickMesh('scene-cover'),
-    4: () => click(/Turn On Pump/),
-    5: () => {
-      click('Open volumetric valve');
-      clickOk();
-    },
-    6: () => {
-      setValve(0.4);
-      clickOk();
-    },
-    7: () => {
-      click('+50g');
-      click('+20g');
-      click('+10g');
-      clickOk();
-    },
-    8: () => {
-      setValve(0.5);
-      clickOk();
-    },
-    9: () => {
-      click('+200g');
-      click('+50g');
-      click('+10g');
-      clickOk();
-    },
-    10: () => click('Open Data Monitor'),
-    11: () => click(/^Calculate$/),
-  };
-
-  for (let step = from; step <= to; step++) {
-    expect(currentStep(), `expected to start step ${step}`).toBe(step);
-    actions[step]();
-    dismissPopup();
-  }
-};
 
 describe('the guided lesson', () => {
   it('starts on step 1 of 12, in guided mode, with the rig at rest', () => {
@@ -121,9 +79,9 @@ describe('the guided lesson', () => {
     expect(massCell(rows[3])).toBe('0'); // untaken row
 
     // F_th for the flat plate at n = 0.4 and n = 0.5, from BEDO's model.
-    const fth = (row: Element) => Number(row.querySelectorAll('td')[6].textContent);
-    expect(fth(rows[1])).toBeCloseTo(0.8199, 4);
-    expect(fth(rows[2])).toBeCloseTo(2.5303, 4);
+    const theoreticalForceN = (row: Element) => Number(row.querySelectorAll('td')[6].textContent);
+    expect(theoreticalForceN(rows[1])).toBeCloseTo(0.8199, 4);
+    expect(theoreticalForceN(rows[2])).toBeCloseTo(2.5303, 4);
 
     // F_ac is the loaded mass x g, and only appears after Calculate.
     const fac = (row: Element) => Number(row.querySelectorAll('td')[7].textContent);

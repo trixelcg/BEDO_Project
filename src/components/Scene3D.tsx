@@ -5,8 +5,9 @@ import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
 import type { SimulationState } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
-import { ANCHOR_VIEW, COVER_LIFT, type AnchorKey, type Anchors } from '../lib/apparatus';
-import type { ExperimentStep } from '../lib/experiments';
+import type { AnchorKey } from '../domain/apparatus';
+import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
+import type { ExperimentStep } from '../domain/experiments';
 
 interface Scene3DProps {
   state: SimulationState;

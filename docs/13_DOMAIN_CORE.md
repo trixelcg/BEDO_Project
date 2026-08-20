@@ -76,26 +76,39 @@ flow rate. That constant is exactly `ρ · A · 2gs = 1000 × 0.0000785 × 2 × 
 So `Fo = ρAv₀²` (nozzle velocity) and `Fth = ρAv²` (impact velocity). **Our implementation computes `Fth`,
 which is the correct one** and the one BEDO's own graphs plot. No change required.
 
+### 1.6 The lever arm: 1:1, confirmed
+
+`F_ac = m·g`, with no moment ratio — and BEDO's own reference simulator does the same. Its
+monitor prints `Total Weight [0.45 gm] × g = [4.414 N]`, and 0.45 × 9.81 = 4.4145
+(`docs/reference/reference-simulator-force.jpg`, decoded from the walkthrough video at
+83–88 s). The implementation already matches. **No lever constant exists, and none should
+be invented** — see `docs/29 §8` for the two caveats.
+
 ---
 
 ## 2. Structure
 
+**Implemented in BEDO‑005** (`docs/29`). Four files, not nine: the boundary is what
+matters, and splitting `deflectors`/`weights`/`waterShapes` into separate modules would
+have produced files of sixty lines each with no added isolation.
+
 ```
-domain/
-├── physics/
-│   ├── jet.ts        flowRateLMin · jetState · computeReading   ← from lib/physics.ts
-│   ├── spring.ts     deflection(F_th, F_ac)  ← NEW, see §4
-│   └── units.ts      branded scalar types    ← NEW, see §3
-├── apparatus/
-│   ├── deflectors.ts DEFLECTORS[] + getDeflector + deflectorsFor
-│   ├── weights.ts    WEIGHTS[]
-│   ├── meshNames.ts  MESH + gltfName()       ← the GLB naming contract
-│   └── waterShapes.ts WATER_SHAPES
-├── experiments/
-│   ├── definitions.ts EXPERIMENTS[]
-│   └── quiz.ts
-└── stateMachine.ts   ← NEW, see §5
+src/domain/                   ← pure: no React, no three.js, no DOM, deterministic
+├── units.ts                  the unit convention, conversions, Vec3
+├── physics.ts                constants · flowRateLMin · jetState · computeRow
+│                             · JetState · RecordRow
+├── apparatus.ts              DEFLECTORS · WEIGHTS · WATER_SHAPES · MESH · AnchorKey
+└── experiments.ts            EXPERIMENTS · buildSteps · ExperimentId · TOTAL_STEPS
 ```
+
+Still to come: `spring.ts` (§4, `BEDO‑007`) and `stateMachine.ts` (§5, `BEDO‑006`).
+
+**`gltfName()` did not go here.** It reimplements `THREE.PropertyBinding.sanitizeNodeName`
+— a fact about how GLTFLoader renames nodes, not about the apparatus. The domain owns the
+authored name (`JET Force 2_214`); `src/lib/gltfNames.ts` owns what three.js will answer
+to (`JET_Force_2_214`). Camera framing (`ANCHOR_VIEW`) and travel distances left for the
+same reason, to `src/lib/apparatusView.ts`; `AnchorKey` stayed, because lesson steps name
+it.
 
 **Constraints, enforced by lint (`docs/22 §7`):**
 - No import of `react`, `react-dom`, `three`, `@react-three/*`.
@@ -128,6 +141,11 @@ export type ValveOpening     = Brand<number, 'n'>;   // 0..1
 Renames at the boundary: `springhW → springDeflectionMm`, `mass → balancingMassG`,
 `idealMass → targetMassG`, `actualWeightMass → loadedMassG`, `weightsN → measuredForceN`,
 `fth → theoreticalForceN`, `totalFlowValue → pumpFlowLMin`.
+
+**Done in BEDO‑005 — as naming, not as types.** Every field now states the unit it holds
+(`docs/29 §4`) and `tests/unit/units.spec.ts` checks the value matches the suffix. The
+branded types above are *not* implemented: grams and newtons are still both `number` to
+the compiler. That remains open (`docs/29 §9`).
 
 ---
 

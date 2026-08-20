@@ -22,11 +22,14 @@ tests/
 │   ├── glb-contract.spec.ts    ★ every node name the runtime resolves, against the real asset
 │   ├── assets.spec.ts          the files the app loads exist and are what they claim
 │   ├── scene-config.spec.ts    the frozen scene values (added by BEDO-003)
+│   ├── units.spec.ts           what unit each domain field holds (BEDO-005)
+│   ├── domain-boundary.spec.ts the domain imports nothing it shouldn't (BEDO-005)
 │   ├── api-surface.spec.ts     the endpoints BEDO-001 removed stay removed
 │   └── bundle.spec.ts          what production output must and must not contain
 ├── integration/                Vitest, jsdom — the real App, Scene3D doubled
 │   ├── safety-guards.spec.tsx  the five guards from the state-machine document
-│   └── lesson-flow.spec.tsx    all twelve steps, and the rules that hold each one
+│   ├── lesson-flow.spec.tsx    all twelve steps, and the rules that hold each one
+│   └── export-contract.spec.tsx the CSV and the readings table, header for header
 ├── e2e/                        Playwright, chromium — a real page
 │   ├── lesson.e2e.ts           ★ the twelve-step walkthrough, end to end
 │   ├── language.e2e.ts         English / Arabic smoke
@@ -39,8 +42,8 @@ Three layers, three jobs:
 
 | Layer | Answers | Cost |
 |---|---|---|
-| unit | "is the domain still correct?" | 8 files, ~1 s |
-| integration | "does the lesson engine still behave?" | 2 files, ~2.5 s |
+| unit | "is the domain still correct?" | 10 files, ~1.5 s |
+| integration | "does the lesson engine still behave?" | 3 files, ~6 s |
 | e2e | "does it still work in a browser?" | 3 files, ~1.4 min |
 
 The integration layer exists because the lesson engine currently lives inside `App.tsx` as React handlers.
@@ -99,6 +102,9 @@ Notes.
 | Scene configuration | `scene-config.spec.ts` | A scene value drifting after BEDO-003 froze it — every number is pinned against the live scene-graph observable it was read from (`docs/26 §2`) |
 | No config fetch at startup | `readiness.e2e.ts` | The `/config.json` request, an `/api` call, or any 4xx or console error returning to startup |
 | No developer settings UI | `bundle.spec.ts`, `readiness.e2e.ts` | The scene editor returning to a production build |
+| The exported CSV and the readings table | `export-contract.spec.tsx` | A column moving, a header changing, or formatting drifting — the file is an interface someone downstream may parse (`docs/29 §6`) |
+| Unit semantics of every domain field | `units.spec.ts` | A rename quietly converting a value, or a field drifting out of the unit its name claims |
+| The domain's dependency direction | `domain-boundary.spec.ts` | The verified core acquiring a React, three.js, DOM or clock dependency |
 | The served asset set | `assets.spec.ts`, `bundle.spec.ts` | An unrequested file landing in `public/` or `dist/` again — checked from both directions, so neither a stale expected-list entry nor a new stray file can pass (`docs/28 §9`) |
 
 ---

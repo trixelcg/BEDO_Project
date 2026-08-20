@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
 import type { SimulationState } from '../types/index';
-import type { ExperimentDef } from '../lib/experiments';
+import type { ExperimentDef } from '../domain/experiments';
 import { X, RefreshCw, BarChart2, Calculator, Camera, Download, CheckCircle2 } from 'lucide-react';
-import { GRAVITY } from '../lib/physics';
+import { GRAVITY_MS2 } from '../domain/physics';
+import { csvFilename, toCsv } from '../lib/exportSchema';
 
 interface SoftwareMonitorProps {
   state: SimulationState;
@@ -28,21 +29,21 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
 
   // Only the rows the student actually balanced are readings.
   const rows = useMemo(
-    () => recordedRows.filter((r, i) => i > 0 && (r.actualWeightMass > 0 || r.valveOpen > 0)),
+    () => recordedRows.filter((r, i) => i > 0 && (r.loadedMassG > 0 || r.valveOpening > 0)),
     [recordedRows]
   );
 
-  const totalWeightG = recordedRows.reduce((sum, r) => sum + r.actualWeightMass, 0);
-  const totalWeightN = (totalWeightG * GRAVITY) / 1000;
+  const totalWeightG = recordedRows.reduce((sum, r) => sum + r.loadedMassG, 0);
+  const totalWeightN = (totalWeightG * GRAVITY_MS2) / 1000;
 
   // Scale the axes to the data rather than pinning them, which used to clip every reading.
   const niceCeil = (v: number) => {
     const step = 10 ** Math.floor(Math.log10(Math.max(v, 1e-6)));
     return Math.ceil(v / step) * step;
   };
-  const maxFlow = niceCeil(Math.max(10, ...recordedRows.map((r) => r.flowRateQLMin)) * 1.1);
+  const maxFlow = niceCeil(Math.max(10, ...recordedRows.map((r) => r.flowRateLMin)) * 1.1);
   const maxForce = niceCeil(
-    Math.max(0.5, ...recordedRows.map((r) => Math.max(r.fth, r.weightsN))) * 1.15
+    Math.max(0.5, ...recordedRows.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))) * 1.15
   );
 
   const paddingX = 40;
@@ -61,51 +62,32 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   ) =>
     source
       .map((r, i) => {
-        const c = coords(r.flowRateQLMin, pick(r));
+        const c = coords(r.flowRateLMin, pick(r));
         return `${i === 0 ? 'M' : 'L'} ${c.x},${c.y}`;
       })
       .join(' ');
 
   // F_ac only exists where the student actually balanced the pointer — drawing the
   // untouched rows as zeroes would drag the measured curve back down to the axis.
-  const measured = recordedRows.filter((r, i) => i === 0 || r.actualWeightMass > 0);
+  const measured = recordedRows.filter((r, i) => i === 0 || r.loadedMassG > 0);
 
-  /** Step 11 — the readings the student captured, as CSV. */
+  /**
+   * Step 11 — the readings the student captured, as CSV.
+   *
+   * The schema lives in `src/lib/exportSchema.ts`, deliberately apart from the domain:
+   * the column headers are an interface someone downstream may depend on, and they must
+   * not drift every time a field is renamed in here.
+   */
   const handleExportData = () => {
-    const header = [
-      'Row',
-      'Q_total (L/min)',
-      'n',
-      'Q (L/min)',
-      'Q (m3/s)',
-      'Vo (m/s)',
-      'V (m/s)',
-      'Balanced mass (g)',
-      'Spring defl. (mm)',
-      'F_th (N)',
-      'F_ac (N)',
-    ];
-    const body = recordedRows.map((r, i) =>
-      [
-        i + 1,
-        r.totalFlowValue.toFixed(1),
-        r.valveOpen.toFixed(2),
-        r.flowRateQLMin.toFixed(3),
-        r.flowRateQM3.toExponential(4),
-        r.theoreticalVo.toFixed(3),
-        r.theoreticalV.toFixed(3),
-        r.actualWeightMass,
-        r.springhW.toFixed(2),
-        r.fth.toFixed(4),
-        isCalculated ? r.weightsN.toFixed(4) : '',
-      ].join(',')
-    );
-    const csv = [`# ${experiment.nameEn} — ${deflectorName}`, header.join(','), ...body].join('\n');
+    const csv = toCsv(recordedRows, {
+      title: `${experiment.nameEn} — ${deflectorName}`,
+      isCalculated,
+    });
 
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `jet-forces-${experiment.id}.csv`;
+    a.download = csvFilename(experiment.id);
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -199,22 +181,22 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 {recordedRows.map((row, idx) => (
                   <tr key={idx}>
                     <td>{idx + 1}</td>
-                    <td>{row.flowRateQLMin.toFixed(3)}</td>
-                    <td>{row.flowRateQM3.toExponential(3)}</td>
-                    <td>{row.theoreticalVo.toFixed(3)}</td>
-                    <td>{row.theoreticalV.toFixed(3)}</td>
-                    <td>{row.actualWeightMass}</td>
+                    <td>{row.flowRateLMin.toFixed(3)}</td>
+                    <td>{row.flowRateM3S.toExponential(3)}</td>
+                    <td>{row.nozzleVelocityMS.toFixed(3)}</td>
+                    <td>{row.impactVelocityMS.toFixed(3)}</td>
+                    <td>{row.loadedMassG}</td>
                     <td
                       className="highlight-cell"
                       style={{ color: 'var(--accent-blue)', fontWeight: 600 }}
                     >
-                      {row.fth.toFixed(4)}
+                      {row.theoreticalForceN.toFixed(4)}
                     </td>
                     <td
                       className="highlight-cell"
                       style={{ color: 'var(--accent-gold)', fontWeight: 600 }}
                     >
-                      {isCalculated ? row.weightsN.toFixed(4) : '—'}
+                      {isCalculated ? row.measuredForceN.toFixed(4) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -323,7 +305,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               </text>
 
               <path
-                d={path(recordedRows, (r) => r.fth)}
+                d={path(recordedRows, (r) => r.theoreticalForceN)}
                 fill="none"
                 stroke="var(--accent-blue)"
                 strokeWidth={2}
@@ -331,7 +313,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               />
               {isCalculated && (
                 <path
-                  d={path(measured, (r) => r.weightsN)}
+                  d={path(measured, (r) => r.measuredForceN)}
                   fill="none"
                   stroke="var(--accent-gold)"
                   strokeWidth={2.5}
@@ -339,7 +321,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               )}
 
               {recordedRows.map((r, i) => {
-                const c = coords(r.flowRateQLMin, r.fth);
+                const c = coords(r.flowRateLMin, r.theoreticalForceN);
                 return (
                   <circle
                     key={`th-${i}`}
@@ -354,7 +336,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               })}
               {isCalculated &&
                 rows.map((r, i) => {
-                  const c = coords(r.flowRateQLMin, r.weightsN);
+                  const c = coords(r.flowRateLMin, r.measuredForceN);
                   return <circle key={`ac-${i}`} cx={c.x} cy={c.y} r={4} fill="var(--accent-gold)" />;
                 })}
             </svg>

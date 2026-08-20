@@ -4,27 +4,29 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { SimulationState } from '../types/index';
 import {
-  ANCHOR_VIEW,
-  COVER_LIFT,
-  DEFAULT_ARROW_OFFSET,
   DEFLECTORS,
   MESH,
-  SCREW_LIFT,
   WATER_SHAPES,
   WEIGHTS,
   getDeflector,
-  gltfName,
   type AnchorKey,
-  type Anchors,
   type WaterShapeKey,
-} from '../lib/apparatus';
+} from '../domain/apparatus';
+import { gltfName } from '../lib/gltfNames';
+import {
+  ANCHOR_VIEW,
+  COVER_LIFT,
+  DEFAULT_ARROW_OFFSET,
+  SCREW_LIFT,
+  type Anchors,
+} from '../lib/apparatusView';
 import {
   FIRST_READING_VALVE,
   SECOND_READING_VALVE,
   SPRING_RATE_N_PER_M,
   VALVE_SNAP_MARGIN,
   jetState,
-} from '../lib/physics';
+} from '../domain/physics';
 import { markReady } from '../lib/readiness';
 
 type Action =
@@ -706,8 +708,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       (step === 5 && state.isVolumetricValveOpen) ||
       (step === 6 && state.valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
       (step === 8 && state.valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) ||
-      (step === 7 && !!state.recordedRows[1]?.balanced) ||
-      (step === 9 && !!state.recordedRows[2]?.balanced) ||
+      (step === 7 && !!state.recordedRows[1]?.isBalanced) ||
+      (step === 9 && !!state.recordedRows[2]?.isBalanced) ||
       step >= 10;
 
     const anchor = anchors[focusTarget];
@@ -727,7 +729,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }
         // Let App raise its safety warning rather than playing an unscrew that
         // would be rejected the moment it finishes.
-        if (state.isPowerOn || state.loadedWeights.length > 0) {
+        if (state.isPowerOn || state.loadedWeightsG.length > 0) {
           onCoverClick();
           return;
         }
@@ -773,7 +775,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // this baked GLB those carry real offsets, so the in-scene position of the original
     // says nothing about where the clone will land once mounted under our own group.
     let cum = 0.001; // clear the pan's top face
-    state.loadedWeights.forEach((grams, idx) => {
+    state.loadedWeightsG.forEach((grams, idx) => {
       const def = WEIGHTS.find((w) => w.grams === grams);
       const proto = pick(def?.mesh ?? 'Weight_Custom');
       if (!proto) return;
@@ -801,7 +803,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       cum += h;
     });
     return entries;
-  }, [scene, pick, anchors.pan, state.loadedWeights]);
+  }, [scene, pick, anchors.pan, state.loadedWeightsG]);
 
   /**
    * Glow a clickable part, the way the reference simulator does (it uses HighlightPlus).
@@ -950,9 +952,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // --- Jet force, spring deflection, pointer ---------------------------------
-    const { fth } = jetState(state.valveOpening, state.selectedDeflectorId);
-    const jetForceN = state.isPowerOn && !state.isCoverOpen ? fth : 0;
-    const loadedMassG = state.loadedWeights.reduce((a, b) => a + b, 0);
+    const { theoreticalForceN } = jetState(state.valveOpening, state.selectedDeflectorId);
+    const jetForceN = state.isPowerOn && !state.isCoverOpen ? theoreticalForceN : 0;
+    const loadedMassG = state.loadedWeightsG.reduce((a, b) => a + b, 0);
     const weightForceN = (loadedMassG * 9.81) / 1000;
 
     // Net force on a 200 N/m spring, in metres
@@ -1090,7 +1092,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (w.mesh) {
         const meshObj = pick(w.mesh);
         if (meshObj) {
-          meshObj.visible = !state.loadedWeights.includes(w.grams);
+          meshObj.visible = !state.loadedWeightsG.includes(w.grams);
         }
       }
     });

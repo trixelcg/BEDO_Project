@@ -87,5 +87,51 @@ export const loadedWeightG = (): number => {
   return match ? Number(match[1]) : 0;
 };
 
+/**
+ * Walks the guided lesson from `from` up to and including `to`, asserting the step number
+ * before each action. Shared by the lesson-flow spec and the export-contract spec so
+ * there is exactly one description of how the lesson is driven.
+ */
+export const walkLesson = (from: number, to: number) => {
+  const actions: Record<number, () => void> = {
+    1: () => clickMesh('scene-cover'),
+    2: () => clickOk(),
+    3: () => clickMesh('scene-cover'),
+    4: () => click(/Turn On Pump/),
+    5: () => {
+      click('Open volumetric valve');
+      clickOk();
+    },
+    6: () => {
+      setValve(0.4);
+      clickOk();
+    },
+    7: () => {
+      click('+50g');
+      click('+20g');
+      click('+10g');
+      clickOk();
+    },
+    8: () => {
+      setValve(0.5);
+      clickOk();
+    },
+    9: () => {
+      click('+200g');
+      click('+50g');
+      click('+10g');
+      clickOk();
+    },
+    10: () => click('Open Data Monitor'),
+    11: () => click(/^Calculate$/),
+  };
+
+  for (let step = from; step <= to; step++) {
+    expect(currentStep(), `expected to start step ${step}`).toBe(step);
+    actions[step]();
+    dismissPopup();
+  }
+};
+
 export const powerLabel = (): string =>
   screen.getByRole('button', { name: /Turn (On|Off) Pump/ }).textContent ?? '';

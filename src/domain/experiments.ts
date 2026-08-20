@@ -6,6 +6,9 @@
 
 import { DEFLECTORS, type AnchorKey, type DeflectorFamily } from './apparatus';
 
+/** Which experiment is loaded — matches BEDO's four Phase 2 sheets. */
+export type ExperimentId = DeflectorFamily;
+
 export type QuizKind = 'mcq' | 'trueFalse';
 
 export interface QuizQuestion {

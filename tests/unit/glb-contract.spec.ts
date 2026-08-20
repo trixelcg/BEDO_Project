@@ -1,11 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import {
-  DEFLECTORS,
-  MESH,
-  WATER_SHAPES,
-  WEIGHTS,
-  gltfName,
-} from '../../src/lib/apparatus';
+import { DEFLECTORS, MESH, WATER_SHAPES, WEIGHTS } from '../../src/domain/apparatus';
+import { gltfName } from '../../src/lib/gltfNames';
 import { describeMissing, readGlb, type GlbReport } from '../helpers/glb';
 
 /**
