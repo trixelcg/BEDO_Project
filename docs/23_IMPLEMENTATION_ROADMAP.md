@@ -167,7 +167,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
 ## Phase C — Simulation runtime
 
-### ☐ BEDO‑008 — Framework-free `SimulationRuntime` `P1`
+### ✅ BEDO‑008 — Framework-free `SimulationRuntime` `P1`
 - **Objective** `createSimulation()` with `dispatch`/`tick`/`subscribe`; split `ApparatusState` (discrete) from `ApparatusKinetics` (60 Hz refs); `installedDeflectorId: null` initially; valve rotates without value change when the pump is off.
 - **Reason** `ARCH‑03`, `ARCH‑08`, `PERF‑13`; storyboard sl. 23 (LED lights *after* install) and the A→valve→A transition.
 - **Affected** `src/simulation/**` (new); `App.tsx` becomes a thin adapter.
@@ -175,6 +175,16 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** all existing behaviour preserved; E2E green; runtime drivable headlessly.
 - **Tests** `runtime.spec.ts`, `determinism.spec.ts`.
 - **Perf** enables (does not yet deliver) the render-count reduction.
+- **Status** ✅ Complete. `src/simulation/{state,runtime,selectors}.ts` — plain TypeScript, drivable with no
+  renderer, boundary-enforced (no React, store, three.js, DOM, clock or randomness). **Eight fields left
+  React**; `recordedRows` left *everything* — it is derived by `selectReadings` now, which removes the
+  five-dependency effect that kept a copy of the physics in state. Apparatus legality is **called, never
+  re-implemented**: a test greps the runtime for guard-shaped code. Subscribers get `(state, previous)` and
+  hear nothing from a rejected or no-op command. React observes via `useSyncExternalStore`; `App` projects a
+  read-only `SimulationView` so no component changed. **`BALANCE_ROW = {7:1, 9:2}` no longer decides simulation
+  truth** — the runtime is told `BEGIN_READING { index }`, and the step map is now a compatibility adapter in
+  the lesson's own file for `BEDO‑019` to delete. Scene fingerprint identical, draw calls 769 unchanged, CSV
+  character-identical, 12-step lesson unchanged. 78 tests added, 498 green. Detail: `docs/33`.
 
 ### ☐ BEDO‑009 — Readings as an append-only list `P1`
 - **Objective** Replace the four fixed `recordedRows` with `Reading[]` carrying provenance; derive chart series from **one** dataset; add Clear.
@@ -526,7 +536,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
 | # | Decision | Blocks |
 |---|---|---|
-| D‑1 | ✅ **Resolved: Zustand.** Scoped subscriptions and imperative access, so 60 Hz simulation, scene and interaction state need not be pushed through React rendering. Not Redux. Applies to future architecture work only — BEDO‑002 changed no state architecture. | BEDO‑008 |
+| D‑1 | ✅ **Resolved: Zustand.** ⚠️ BEDO‑008 built the runtime framework-free on purpose: the store must **wrap** it, not replace it, or the simulation stops being testable without React (`docs/33 §13`). Scoped subscriptions and imperative access, so 60 Hz simulation, scene and interaction state need not be pushed through React rendering. Not Redux. Applies to future architecture work only — BEDO‑002 changed no state architecture. | BEDO‑008 |
 | D‑2 | ✅ **Resolved: 11 steps**, per all four experiment sheets and BEDO's own current Unity build (`docs/32`). The volumetric valve is an affordance, not a step. Assessment is separate. Engine keys on stable ids, not indexes | BEDO‑019, BEDO‑041 |
 | D‑3 | Monitor as DOM overlay (recommended) or in-scene screen | BEDO‑027 |
 | D‑4 | Volumetric measurement in scope? | BEDO‑019 |

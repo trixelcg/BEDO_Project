@@ -1,12 +1,12 @@
 import React, { useMemo } from 'react';
-import type { SimulationState } from '../types/index';
+import type { SimulationView } from '../types/index';
 import type { ExperimentDef } from '../domain/experiments';
 import { X, RefreshCw, BarChart2, Calculator, Camera, Download, CheckCircle2 } from 'lucide-react';
 import { GRAVITY_MS2 } from '../domain/physics';
 import { csvFilename, toCsv } from '../lib/exportSchema';
 
 interface SoftwareMonitorProps {
-  state: SimulationState;
+  state: SimulationView;
   experiment: ExperimentDef;
   deflectorName: string;
   onCalculate: () => void;

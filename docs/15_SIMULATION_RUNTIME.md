@@ -1,5 +1,14 @@
 # 15 — Simulation Runtime
 
+> **Implemented in BEDO‑008 — see `docs/33` for what was actually built.**
+>
+> Differences from the design below, all deliberate: three files rather than five
+> (`actions.ts`/`events.ts` folded in); **no event union** — subscribers receive
+> `(state, previous)`, because every consumer that exists wants the state and none wants a
+> stream; kinetics and `tick(dt)` are **not** implemented, since nothing continuous exists
+> yet to drive; and the store stays out — Zustand will wrap the runtime, not become it.
+
+
 **Responsibility:** hold apparatus state, apply intents through the domain state machine, and expose derived
 values. **Deterministic**, framework-free, headless-testable.
 

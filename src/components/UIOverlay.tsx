@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { CustomParams, ExperimentId, Language, SimulationState } from '../types/index';
+import type { CustomParams, ExperimentId, Language, SimulationView } from '../types/index';
 import {
   Layers,
   Power,
@@ -23,12 +23,12 @@ import {
 } from '../domain/physics';
 
 interface UIOverlayProps {
-  state: SimulationState;
+  state: SimulationView;
   steps: ExperimentStep[];
   experiment: ExperimentDef;
   availableDeflectors: DeflectorDef[];
   onSelectLanguage: (lang: Language) => void;
-  onSetMode: (mode: SimulationState['mode']) => void;
+  onSetMode: (mode: SimulationView['mode']) => void;
   onSelectExperiment: (id: ExperimentId) => void;
   onSetParams: (params: Partial<CustomParams>) => void;
   onSelectDeflector: (id: number) => void;

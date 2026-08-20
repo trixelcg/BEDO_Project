@@ -22,7 +22,11 @@ export interface CustomParams {
   customWeightG: number;
 }
 
-export interface SimulationState {
+/**
+ * What the components read: a projection of the simulation runtime (the rig) and React's
+ * own lesson/UI state, assembled by `App`. Not a source of truth — see `docs/33 §3`.
+ */
+export interface SimulationView {
   mode: Mode;
   experimentId: ExperimentId;
   currentStep: number;
@@ -32,10 +36,9 @@ export interface SimulationState {
   isPowerOn: boolean;
   valveOpening: number; // 0 to 1
   /** Weights currently on the pan, in grams (e.g. [50, 100]). */
-  loadedWeightsG: number[];
+  loadedWeightsG: readonly number[];
   isVolumetricValveOpen: boolean; // volumetric valve open state
   recordedRows: RecordRow[];
-  currentRecordIndex: number;
   showMonitor: boolean;
   /** F_ac is only recorded once the student presses Calculate (step 11). */
   isCalculated: boolean;

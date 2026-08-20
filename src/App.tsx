@@ -2,197 +2,172 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import type { ExperimentId, SimulationState } from './types/index';
-import { attempt, type ApparatusAction } from './domain/stateMachine';
-import {
-  toApparatusState,
-  withApparatusState,
-  withRejection,
-} from './lib/apparatusGate';
+import type { ErrorCode, Language, Mode, SimulationView } from './types/index';
+import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
+import { REJECTION_PRESENTATION } from './lib/apparatusGate';
 import { getDeflector } from './domain/apparatus';
-import { buildSteps, getExperiment, deflectorsFor } from './domain/experiments';
+import { buildSteps, type ExperimentId } from './domain/experiments';
 import { markReady } from './lib/readiness';
 import { SCENE_CONFIG } from './lib/sceneConfig';
+import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import {
-  FIRST_READING_VALVE,
-  ROW_VALVE_SETTINGS,
-  SECOND_READING_VALVE,
-  TOTAL_FLOW_L_MIN,
-  VALVE_SNAP_MARGIN,
-  computeRow,
-} from './domain/physics';
+  selectAvailableDeflectors,
+  selectExperiment,
+  selectReadings,
+} from './simulation/selectors';
+import type { SimulationCommand } from './simulation/runtime';
+import { FIRST_READING_VALVE, SECOND_READING_VALVE, VALVE_SNAP_MARGIN } from './domain/physics';
 import './index.css';
 
-const initialState = (
-  language: SimulationState['language'] = 'en',
-  experimentId: ExperimentId = 'flat'
-): SimulationState => ({
+/**
+ * What React still owns after BEDO-008.
+ *
+ * The rig itself lives in the simulation runtime; these are the two things that are not
+ * the rig — where the student is in the lesson, and what the interface is showing.
+ * `BEDO-018`/`BEDO-019` take the lesson half; the rest is presentation and belongs here.
+ */
+interface LessonAndUiState {
+  mode: Mode;
+  currentStep: number;
+  language: Language;
+  showMonitor: boolean;
+  quizAnswer: number | null;
+  /** A student-defined weight denomination the panel offers. Buys a button, not physics. */
+  customWeightG: number;
+  warningMessage: { en: string; ar: string; code: ErrorCode } | null;
+  notice: { en: string; ar: string } | null;
+}
+
+const initialLessonState = (language: Language = 'en'): LessonAndUiState => ({
   mode: 'guided',
-  experimentId,
   currentStep: 1,
   language,
-  selectedDeflectorId: getExperiment(experimentId).defaultAngle,
-  isCoverOpen: false,
-  isPowerOn: false,
-  valveOpening: 0.0,
-  loadedWeightsG: [],
-  isVolumetricValveOpen: false,
-  recordedRows: [],
-  currentRecordIndex: 0,
   showMonitor: false,
-  isCalculated: false,
   quizAnswer: null,
-  params: { pumpFlowLMin: TOTAL_FLOW_L_MIN, customWeightG: 25 },
+  customWeightG: 25,
   warningMessage: null,
   notice: null,
 });
 
-/** Steps where the student is loading weights, and the table row each one fills in. */
-const BALANCE_ROW: Record<number, number> = { 7: 1, 9: 2 };
+/**
+ * Which results row each guided step is balancing.
+ *
+ * The last index-keyed rule in the application, and it is **lesson orchestration** — the
+ * simulation no longer knows step numbers, it is told "begin reading 1". `BEDO-019`
+ * deletes this table when the steps get stable ids; until then it is the compatibility
+ * adapter between today's numbering and the runtime's semantics.
+ */
+const READING_FOR_STEP: Record<number, number> = { 7: 1, 9: 2 };
 
 export default function App() {
-  const [state, setState] = useState<SimulationState>(() => initialState());
+  const runtime = useSimulationRuntime();
+  const simulation = useSimulationState(runtime);
+  const [lesson, setLesson] = useState<LessonAndUiState>(() => initialLessonState());
 
-  const experiment = useMemo(() => getExperiment(state.experimentId), [state.experimentId]);
+  const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
+  const readings = useMemo(() => selectReadings(simulation), [simulation]);
+  const availableDeflectors = useMemo(() => selectAvailableDeflectors(simulation), [simulation]);
   const steps = useMemo(() => {
-    const d = getDeflector(state.selectedDeflectorId);
+    const d = getDeflector(simulation.apparatus.selectedDeflectorId);
     return buildSteps(d.nameEn, d.nameAr);
-  }, [state.selectedDeflectorId]);
-
-  // Keep the results table in step with the apparatus. The row the student is currently
-  // balancing shows the live weights; rows already taken keep theirs.
-  useEffect(() => {
-    setState((prev) => {
-      const activeRow = BALANCE_ROW[prev.currentStep];
-
-      const recordedRows = ROW_VALVE_SETTINGS.map((n, idx) => {
-        const weights =
-          idx === activeRow
-            ? prev.loadedWeightsG
-            : idx < prev.currentRecordIndex
-              ? (prev.recordedRows[idx]?.loadedWeightsG ?? [])
-              : [];
-
-        return computeRow(idx, n, prev.selectedDeflectorId, weights, prev.params.pumpFlowLMin);
-      });
-
-      return { ...prev, recordedRows };
-    });
-  }, [
-    state.selectedDeflectorId,
-    state.loadedWeightsG,
-    state.currentStep,
-    state.currentRecordIndex,
-    state.params.pumpFlowLMin,
-  ]);
-
-  /**
-   * Every apparatus action goes through the domain state machine (BEDO-006).
-   *
-   * `attempt` decides whether the rig allows it and returns either the new apparatus
-   * state or a typed reason; this turns that into application state — the refusal banner,
-   * and any guided step the successful action completes. The 3D scene and the control
-   * panel both arrive here, so they cannot disagree about the rules.
-   *
-   * `advanceOnSuccess` is the lesson's business, not the apparatus's: the state machine
-   * has no idea what step the student is on, and this is where the two meet.
-   */
-  const dispatchApparatus = useCallback(
-    (
-      action: ApparatusAction,
-      advanceOnSuccess?: (prev: SimulationState) => Partial<SimulationState>
-    ) => {
-      setState((prev) => {
-        const result = attempt(toApparatusState(prev), action);
-        if (!result.ok) return withRejection(prev, result.reason);
-
-        const next = withApparatusState(prev, result.state);
-        return {
-          ...next,
-          warningMessage: null,
-          ...(advanceOnSuccess?.(prev) ?? {}),
-        };
-      });
-    },
-    []
-  );
+  }, [simulation.apparatus.selectedDeflectorId]);
 
   const clearWarning = useCallback(
-    () => setState((prev) => ({ ...prev, warningMessage: null })),
+    () => setLesson((prev) => ({ ...prev, warningMessage: null })),
     []
   );
-  const clearNotice = useCallback(() => setState((prev) => ({ ...prev, notice: null })), []);
+  const clearNotice = useCallback(() => setLesson((prev) => ({ ...prev, notice: null })), []);
+
+  /** Turns a typed refusal into the banner the student sees. Copy lives in the adapter. */
+  const showRejection = useCallback((reason: RejectionReason) => {
+    const presentation = REJECTION_PRESENTATION[reason];
+    setLesson((prev) =>
+      presentation.severity === 'notice'
+        ? {
+            ...prev,
+            warningMessage: null,
+            notice: { en: presentation.en, ar: presentation.ar },
+          }
+        : {
+            ...prev,
+            warningMessage: {
+              en: presentation.en,
+              ar: presentation.ar,
+              code: presentation.code!,
+            },
+          }
+    );
+  }, []);
 
   /** Raise the step's observation popup, if it has one and we are guiding. */
-  const noticeFor = (prev: SimulationState, step: number) => {
-    if (prev.mode !== 'guided') return null;
+  const noticeFor = (mode: Mode, step: number) => {
+    if (mode !== 'guided') return null;
     const s = steps.find((x) => x.id === step);
     return s?.noticeEn ? { en: s.noticeEn, ar: s.noticeAr ?? s.noticeEn } : null;
   };
 
   /** In guided mode, advance only when the action matches the step being asked for. */
-  const advance = (prev: SimulationState, from: number, to: number): Partial<SimulationState> =>
+  const advance = (prev: LessonAndUiState, from: number, to: number): LessonAndUiState =>
     prev.mode === 'guided' && prev.currentStep === from
-      ? { currentStep: to, notice: noticeFor(prev, from) }
-      : {};
+      ? { ...prev, currentStep: to, notice: noticeFor(prev.mode, from) }
+      : prev;
+
+  /**
+   * Sends a command to the runtime and reflects the outcome in the interface.
+   *
+   * The runtime answers whether the rig allowed it — it consults the same
+   * `attempt(state, action)` the 3D scene's clicks reach, so the two cannot disagree.
+   * What the *lesson* does about a success is decided here, because the simulation has no
+   * idea a lesson exists.
+   */
+  const dispatch = useCallback(
+    (command: SimulationCommand, onAccepted?: (prev: LessonAndUiState) => LessonAndUiState) => {
+      const result = runtime.dispatch(command);
+      if (!result.ok) {
+        showRejection(result.reason);
+        return result;
+      }
+      setLesson((prev) => onAccepted?.({ ...prev, warningMessage: null }) ?? { ...prev, warningMessage: null });
+      return result;
+    },
+    [runtime, showRejection]
+  );
 
   // --- Cover (steps 1 and 3) --------------------------------------------------
   const handleCoverClick = () => {
     // One control, two intents: which one a click means depends on where the plate is.
-    setState((prev) => {
-      const action: ApparatusAction = prev.isCoverOpen
-        ? { type: 'CLOSE_COVER' }
-        : { type: 'OPEN_COVER' };
-      const result = attempt(toApparatusState(prev), action);
-      if (!result.ok) return withRejection(prev, result.reason);
-
-      const next = withApparatusState(prev, result.state);
-      return {
-        ...next,
-        warningMessage: null,
-        ...(next.isCoverOpen ? advance(prev, 1, 2) : advance(prev, 3, 4)),
-      };
-    });
+    const wasOpen = runtime.getState().apparatus.isCoverOpen;
+    const action: ApparatusAction = wasOpen ? { type: 'CLOSE_COVER' } : { type: 'OPEN_COVER' };
+    dispatch(action, (prev) => (wasOpen ? advance(prev, 3, 4) : advance(prev, 1, 2)));
   };
 
   // --- Deflector (step 2) ------------------------------------------------------
   const handleSelectDeflector = (id: number) =>
-    dispatchApparatus({ type: 'SELECT_DEFLECTOR', deflectorId: id });
+    dispatch({ type: 'SELECT_DEFLECTOR', deflectorId: id });
 
   // --- Power (step 4) ----------------------------------------------------------
   const handleTogglePower = () => {
-    setState((prev) => {
-      const action: ApparatusAction = prev.isPowerOn ? { type: 'POWER_OFF' } : { type: 'POWER_ON' };
-      const result = attempt(toApparatusState(prev), action);
-      if (!result.ok) return withRejection(prev, result.reason);
-
-      const next = withApparatusState(prev, result.state);
-      return {
-        ...next,
-        warningMessage: null,
-        ...(next.isPowerOn ? advance(prev, 4, 5) : {}),
-      };
-    });
+    const wasOn = runtime.getState().apparatus.isPowerOn;
+    const action: ApparatusAction = wasOn ? { type: 'POWER_OFF' } : { type: 'POWER_ON' };
+    dispatch(action, (prev) => (wasOn ? prev : advance(prev, 4, 5)));
   };
 
   // --- Volumetric valve (step 5) ----------------------------------------------
   const handleToggleVolumetricValve = () =>
-    setState((prev) => {
-      const action: ApparatusAction = prev.isVolumetricValveOpen
+    dispatch(
+      runtime.getState().apparatus.isVolumetricValveOpen
         ? { type: 'CLOSE_VOLUMETRIC_VALVE' }
-        : { type: 'OPEN_VOLUMETRIC_VALVE' };
-      const result = attempt(toApparatusState(prev), action);
-      if (!result.ok) return withRejection(prev, result.reason);
-      return { ...withApparatusState(prev, result.state), warningMessage: null };
-    });
+        : { type: 'OPEN_VOLUMETRIC_VALVE' }
+    );
 
   // --- Flow valve (steps 6 and 8) ---------------------------------------------
   /**
    * The valve snaps to a reading setpoint once the student is within the margin of it.
    *
-   * That is a **lesson** rule, not an apparatus one — it exists so steps 6 and 8 land on
-   * the exact openings the results table is computed at — so it is applied here, before
-   * the domain sees the value. The state machine only asks whether the pump is running.
+   * A **lesson** rule, not an apparatus one — it exists so steps 6 and 8 land on the exact
+   * openings the results table is computed at — so it is applied before the runtime sees
+   * the value. Snapping only ever raises an opening that is already above 0.38, so gating
+   * the snapped value is identical to gating the raw one.
    */
   const snapToReadingSetpoint = (opening: number, step: number): number => {
     if (step === 6 && opening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) {
@@ -205,61 +180,63 @@ export default function App() {
   };
 
   const handleSetValve = (val: number) =>
-    setState((prev) => {
-      const result = attempt(toApparatusState(prev), { type: 'SET_VALVE', opening: val });
-      if (!result.ok) return withRejection(prev, result.reason);
-
-      // Snap after the gate, so a rejected setting never moves the valve at all.
-      const opening = snapToReadingSetpoint(val, prev.currentStep);
-      const snapped = attempt(toApparatusState(prev), { type: 'SET_VALVE', opening });
-      if (!snapped.ok) return withRejection(prev, snapped.reason);
-
-      return { ...withApparatusState(prev, snapped.state), warningMessage: null };
-    });
+    dispatch({ type: 'SET_VALVE', opening: snapToReadingSetpoint(val, lesson.currentStep) });
 
   const handleFlowValveClick = () =>
-    handleSetValve(state.currentStep === 8 ? SECOND_READING_VALVE : FIRST_READING_VALVE);
+    handleSetValve(lesson.currentStep === 8 ? SECOND_READING_VALVE : FIRST_READING_VALVE);
 
   // --- Weights (steps 7 and 9) -------------------------------------------------
-  const handleAddWeight = (weight: number) =>
-    dispatchApparatus({ type: 'ADD_WEIGHT', massG: weight });
+  const handleAddWeight = (weight: number) => dispatch({ type: 'ADD_WEIGHT', massG: weight });
 
-  const handleClearWeights = () => dispatchApparatus({ type: 'REMOVE_ALL_WEIGHTS' });
+  const handleClearWeights = () => dispatch({ type: 'REMOVE_ALL_WEIGHTS' });
 
   // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => {
-    clearWarning();
-    clearNotice();
+    const step = lesson.currentStep;
 
-    setState((prev) => {
-      const next: SimulationState = { ...prev };
+    // The simulation side of confirming a step, as semantic commands.
+    switch (step) {
+      case 5:
+        runtime.dispatch({ type: 'OPEN_VOLUMETRIC_VALVE' });
+        break;
+      case 6:
+        runtime.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
+        runtime.dispatch({ type: 'BEGIN_READING', index: READING_FOR_STEP[7] });
+        break;
+      case 7:
+        runtime.dispatch({ type: 'END_READING' });
+        runtime.dispatch({ type: 'REMOVE_ALL_WEIGHTS' });
+        break;
+      case 8:
+        runtime.dispatch({ type: 'SET_VALVE', opening: SECOND_READING_VALVE });
+        runtime.dispatch({ type: 'BEGIN_READING', index: READING_FOR_STEP[9] });
+        break;
+      case 9:
+        runtime.dispatch({ type: 'END_READING' });
+        runtime.dispatch({ type: 'REMOVE_ALL_WEIGHTS' });
+        break;
+    }
 
-      switch (prev.currentStep) {
+    setLesson((prev) => {
+      const next: LessonAndUiState = { ...prev, warningMessage: null };
+      switch (step) {
         case 2:
           next.currentStep = 3;
           break;
         case 5:
-          next.isVolumetricValveOpen = true;
           next.currentStep = 6;
           break;
         case 6:
-          next.valveOpening = FIRST_READING_VALVE;
           next.currentStep = 7;
-          next.currentRecordIndex = 1;
           break;
         case 7:
           next.currentStep = 8;
-          next.currentRecordIndex = 2;
-          next.loadedWeightsG = [];
           break;
         case 8:
-          next.valveOpening = SECOND_READING_VALVE;
           next.currentStep = 9;
           break;
         case 9:
           next.currentStep = 10;
-          next.currentRecordIndex = 3;
-          next.loadedWeightsG = [];
           break;
         case 10:
           next.showMonitor = true;
@@ -269,48 +246,56 @@ export default function App() {
           next.currentStep = 12;
           break;
       }
-
-      next.notice = noticeFor(prev, prev.currentStep);
+      next.notice = noticeFor(prev.mode, step);
       return next;
     });
   };
 
   /** Step 11 — record F_ac in the table. */
   const handleCalculate = () => {
-    setState((prev) => ({
-      ...prev,
-      isCalculated: true,
-      ...(prev.mode === 'guided' && prev.currentStep === 11
-        ? { currentStep: 12, notice: noticeFor(prev, 11) }
-        : {}),
-    }));
+    runtime.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
+    setLesson((prev) =>
+      prev.mode === 'guided' && prev.currentStep === 11
+        ? { ...prev, currentStep: 12, notice: noticeFor(prev.mode, 11) }
+        : prev
+    );
   };
 
   const handleAnswerQuiz = (choice: number) =>
-    setState((prev) => ({ ...prev, quizAnswer: choice }));
+    setLesson((prev) => ({ ...prev, quizAnswer: choice }));
 
-  const handleToggleMonitor = () => {
-    clearWarning();
-    setState((prev) => ({
+  const handleToggleMonitor = () =>
+    setLesson((prev) => ({
       ...prev,
+      warningMessage: null,
       showMonitor: !prev.showMonitor,
       ...(prev.mode === 'guided' && prev.currentStep === 10 && !prev.showMonitor
         ? { currentStep: 11 }
         : {}),
     }));
-  };
 
-  const handleSetMode = (mode: SimulationState['mode']) =>
-    setState((prev) => ({ ...prev, mode, warningMessage: null, notice: null }));
+  const handleSetMode = (mode: Mode) =>
+    setLesson((prev) => ({ ...prev, mode, warningMessage: null, notice: null }));
 
   /** Switching experiment reloads the rig with that sheet's deflector. */
-  const handleSelectExperiment = (experimentId: ExperimentId) =>
-    setState((prev) => initialState(prev.language, experimentId));
+  const handleSelectExperiment = (experimentId: ExperimentId) => {
+    runtime.dispatch({ type: 'SELECT_EXPERIMENT', experimentId });
+    setLesson((prev) => initialLessonState(prev.language));
+  };
 
-  const handleSetParams = (params: Partial<SimulationState['params']>) =>
-    setState((prev) => ({ ...prev, params: { ...prev.params, ...params } }));
+  const handleSetParams = (params: { pumpFlowLMin?: number; customWeightG?: number }) => {
+    if (params.pumpFlowLMin !== undefined) {
+      runtime.dispatch({ type: 'SET_PUMP_FLOW', lPerMin: params.pumpFlowLMin });
+    }
+    if (params.customWeightG !== undefined) {
+      setLesson((prev) => ({ ...prev, customWeightG: params.customWeightG! }));
+    }
+  };
 
-  const handleReset = () => setState(initialState(state.language, state.experimentId));
+  const handleReset = () => {
+    runtime.reset();
+    setLesson((prev) => initialLessonState(prev.language));
+  };
 
   // The shell is mounted and interactive from here. See src/lib/readiness.ts.
   useEffect(() => markReady('app'), []);
@@ -334,13 +319,44 @@ export default function App() {
     };
   });
 
-  const deflector = getDeflector(state.selectedDeflectorId);
-  const deflectorName = state.language === 'ar' ? deflector.nameAr : deflector.nameEn;
+  /**
+   * What the components read.
+   *
+   * A projection of the two owners — the runtime for the rig, React for the lesson and the
+   * interface — assembled into the shape the components already expect. It is one-way and
+   * derived: nothing writes to it, so there is no second source of truth. `BEDO-019` and
+   * the UI work will let components read from the runtime directly and retire it.
+   */
+  const view: SimulationView = useMemo(
+    () => ({
+      mode: lesson.mode,
+      experimentId: simulation.experimentId,
+      currentStep: lesson.currentStep,
+      language: lesson.language,
+      selectedDeflectorId: simulation.apparatus.selectedDeflectorId,
+      isCoverOpen: simulation.apparatus.isCoverOpen,
+      isPowerOn: simulation.apparatus.isPowerOn,
+      valveOpening: simulation.apparatus.valveOpening,
+      loadedWeightsG: simulation.apparatus.loadedWeightsG,
+      isVolumetricValveOpen: simulation.apparatus.isVolumetricValveOpen,
+      recordedRows: readings,
+      showMonitor: lesson.showMonitor,
+      isCalculated: simulation.isActualForceRecorded,
+      quizAnswer: lesson.quizAnswer,
+      params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: lesson.customWeightG },
+      warningMessage: lesson.warningMessage,
+      notice: lesson.notice,
+    }),
+    [lesson, simulation, readings]
+  );
+
+  const deflector = getDeflector(simulation.apparatus.selectedDeflectorId);
+  const deflectorName = lesson.language === 'ar' ? deflector.nameAr : deflector.nameEn;
 
   return (
     <div className="app-container">
       <Scene3D
-        state={state}
+        state={view}
         steps={steps}
         sceneConfig={SCENE_CONFIG}
         onCoverClick={handleCoverClick}
@@ -352,11 +368,11 @@ export default function App() {
       />
 
       <UIOverlay
-        state={state}
+        state={view}
         steps={steps}
         experiment={experiment}
-        availableDeflectors={deflectorsFor(state.experimentId)}
-        onSelectLanguage={(lang) => setState((prev) => ({ ...prev, language: lang }))}
+        availableDeflectors={availableDeflectors}
+        onSelectLanguage={(lang) => setLesson((prev) => ({ ...prev, language: lang }))}
         onSetMode={handleSetMode}
         onSelectExperiment={handleSelectExperiment}
         onSetParams={handleSetParams}
@@ -373,9 +389,9 @@ export default function App() {
         onOkClick={handleStepOkClick}
       />
 
-      {state.showMonitor && (
+      {view.showMonitor && (
         <SoftwareMonitor
-          state={state}
+          state={view}
           experiment={experiment}
           deflectorName={deflectorName}
           onCalculate={handleCalculate}

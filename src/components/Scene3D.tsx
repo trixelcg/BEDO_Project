@@ -3,14 +3,14 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
-import type { SimulationState } from '../types/index';
+import type { SimulationView } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
 import type { AnchorKey } from '../domain/apparatus';
 import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
 import type { ExperimentStep } from '../domain/experiments';
 
 interface Scene3DProps {
-  state: SimulationState;
+  state: SimulationView;
   steps: ExperimentStep[];
   sceneConfig: SceneConfig;
   onCoverClick: () => void;

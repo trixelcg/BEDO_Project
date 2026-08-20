@@ -1,0 +1,136 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  click,
+  clickMesh,
+  coverState,
+  loadedWeightG,
+  renderApp,
+  stubConfigFetch,
+  walkLesson,
+} from '../helpers/app-harness';
+
+vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
+
+/**
+ * That React observes the runtime rather than keeping its own copy (BEDO-008 §27, §28).
+ *
+ * The failure this guards against is subtle and expensive: a migration that leaves two
+ * authoritative copies of the same field, drifting apart in the cases nobody clicks. So
+ * rather than inspecting internals, these drive the UI and check that the rig's condition
+ * and everything derived from it stay consistent across the seams — the panel, the 3D
+ * scene, the results table and the monitor all agreeing because they read one source.
+ */
+
+beforeEach(() => {
+  stubConfigFetch();
+  renderApp();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe('one source of truth', () => {
+  it('a 3D click and a panel click move the same rig', () => {
+    // The cover has no DOM control; the scene drives it. The panel's status line reads
+    // the same state back.
+    click('Free Mode');
+    expect(coverState()).toBe('Closed');
+
+    clickMesh('scene-cover');
+    expect(coverState()).toBe('Open');
+
+    clickMesh('scene-cover');
+    expect(coverState()).toBe('Closed');
+  });
+
+  it('weights added from the scene and from the panel land on one tray', () => {
+    click('Free Mode');
+    clickMesh('scene-weight-100'); // 3D
+    click('+50g'); //                 panel
+    expect(loadedWeightG()).toBe(150);
+
+    click('Clear all weights');
+    expect(loadedWeightG()).toBe(0);
+  });
+
+  it('the results table follows the tray without a second copy of the weights', () => {
+    walkLesson(1, 6); // through to the first balance step
+    click('+50g');
+    expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
+    click('+20g');
+    click('+10g');
+    expect(screen.getByText('Pointer balanced!')).toBeDefined();
+  });
+
+  it('a refused action changes nothing anywhere', () => {
+    click('Free Mode');
+    click(/Turn On Pump/);
+    const before = coverState();
+
+    clickMesh('scene-cover'); // refused: the pump is running
+
+    expect(coverState()).toBe(before);
+    expect(document.querySelector('.warning-popup')?.textContent).toContain(
+      'You can’t open the tank while the power is on.'
+    );
+  });
+
+  it('the monitor reads the same readings the panel is balancing', () => {
+    walkLesson(1, 11);
+    const rows = [...document.querySelectorAll('.data-table tbody tr')];
+    const mass = (row: number) => rows[row].querySelectorAll('td')[5].textContent;
+    expect(mass(1)).toBe('80');
+    expect(mass(2)).toBe('260');
+  });
+
+  it('reset returns the rig, the lesson and the table together', () => {
+    walkLesson(1, 6);
+    click('+50g');
+    expect(loadedWeightG()).toBe(50);
+
+    click('Reset simulator');
+
+    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 12');
+    expect(coverState()).toBe('Closed');
+    // The table is derived, so it resets with the rig rather than needing its own clear.
+    click('Free Mode');
+    click('Open Data Monitor');
+    const rows = [...document.querySelectorAll('.data-table tbody tr')];
+    expect(rows.map((r) => r.querySelectorAll('td')[5].textContent)).toEqual(['0', '0', '0', '0']);
+  });
+
+  it('switching experiment reloads the rig and the readings', () => {
+    walkLesson(1, 6);
+    click('+50g');
+
+    click('Experiments');
+    click('Exp. 3 — Conical surface deflector');
+    click('Steps');
+
+    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 12');
+    expect(coverState()).toBe('Closed');
+    // The conical sheet's deflector is on the rod, so step 2 names it.
+    clickMesh('scene-cover');
+    expect(screen.getByText(/Drag the Conical surface \(135°\) onto the rod/)).toBeDefined();
+  });
+
+  it('the pump-flow parameter reaches the physics through the runtime', () => {
+    click('Free Mode');
+    click('Parameters');
+    const slider = [...document.querySelectorAll('input[type="range"]')].find((input) =>
+      (input as HTMLInputElement).max === '200'
+    ) as HTMLInputElement;
+
+    // 60 L/min is half the default, so every flow figure halves.
+    fireEvent.change(slider, { target: { value: '60' } });
+
+    click('Steps');
+    click('Open Data Monitor');
+    const rows = [...document.querySelectorAll('.data-table tbody tr')];
+    expect(rows[1].querySelectorAll('td')[1].textContent).toBe('7.857'); // 15.714 / 2
+  });
+});

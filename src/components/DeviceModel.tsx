@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { SimulationState } from '../types/index';
+import type { SimulationView } from '../types/index';
 import {
   DEFLECTORS,
   MESH,
@@ -52,7 +52,7 @@ interface Hotspot {
 }
 
 interface DeviceModelProps {
-  state: SimulationState;
+  state: SimulationView;
   /** Part the current guided step is about — null in free mode. */
   focusTarget: AnchorKey | null;
   groupRef: React.RefObject<THREE.Group | null>;

@@ -18,6 +18,7 @@ import { REPO_ROOT } from '../helpers/glb';
  */
 
 const DOMAIN = path.join(REPO_ROOT, 'src', 'domain');
+const SIMULATION = path.join(REPO_ROOT, 'src', 'simulation');
 
 /** Packages and paths the domain must never reach for. */
 const FORBIDDEN = [
@@ -139,5 +140,77 @@ describe('the dependency direction', () => {
 
     const spring = await import('../../src/domain/spring');
     expect(spring.springDeflectionMm(0.8199, 0, 25.38)).toBeCloseTo(4.0995, 3);
+  });
+});
+
+/**
+ * The simulation layer's dependency rule (BEDO-008 §30).
+ *
+ * `src/simulation/` owns simulation state and may reach *down* into the domain. It may
+ * not reach sideways or up: no React, no store library, no renderer, no DOM. That is what
+ * makes the rig drivable from a test, a script, or a future Zustand store without any of
+ * them being installed.
+ */
+describe('src/simulation imports only the domain', () => {
+  const files = () => readdirSync(SIMULATION).filter((f) => f.endsWith('.ts'));
+
+  it('has the modules it is supposed to have', () => {
+    expect(files().sort()).toEqual(['runtime.ts', 'selectors.ts', 'state.ts']);
+  });
+
+  it.each(readdirSync(SIMULATION).filter((f) => f.endsWith('.ts')))(
+    '%s reaches only downwards',
+    (file) => {
+      const source = readFileSync(path.join(SIMULATION, file), 'utf8');
+      for (const specifier of imports(source)) {
+        for (const { pattern, why } of FORBIDDEN) {
+          // `../lib/` and `../types` are forbidden for the domain; for simulation the
+          // same rule holds, and `../domain/` is the one relative path allowed out.
+          if (pattern.source.includes('domain')) continue;
+          expect(
+            pattern.test(specifier),
+            `src/simulation/${file} imports "${specifier}" — ${why}`
+          ).toBe(false);
+        }
+        if (specifier.startsWith('.')) {
+          expect(
+            specifier.startsWith('../') && !specifier.startsWith('../domain/'),
+            `src/simulation/${file} imports "${specifier}", which is neither simulation nor domain`
+          ).toBe(false);
+        }
+      }
+    }
+  );
+
+  it.each(readdirSync(SIMULATION).filter((f) => f.endsWith('.ts')))(
+    '%s touches no browser global and stays deterministic',
+    (file) => {
+      const code = readFileSync(path.join(SIMULATION, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      for (const global of FORBIDDEN_GLOBALS) {
+        expect(code.includes(global), `src/simulation/${file} uses ${global}`).toBe(false);
+      }
+      expect(code).not.toMatch(/Math\.random\(|Date\.now\(|new Date\(/);
+    }
+  );
+
+  it('runs with no DOM present', async () => {
+    const { createSimulationRuntime } = await import('../../src/simulation/runtime');
+    const { selectReadings } = await import('../../src/simulation/selectors');
+
+    expect(typeof document).toBe('undefined');
+    const runtime = createSimulationRuntime();
+    runtime.dispatch({ type: 'POWER_ON' });
+    runtime.dispatch({ type: 'BEGIN_READING', index: 1 });
+    runtime.dispatch({ type: 'ADD_WEIGHT', massG: 80 });
+    expect(selectReadings(runtime.getState())[1].loadedMassG).toBe(80);
+  });
+
+  it('is not imported by the domain — the dependency runs one way', () => {
+    for (const file of domainFiles()) {
+      const source = readFileSync(path.join(DOMAIN, file), 'utf8');
+      expect(source, `src/domain/${file} imports the simulation`).not.toContain('simulation/');
+    }
   });
 });
