@@ -16,8 +16,11 @@ import { DEFLECTORS, WEIGHTS } from '../../src/domain/apparatus';
  * every guard are identical; only the animation is absent, and animation is what the
  * Playwright suite is for.
  *
- * Like the real hotspots, these are clickable at every step: 3D clicks are not gated by
- * the current step, only by the five safety guards in `App`.
+ * Like the real hotspots, these stay clickable at every step — a rig cannot hide a part.
+ * What happens next is `App`'s to decide: since `BEDO-020` every click here reaches the
+ * same interaction gate the panel's buttons reach, which answers the lesson's question and
+ * the apparatus's in that order. Before then, a click here went straight to the rig at any
+ * step, and that was `BUG-04`.
  *
  * Nothing here is imported by the application.
  */

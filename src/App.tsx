@@ -4,8 +4,8 @@ import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
 import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
-import type { RejectionReason } from './domain/stateMachine';
-import { REJECTION_PRESENTATION } from './lib/apparatusGate';
+import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
+import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparatusGate';
 import { getDeflector } from './domain/apparatus';
 import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
 import { markReady } from './lib/readiness';
@@ -19,7 +19,13 @@ import {
   selectExperiment,
   selectReadings,
 } from './simulation/selectors';
-import type { SimulationCommand } from './simulation/runtime';
+import {
+  availableAffordances,
+  evaluateInteraction,
+  type Interaction,
+  type InteractionDecision,
+  type LessonBlockReason,
+} from './interaction/gate';
 import { FIRST_READING_VALVE, VALVE_SNAP_MARGIN } from './domain/physics';
 import './index.css';
 
@@ -94,6 +100,21 @@ export default function App() {
   }, []);
 
   /**
+   * What the learner sees when the *lesson* refuses.
+   *
+   * A blue notice, never the red safety banner — `BEDO-020 §10` requires the two stay
+   * distinguishable, and nothing unsafe has happened.
+   */
+  const showLessonBlock = useCallback((reason: LessonBlockReason) => {
+    const presentation = LESSON_BLOCK_PRESENTATION[reason];
+    setUi((prev) => ({
+      ...prev,
+      warningMessage: null,
+      notice: { en: presentation.en, ar: presentation.ar },
+    }));
+  }, []);
+
+  /**
    * Applies whatever a finished step asks for: its simulation commands, and the
    * observation popup the experiment sheet specifies.
    *
@@ -121,34 +142,73 @@ export default function App() {
   );
 
   /**
-   * Sends a command to the simulation, then tells the lesson what happened.
+   * **The one way a learner interaction reaches the simulation.**
    *
-   * The simulation decides whether the rig allows it; the lesson decides whether that was
-   * the step's action. Neither asks the other's question.
+   * Every control — the 2D panel's buttons and the 3D scene's hotspots alike — arrives
+   * here, and here is the only place that decides. That is the whole of `BUG-04`: the
+   * panel used to enforce the lesson by hiding its buttons, which the scene could not do
+   * and did not do, so the same click meant different things on the two surfaces.
+   *
+   * The gate answers first, and only then does anything change:
+   *
+   *   1. gate (apparatus legality, then lesson legality — `src/interaction/gate.ts`)
+   *   2. commit to the simulation
+   *   3. tell the lesson what happened
+   *   4. feedback
+   *
+   * A refused interaction returns before step 2, so `BEDO-020 §12` holds by construction:
+   * nothing is committed, nothing advances, and there is no partial mutation to undo.
    */
-  const dispatch = useCallback(
-    (command: SimulationCommand, expectation?: LessonExpectation['type']) => {
-      const result = runtime.dispatch(command);
-      if (!result.ok) {
-        showRejection(result.reason);
-        return result;
+  const interact = useCallback(
+    (interaction: Interaction, expectation?: LessonExpectation['type']): boolean => {
+      const decision: InteractionDecision = evaluateInteraction({
+        interaction,
+        apparatus: runtime.getState().apparatus,
+        step: runner.getCurrentStep(),
+        lesson: CURRENT_LESSON,
+        mode: runner.getState().mode,
+      });
+
+      if (!decision.allowed) {
+        if (decision.blockedBy === 'apparatus') showRejection(decision.reason);
+        else showLessonBlock(decision.reason);
+        return false;
       }
+
+      if (interaction.kind === 'apparatus') {
+        const result = runtime.dispatch(interaction.action);
+        // The gate already asked `attempt()` and the runtime asks it again. Both are the
+        // same pure function on the same state, so this cannot fire — it is here because
+        // the runtime, not the gate, is the authority on what the rig accepted.
+        if (!result.ok) {
+          showRejection(result.reason);
+          return false;
+        }
+      }
+
       setUi((prev) => ({ ...prev, warningMessage: null }));
       if (expectation) {
         // The runner reads the state *after* the command, which is why this is not done
         // from the memoised context above.
         applyAdvance(runner.notify(expectation, { simulation: runtime.getState(), readings: selectReadings(runtime.getState()) }));
       }
-      return result;
+      return true;
     },
-    [runtime, runner, showRejection, applyAdvance]
+    [runtime, runner, showRejection, showLessonBlock, applyAdvance]
+  );
+
+  /** Shorthand for the common case: an apparatus intent. */
+  const act = useCallback(
+    (action: ApparatusAction, expectation?: LessonExpectation['type']) =>
+      interact({ kind: 'apparatus', action }, expectation),
+    [interact]
   );
 
   // --- Cover -------------------------------------------------------------------
   const handleCoverClick = () => {
     // One control, two intents: which one a click means depends on where the plate is.
     const wasOpen = runtime.getState().apparatus.isCoverOpen;
-    dispatch(
+    act(
       wasOpen ? { type: 'CLOSE_COVER' } : { type: 'OPEN_COVER' },
       wasOpen ? 'CLOSE_COVER' : 'OPEN_COVER'
     );
@@ -156,17 +216,17 @@ export default function App() {
 
   // --- Deflector ---------------------------------------------------------------
   const handleSelectDeflector = (id: number) =>
-    dispatch({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
+    act({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
 
   // --- Power -------------------------------------------------------------------
   const handleTogglePower = () => {
     const wasOn = runtime.getState().apparatus.isPowerOn;
-    dispatch(wasOn ? { type: 'POWER_OFF' } : { type: 'POWER_ON' }, wasOn ? undefined : 'POWER_ON');
+    act(wasOn ? { type: 'POWER_OFF' } : { type: 'POWER_ON' }, wasOn ? undefined : 'POWER_ON');
   };
 
   // --- Volumetric valve --------------------------------------------------------
   const handleToggleVolumetricValve = () =>
-    dispatch(
+    act(
       runtime.getState().apparatus.isVolumetricValveOpen
         ? { type: 'CLOSE_VOLUMETRIC_VALVE' }
         : { type: 'OPEN_VOLUMETRIC_VALVE' },
@@ -199,22 +259,34 @@ export default function App() {
     const setpoint = currentSetpoint();
     const opening =
       setpoint !== null && value >= setpoint - VALVE_SNAP_MARGIN ? setpoint : value;
-    dispatch({ type: 'SET_VALVE', opening }, 'SET_VALVE');
+    act({ type: 'SET_VALVE', opening }, 'SET_VALVE');
   };
 
   const handleFlowValveClick = () => handleSetValve(currentSetpoint() ?? FIRST_READING_VALVE);
 
   // --- Weights -----------------------------------------------------------------
   const handleAddWeight = (weight: number) =>
-    dispatch({ type: 'ADD_WEIGHT', massG: weight }, 'ADD_WEIGHT');
+    act({ type: 'ADD_WEIGHT', massG: weight }, 'ADD_WEIGHT');
 
-  const handleClearWeights = () => dispatch({ type: 'REMOVE_ALL_WEIGHTS' });
+  const handleClearWeights = () => act({ type: 'REMOVE_ALL_WEIGHTS' });
 
   // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => applyAdvance(runner.confirm(context));
 
-  const handleCalculate = () =>
-    dispatch({ type: 'RECORD_ACTUAL_FORCE' }, 'RECORD_ACTUAL_FORCE');
+  /**
+   * Calculate, inside the monitor. A screen action, so no apparatus rule applies — but the
+   * lesson still governs when it is available, through the same gate.
+   */
+  const handleCalculate = () => {
+    if (!interact({ kind: 'presentation', action: 'RECORD_ACTUAL_FORCE' })) return;
+    runtime.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
+    applyAdvance(
+      runner.notify('RECORD_ACTUAL_FORCE', {
+        simulation: runtime.getState(),
+        readings: selectReadings(runtime.getState()),
+      })
+    );
+  };
 
   const handleAnswerQuiz = (choice: number) => setUi((prev) => ({ ...prev, quizAnswer: choice }));
 
@@ -226,14 +298,21 @@ export default function App() {
    * the lesson rather than inside it.
    */
   const handleOpenAnswerSheet = () => {
+    if (!interact({ kind: 'presentation', action: 'OPEN_ANSWER_SHEET' })) return;
     setUi((prev) => ({ ...prev, showAnswerSheet: true }));
     applyAdvance(runner.notify('OPEN_ANSWER_SHEET', context));
   };
 
   const handleCloseAnswerSheet = () => setUi((prev) => ({ ...prev, showAnswerSheet: false }));
 
+  /**
+   * Only *opening* the monitor is gated. Closing a fullscreen overlay must always work —
+   * an overlay you cannot dismiss is the shape of the video-modal defect, and BEDO-019
+   * went to some trouble not to reproduce it.
+   */
   const handleToggleMonitor = () => {
     const opening = !ui.showMonitor;
+    if (opening && !interact({ kind: 'presentation', action: 'OPEN_MONITOR' })) return;
     setUi((prev) => ({ ...prev, warningMessage: null, showMonitor: opening }));
     if (opening) applyAdvance(runner.notify('OPEN_MONITOR', context));
   };
@@ -310,6 +389,9 @@ export default function App() {
       // The step's own controls, plus the ones available at any point — the volumetric
       // valve, which is part of the rig but not part of the procedure.
       panelControls: [...currentStep.panelControls, ...(CURRENT_LESSON.alwaysAvailable ?? [])],
+      // What the gate will accept, handed to the scene so a blocked hotspot need not
+      // re-derive the policy — and so an always-available one is not drawn as dead.
+      available: [...availableAffordances(CURRENT_LESSON, currentStep, lessonState.mode)],
       hasInstalledDeflector: runner.hasReached('install-deflector'),
       activeReadingIndex: simulation.activeReadingIndex,
       isComplete: lessonState.isComplete,
@@ -317,6 +399,7 @@ export default function App() {
     }),
     [
       isGuided,
+      lessonState.mode,
       currentStep,
       steps,
       runner,

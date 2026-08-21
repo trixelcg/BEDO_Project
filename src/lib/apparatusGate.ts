@@ -16,6 +16,7 @@
  */
 
 import type { RejectionReason } from '../domain/stateMachine';
+import type { LessonBlockReason } from '../interaction/gate';
 import type { ErrorCode } from '../types/index';
 
 /** How a refusal is presented, and the copy it carries. */
@@ -70,5 +71,24 @@ export const REJECTION_PRESENTATION: Record<RejectionReason, RejectionPresentati
     severity: 'notice',
     en: 'Turn on the power switch before opening the valve.',
     ar: 'يرجى تشغيل مفتاح الطاقة قبل فتح الصمام.',
+  },
+};
+
+/**
+ * What a *lesson* refusal looks like.
+ *
+ * BEDO-020 introduced a second way for an interaction to be refused — the rig would allow
+ * it, but the guided procedure is somewhere else — and `BEDO-020 §10` requires it stay
+ * distinguishable from the five safety guards. It is presented as a blue notice, not a red
+ * warning: nothing unsafe happened, the learner is simply ahead of or behind the step.
+ *
+ * One sentence, not one per step. `BEDO-020 §11` is explicit that the full feedback system
+ * is a later task; this exists so a blocked click reads as "not yet" rather than as a dead
+ * control, and the typed `LessonBlockReason` is what that later system will consume.
+ */
+export const LESSON_BLOCK_PRESENTATION: Record<LessonBlockReason, { en: string; ar: string }> = {
+  NOT_EXPECTED_IN_CURRENT_STEP: {
+    en: 'Follow the highlighted step first.',
+    ar: 'يرجى اتباع الخطوة الحالية أولاً.',
   },
 };

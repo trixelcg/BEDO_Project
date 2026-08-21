@@ -2,6 +2,7 @@ import type { RecordRow } from '../domain/physics';
 import type { ExperimentId, ExperimentStep, StepId } from '../domain/experiments';
 import type { AnchorKey } from '../domain/apparatus';
 import type { HighlightKey, PanelControl } from '../lesson/schema';
+import type { InteractionAffordance } from '../interaction/gate';
 
 export type Language = 'en' | 'ar';
 
@@ -56,6 +57,14 @@ export interface LessonView {
   highlight: readonly HighlightKey[];
   /** Panel sections to show. */
   panelControls: readonly PanelControl[];
+  /**
+   * What the interaction gate will accept right now — everything in free mode.
+   *
+   * Not the same as `highlight`: the step's highlight is what the learner is being *asked*
+   * for, and this is what they are *allowed*. The volumetric valve is in the second and
+   * not the first. See `src/interaction/gate.ts`.
+   */
+  available: readonly InteractionAffordance[];
   /** The lesson has passed the step that installs the deflector. */
   hasInstalledDeflector: boolean;
   /** Which results row is being balanced, if any. */

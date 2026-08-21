@@ -700,6 +700,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [lesson.isGuided, lesson.highlight, state.showMonitor]);
 
   /**
+   * Parts the interaction gate will actually accept a click on.
+   *
+   * A different question from `liveKeys`, which is what the *step* is asking for and so
+   * drives the pulse and the arrow. This is what is *permitted*, and the two differ by
+   * exactly the always-available affordances: since `BEDO-019` the volumetric valve is
+   * operable at every step while being asked for at none, and before `BEDO-020` the scene
+   * had no way to say so — it drew the valve with a default cursor and dispatched anyway.
+   *
+   * The set comes from the gate (`lesson.available`); this component does not work out
+   * legality, it is only told the answer.
+   */
+  const actionableKeys = useMemo<Set<string>>(() => {
+    if (state.showMonitor) return new Set();
+    const parts: Record<string, string[]> = {
+      cover: [MESH.tankCover],
+      deflectors: DEFLECTORS.map((d) => d.shelf),
+      power: [MESH.powerSwitch],
+      volumetricValve: [MESH.volumetricValve],
+      flowValve: [MESH.flowValve],
+      weights: WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!),
+    };
+    return new Set(lesson.available.flatMap((key) => parts[key] ?? []));
+  }, [lesson.available, state.showMonitor]);
+
+  /**
    * Where the guide arrow floats — null in free mode, or once the step is satisfied.
    *
    * "Satisfied" is the lesson runner's answer now. This component used to decide it here
@@ -729,6 +754,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // Let App raise its safety warning rather than playing an unscrew that
         // would be rejected the moment it finishes.
         if (state.isPowerOn || state.loadedWeightsG.length > 0) {
+          onCoverClick();
+          return;
+        }
+        // The plate lifts here and the app is told when the animation ends, so a click
+        // the gate will refuse must not start it — otherwise the cover rises for a second
+        // and drops back, which is the "moves then snaps back" failure BEDO-020 §12 names.
+        // The click is still forwarded, so the learner gets the lesson's notice; only the
+        // animation is withheld. This is not the component deciding legality — the gate
+        // decided, and handed the answer down as `lesson.available`.
+        if (!actionableKeys.has(MESH.tankCover)) {
           onCoverClick();
           return;
         }
@@ -1180,7 +1215,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           position={h.position}
           onPointerOver={(e) => {
             e.stopPropagation();
-            if (liveKeys.has(h.key)) {
+            // Actionability, not focus: a hotspot the gate would refuse must not offer
+            // the same pointer as one it would accept (BEDO-020 §24).
+            if (actionableKeys.has(h.key)) {
               document.body.style.cursor = 'pointer';
               setHoveredKey(h.key);
             }

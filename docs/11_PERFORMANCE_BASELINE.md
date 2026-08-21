@@ -226,6 +226,7 @@ Append one row per optimisation task. Re‑measure with §1's exact procedure.
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026‑08‑20 | `2471bc9` | **BASELINE** | 769 | 217 055 | 22 | 764 MB | 26 MB | 95 MB | 15–20 s | frozen reference |
 | 2026‑08‑20 | `phase2/security-remediation` | BEDO‑002 (measurement only) | 769 | 217 055 | 22 | 764.45 MB | 25.92 MB | 95.28 MB | 22.2 s | `scripts/perf-baseline.mjs`, headless Playwright/SwiftShader. GPU counters reproduce the baseline exactly; timings are **not** comparable to the row above (no GPU) — 1.3 fps, `scene-ready` mark at 22 180 ms. No optimisation attempted. |
+| 2026‑08‑21 | `phase2/security-remediation` | BEDO‑020 (gate) | 769 | 217 055 | 22 | 764.45 MB | 25.92 MB | 57.25 MB | 22.6 s | Interaction gating is a pure function called on click. GPU counters identical to the baseline; scene fingerprint identical in all ten sections; boot still 15 requests. `dist/` reflects BEDO‑004's cleanup and BEDO‑019's worksheets, not this task (+4 KB). |
 | | | | | | | | | | | |
 
 ---

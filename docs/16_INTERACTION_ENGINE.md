@@ -3,6 +3,11 @@
 **Principle:** interaction emits **intent**. It never decides whether the intent is legal. One contract for
 every interactable; no per-mesh bespoke handlers.
 
+> **Partly implemented.** `BEDO-020` built the **gate** at the bottom of this pipeline — the single policy
+> every 2D control and every 3D hotspot now asks — and closed `BUG-04`. See `docs/36`. What remains is the
+> input half: the affordance registry, gesture recognition, hit geometry, drag-and-drop and keyboard parity.
+> Section 9 below records the split precisely.
+
 ---
 
 ## 1. What is wrong today
@@ -10,13 +15,15 @@ every interactable; no per-mesh bespoke handlers.
 - 15 invisible spheres, sized by one clamped heuristic (`radius = clamp(bbox·0.6/scale, min, 0.18)`), sit in
   front of the model. The cover's clamps to 0.18 model units ≈ **0.32 m world**, large enough to swallow
   clicks meant for the rod, pointer or deflectors behind it.
-- `onPointerOver` checks `liveKeys`; **`onClick` does not** (`DeviceModel.tsx:1172‑1186`). Guided gating is
-  therefore cosmetic, and a two-click dead end is reachable (`BUG‑04`).
+- ~~`onPointerOver` checks `liveKeys`; **`onClick` does not** (`DeviceModel.tsx:1172‑1186`). Guided gating is
+  therefore cosmetic, and a two-click dead end is reachable (`BUG‑04`).~~ **Fixed by `BEDO-020`:** every click
+  passes `evaluateInteraction()` before anything is committed, and the cursor now reads the gate's answer
+  rather than the step's highlight, so an always-available part is no longer drawn as dead. `docs/36 §8`.
 - `document.body.style.cursor` is mutated globally and can stick on `pointer` forever (`BUG‑18`).
 - Hidden tray weights keep firing, so the student can add discs that visibly do not exist (`BUG‑19`).
 - The only interaction verb is *click*. The evaluation document's second complaint is precisely
   *"relies solely on basic clicks, lacking essential features like drag-and-drop"*.
-- No keyboard path at all, and two of the twelve steps have no DOM equivalent (`UX‑04`).
+- No keyboard path at all, and two of the eleven steps have no DOM equivalent (`UX‑04`).
 
 ---
 
@@ -77,6 +84,21 @@ pointer / keyboard / DOM control
 ```
 
 **Exactly one gate**, consulted by every input path. The DOM button and the 3D mesh cannot diverge.
+
+**This part exists** (`BEDO-020`). The pipeline above is drawn with the lesson gate first; the implementation
+asks the apparatus first, and `docs/36 §5` gives the reasoning — `attempt()` is pure, so the order costs
+nothing, and the safety guard is the more useful sentence when both would refuse. The implemented shape is:
+
+```
+2D control / 3D hotspot → App.interact(interaction)
+                            → evaluateInteraction({interaction, apparatus, step, lesson, mode})
+                                 ├── apparatus legality  → RejectionReason      (red banner)
+                                 └── lesson legality     → LessonBlockReason    (blue notice)
+                            → runtime.dispatch(...)  → runner.notify(...)
+```
+
+`Intent` in this document is `Interaction` in the code, and it is already a semantic intent rather than an
+event — which is what lets the gesture layer below be added without the policy changing.
 
 ---
 
@@ -164,3 +186,27 @@ Every affordance is mirrored by a DOM control in `ui/controls/`, so the canvas i
 | `intent.spec.ts` | Each gesture maps to the expected intent; drag and click produce the *same* intent |
 | `parity.spec.ts` | **Every apparatus action is reachable from the DOM** — enumerates affordances and asserts a matching control exists. This is the `UX‑04` regression guard. |
 | `hitshape.spec.ts` | Overlap resolution picks the smallest volume; disabled affordances are unregistered |
+
+
+---
+
+## 9. Implementation status
+
+| Piece | Status |
+|---|---|
+| **One gate for every input path** | **done** — `src/interaction/gate.ts`, `BEDO-020`, `docs/36` |
+| Lesson vs apparatus legality kept separate | **done** — distinct reason types, distinct presentation |
+| Guided / Free policy | **done** |
+| Always-available affordances | **done** — read from `Lesson.alwaysAvailable`, nothing hardcoded |
+| Semantic intents (not events) | **done** — the gate takes an `Interaction`, never a gesture |
+| Actionable vs asked-for, exposed to the scene | **done** — `LessonView.available` |
+| Coaching feedback on a blocked intent | **minimal** — one typed reason, one sentence, bilingual. The toast/audio/animation system is still a separate task. |
+| `Affordance` registry (§2) | not started |
+| `GestureRecogniser`, drag-and-drop (§4) | not started — every input is a discrete setpoint today |
+| Hit geometry (§5) | not started — still the clamped-sphere heuristic |
+| Cursor on the canvas rather than `document.body` (§6, `BUG‑18`) | not started |
+| Keyboard parity (§7) | not started |
+
+The gating tests in §8's table now exist as `tests/unit/interaction-gate.spec.ts` and
+`tests/integration/interaction-gate.spec.tsx`, including the `BUG‑04` regression described there. The
+`affordance`, `intent`, `parity` and `hitshape` suites await the input layer.

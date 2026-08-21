@@ -172,6 +172,42 @@ test.describe('guided walkthrough', () => {
     await expect(okButton(page)).toBeVisible();
   });
 
+  /**
+   * BUG-04, in a real browser (BEDO-020 §28).
+   *
+   * The tank cover is the one affordance that exists only as a mesh, so pressing it is a
+   * genuine 3D interaction — the same handler the hotspot calls, reached without guessing
+   * a coordinate inside the canvas. At step 2 closing it again is mechanically fine and
+   * simply not what the step is asking for, which is exactly the case that used to slip
+   * through.
+   */
+  test('refuses a wrong-step 3D interaction, then carries on', async ({ page }) => {
+    await openApp(page);
+
+    await pressCover(page);
+    await expectStep(page, 2);
+    await expect(sidebar(page).getByText('Open', { exact: true })).toBeVisible();
+
+    // Wrong step. The rig would allow it; the lesson does not.
+    await pressCover(page);
+    await expect(page.locator('.warning-popup')).toContainText('Follow the highlighted step first.');
+    await expectStep(page, 2);
+    await expect(sidebar(page).getByText('Open', { exact: true })).toBeVisible();
+    await dismissPopup(page);
+
+    // The valve is always available, so it is *not* refused here — and does not advance.
+    await button(page, 'Open volumetric valve').click();
+    await expectStep(page, 2);
+
+    // And the lesson continues normally from the step it was always on.
+    await button(page, 'Flat surface (90°)').click();
+    await confirmStep(page);
+    await expectStep(page, 3);
+    await pressCover(page);
+    await expectStep(page, 4);
+    await expect(sidebar(page).getByText('Closed', { exact: true })).toBeVisible();
+  });
+
   test('refuses an unsafe action and says why', async ({ page }) => {
     await openApp(page);
     await pressCover(page);

@@ -336,3 +336,117 @@ describe('lesson progression is semantic', () => {
     }
   });
 });
+
+/**
+ * The interaction gate's boundary, and the no-bypass audit (BEDO-020 §2, §29).
+ *
+ * `BUG-04` existed because two surfaces reached the simulation by two paths and only one
+ * of them consulted the lesson. The fix is worth exactly as much as the guarantee that a
+ * third path cannot appear, so this is the ratchet: components are handed callbacks, never
+ * the runtime, and `App` is the only module allowed to commit a command.
+ */
+describe('src/interaction is a pure policy layer', () => {
+  const INTERACTION = path.join(REPO_ROOT, 'src', 'interaction');
+
+  it('has the modules it is supposed to have', () => {
+    expect(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')).sort()).toEqual(['gate.ts']);
+  });
+
+  it.each(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')))(
+    '%s imports no framework, renderer or DOM',
+    (file) => {
+      const source = readFileSync(path.join(INTERACTION, file), 'utf8');
+      for (const specifier of imports(source)) {
+        for (const { pattern, why } of FORBIDDEN) {
+          if (pattern.source.includes('domain')) continue;
+          expect(
+            pattern.test(specifier),
+            `src/interaction/${file} imports "${specifier}" — ${why}`
+          ).toBe(false);
+        }
+        if (specifier.startsWith('.')) {
+          const allowed =
+            !specifier.startsWith('../') ||
+            specifier.startsWith('../domain/') ||
+            specifier.startsWith('../simulation/') ||
+            specifier.startsWith('../lesson/');
+          expect(
+            allowed,
+            `src/interaction/${file} imports "${specifier}", which is out of bounds`
+          ).toBe(true);
+        }
+      }
+    }
+  );
+
+  it.each(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')))(
+    '%s touches no browser global and stays deterministic',
+    (file) => {
+      const code = readFileSync(path.join(INTERACTION, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      for (const global of FORBIDDEN_GLOBALS) {
+        expect(code.includes(global), `src/interaction/${file} uses ${global}`).toBe(false);
+      }
+      expect(code).not.toMatch(/Math\.random\(|Date\.now\(|new Date\(/);
+    }
+  );
+});
+
+describe('nothing bypasses the interaction gate', () => {
+  const strip = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  const componentFiles = readdirSync(path.join(REPO_ROOT, 'src', 'components')).filter((f) =>
+    /\.tsx?$/.test(f)
+  );
+
+  it.each(componentFiles)('%s never holds the simulation runtime', (file) => {
+    const code = strip(readFileSync(path.join(REPO_ROOT, 'src', 'components', file), 'utf8'));
+    // A component that can reach `runtime.dispatch` can reach the rig without asking
+    // anyone. They receive callbacks from `App` instead — which is why the mock scene in
+    // the integration suite is a faithful stand-in for the real hotspots.
+    expect(code, `${file} imports the runtime`).not.toMatch(
+      /from '\.\.\/simulation\/runtime'|useSimulationRuntime|createSimulationRuntime/
+    );
+    expect(code, `${file} dispatches a simulation command`).not.toMatch(/\.dispatch\s*\(/);
+  });
+
+  it('App commits a command in only the places that have been audited', () => {
+    const code = strip(readFileSync(path.join(REPO_ROOT, 'src', 'App.tsx'), 'utf8'));
+    const sites = code.match(/runtime\.dispatch\s*\(/g) ?? [];
+    // 1. inside `interact`, after the gate has answered — the authorised commit point
+    // 2. `applyAdvance`, replaying the commands a *finished step* asks for (the lesson is
+    //    the author of those, not the learner)
+    // 3. `handleCalculate`, immediately after `interact` returned true
+    // 4. `SELECT_EXPERIMENT` — session setup, resets the lesson, not an apparatus action
+    // 5. `SET_PUMP_FLOW` — a Custom Parameters value, likewise not an apparatus action
+    // Each is recorded in `docs/36 §9`. If this number moves, the new call site needs an
+    // entry there before this expectation is updated.
+    expect(sites.length).toBe(5);
+  });
+
+  it('never commits an apparatus intent without the gate', () => {
+    const code = strip(readFileSync(path.join(REPO_ROOT, 'src', 'App.tsx'), 'utf8'));
+    const APPARATUS_INTENTS = [
+      'OPEN_COVER',
+      'CLOSE_COVER',
+      'POWER_ON',
+      'POWER_OFF',
+      'SET_VALVE',
+      'OPEN_VOLUMETRIC_VALVE',
+      'CLOSE_VOLUMETRIC_VALVE',
+      'SELECT_DEFLECTOR',
+      'ADD_WEIGHT',
+      'REMOVE_ALL_WEIGHTS',
+    ];
+    for (const intent of APPARATUS_INTENTS) {
+      // The gate's whole value is that there is no second way in. A literal apparatus
+      // command handed straight to the runtime is that second way.
+      expect(
+        code,
+        `App.tsx dispatches ${intent} directly instead of through the gate`
+      ).not.toMatch(new RegExp(`runtime\\.dispatch\\(\\s*\\{\\s*type: '${intent}'`));
+    }
+  });
+});

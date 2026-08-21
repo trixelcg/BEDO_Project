@@ -77,6 +77,23 @@ test('a guard message renders right-to-left in Arabic and left-to-right in Engli
   await expect(page.locator('.ui-container')).not.toHaveClass(/rtl/);
 });
 
+test('a lesson refusal is bilingual too, and is not the safety banner', async ({ page }) => {
+  // BEDO-020 §10: the two refusals must stay distinguishable in both languages. This one
+  // is a notice — nothing unsafe happened, the learner is simply off the current step.
+  await openApp(page);
+  await button(page, 'العربية').click();
+  await pressCover(page); // step 1's own action, in Arabic
+  await pressCover(page); // and again, which step 2 is not asking for
+
+  const arabicPopup = popup(page);
+  await expect(arabicPopup).toContainText('يرجى اتباع الخطوة الحالية أولاً.');
+  await expect(arabicPopup).toHaveClass(/rtl/);
+  await expect(arabicPopup).toHaveCSS('direction', 'rtl');
+
+  await button(page, 'English').click();
+  await expect(popup(page)).toContainText('Follow the highlighted step first.');
+});
+
 test('the software monitor opens in Arabic', async ({ page }) => {
   await openApp(page);
   await button(page, 'العربية').click();

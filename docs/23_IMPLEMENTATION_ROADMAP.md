@@ -27,7 +27,7 @@ Week  2  ░ BEDO-005..007 domain core        ║ ASSET TRACK  BEDO-030..033
 Week  3  ░ BEDO-008..010 simulation runtime ║ (parallel, DCC + gltf-transform)
 Week  4  ░ BEDO-011..013 loading + scene foundations
 Week  5  ░ BEDO-014..017 draw calls, coordinate correctness  ← P1 visual defects
-Week  6  ░ BEDO-018..023 lesson engine + interaction
+Week  6  ✅ BEDO-018..020 lesson engine + gate  │ ░ BEDO-021..023 interaction
 Week  7  ░ BEDO-024..027 camera + UI shell
 Week  8  ░ BEDO-028..031 rendering quality + audio/feedback
 Week  9  ░ BEDO-032..035 accessibility + i18n
@@ -319,13 +319,28 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   renumbering. Scene fingerprint identical; draw calls 769 unchanged; 585 tests green. Twelve baseline
   expectations were changed deliberately, each recorded with its evidence in `docs/35 §8`.
 
-### ☐ BEDO‑020 — Interaction engine + single gate `P1`
-- **Objective** Affordance registry with mandatory `a11y` descriptors; gesture recogniser; intent bus; **one** gate.
-- **Reason** `BUG‑04` (clicks bypass gating → two-click dead end), `BUG‑18` (sticky cursor), `BUG‑19` (invisible clickables), `ARCH‑07`.
-- **Affected** `src/interaction/**` (new), `DeviceModel.tsx:1167‑1191`.
-- **Dependencies** BEDO‑014, BEDO‑018 · **Risks** medium.
-- **Acceptance** disallowed intents never dispatch and always produce coaching feedback.
-- **Tests** `gating.spec.ts`, `hitshape.spec.ts`.
+### ✅ BEDO‑020 — Unified lesson & apparatus interaction gate `P1`
+- **Objective** **One** gate, consulted by every 2D control and every 3D hotspot.
+- **Reason** `BUG‑04` (clicks bypass gating), `ARCH‑07`.
+- **Affected** `src/interaction/gate.ts` (new), `App.tsx`, `DeviceModel.tsx`, `lib/apparatusGate.ts`.
+- **Dependencies** BEDO‑018 · **Risks** medium.
+- **Acceptance** disallowed intents never dispatch and always produce feedback.
+- **Tests** `interaction-gate.spec.ts`, `interaction-gate.spec.tsx`, `domain-boundary.spec.ts`.
+- **Status** ✅ Complete. **`BUG‑04` is closed.** `evaluateInteraction()` — pure, framework-free — is the one
+  policy both surfaces ask, and `App.interact` is the only path from a learner's intent to the runtime; a
+  boundary test fails if a sixth `runtime.dispatch` call site appears or if any component acquires the
+  runtime. It reasons in **affordances** read from the step's own `highlight`/`panelControls`, so no step
+  number, button id or mesh name appears in the policy, and the volumetric valve stays available at all
+  eleven steps from `Lesson.alwaysAvailable` without being named. Lesson refusals
+  (`NOT_EXPECTED_IN_CURRENT_STEP`, blue notice) and apparatus refusals (the five guards, red banner) stay
+  disjoint; the apparatus is asked **first** because `attempt()` is pure and its message is the more useful
+  one — `docs/36 §5`. The scene now separates *actionable* from *asked for*, which fixes the valve's dead
+  cursor and stops a blocked cover from playing its unscrew and snapping back. Scene fingerprint identical;
+  769 draw calls unchanged; +2.3 kB of JS. **All 574 pre-existing tests pass unedited**; 650 green in total.
+  Detail: `docs/36`.
+
+  Still open from `docs/16`, now split out: the affordance registry, gesture recogniser, hit geometry
+  (`BUG‑19`), canvas cursor (`BUG‑18`) and keyboard parity (`UX‑04`) — the *input* half of the engine.
 
 ### ☐ BEDO‑021 — Drag-and-drop + 2 s transfers `P1`
 - **Objective** `transferable` affordance supporting click→2 s move, pointer drag with ghost + drop target, and keyboard pick-up/put-down.
@@ -519,7 +534,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `BUG‑01`/`UX‑01` black screen | BEDO‑011 + 032/033 |
 | `BUG‑02` weights 2.18 m off | **BEDO‑016** |
 | `BUG‑03` jet 18× too wide | **BEDO‑017** |
-| `BUG‑04` gating bypass | BEDO‑020 — apparatus safety gated in ✅ BEDO‑006, knowledge duplication removed in ✅ BEDO‑018; **only the gating itself remains** |
+| `BUG‑04` gating bypass | ✅ BEDO‑020 — one gate for both surfaces (`docs/36`) |
 | `BUG‑05` cross-experiment deflector | BEDO‑022 |
 | `BUG‑06` Free mode records nothing | BEDO‑023 |
 | `BUG‑07`/`08`/`10`/`11`/`12` UI/CSS | BEDO‑025, 026 |
