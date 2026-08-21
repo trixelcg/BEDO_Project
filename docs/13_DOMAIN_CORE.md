@@ -106,6 +106,7 @@ src/domain/                   ← pure: no React, no three.js, no DOM, determini
 │                             · JetState · RecordRow
 ├── apparatus.ts              DEFLECTORS · WEIGHTS · WATER_SHAPES · MESH · AnchorKey
 └── experiments.ts            EXPERIMENTS · buildSteps · ExperimentId · TOTAL_STEPS
+                              · isDeflectorInScope  ← the experiment→deflector authority
 ```
 
 Still to come: `spring.ts` (§4, `BEDO‑007`) and `stateMachine.ts` (§5, `BEDO‑006`).
@@ -260,6 +261,7 @@ fixed:** 3D clicks still bypass *lesson* gating, which needs the lesson runner (
 | `physics.spec.ts` | All six `Q(n)` rows to 1e-9; `v₀`, `v` at n = 0.4 and 0.5; `F_th` for all seven deflectors; the `Fo − F_th = ρA·2gs` identity; `flowRateLMin` monotonic and ≥ 0 on [0,1]; `qTotal` scaling linear |
 | `apparatus.spec.ts` | All seven factors exact; `gltfName()` against the 159 real node names; **every `MESH` constant, every `shelf`, every `installed` name resolves** against a checked-in node-name fixture |
 | `experiments.spec.ts` | Four experiments; angles ⊆ deflector ids; `quiz.answer` in range; every step has en+ar text; `deflectorsFor()` partitions `DEFLECTORS` |
+| `deflector-scope.spec.ts` | The experiment→deflector→factor table, transcribed from BEDO's four Phase 2 sheets and with the factors recomputed rather than imported; `angles` and `family` are asserted to agree, so the two encodings of one fact cannot drift (`BUG-05`, `docs/37 §2`) |
 | `stateMachine.spec.ts` | Every cell of the §5 table; errors are non-mutating; unreachable-state check |
 | `spring.spec.ts` | `X = h_F − h_w`; clamps at 0; never exceeds `maxTravel` |
 

@@ -25,21 +25,25 @@ import { DEFLECTORS, WEIGHTS } from '../../src/domain/apparatus';
  * Nothing here is imported by the application.
  */
 interface MockProps {
+  state: { loadedWeightsG: readonly number[] };
   onCoverClick: () => void;
   onSelectDeflector: (id: number) => void;
   onPowerClick: () => void;
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
+  onRemoveWeight: (index: number) => void;
 }
 
 export const Scene3D: React.FC<MockProps> = ({
+  state,
   onCoverClick,
   onSelectDeflector,
   onPowerClick,
   onFlowValveClick,
   onVolumetricValveClick,
   onAddWeight,
+  onRemoveWeight,
 }) => (
   <div data-testid="scene-3d">
     <button data-testid="scene-cover" onClick={onCoverClick}>
@@ -61,6 +65,20 @@ export const Scene3D: React.FC<MockProps> = ({
         onClick={() => onSelectDeflector(d.id)}
       >
         {`tray deflector ${d.id}`}
+      </button>
+    ))}
+    {/*
+      The discs on the holder. The real `DeviceModel` puts an invisible proxy over each
+      one in the stack; these stand in for those, and carry the same identity — the
+      position in the stack, not the mass.
+    */}
+    {state.loadedWeightsG.map((grams, index) => (
+      <button
+        key={`${index}-${grams}`}
+        data-testid={`scene-loaded-weight-${index}`}
+        onClick={() => onRemoveWeight(index)}
+      >
+        {`loaded weight ${grams} at ${index}`}
       </button>
     ))}
     {WEIGHTS.filter((w) => w.mesh).map((w) => (

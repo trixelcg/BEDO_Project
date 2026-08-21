@@ -68,7 +68,11 @@ describe('progression', () => {
     runner.notify('OPEN_COVER', context());
 
     // install-deflector waits for OK; selecting a deflector does not finish it.
-    run([{ type: 'SELECT_DEFLECTOR', deflectorId: 135 }]);
+    //
+    // 90°, not 135°: the harness runs Exp. 1, and since BEDO-022 the step is only
+    // confirmable with a deflector Exp. 1 is actually run with. The conical disc this
+    // line used to install was `BUG-05` in a test.
+    run([{ type: 'SELECT_DEFLECTOR', deflectorId: 90 }]);
     expect(runner.notify('SELECT_DEFLECTOR', context()).advanced).toBe(false);
     expect(runner.getState().currentStepId).toBe('install-deflector');
 

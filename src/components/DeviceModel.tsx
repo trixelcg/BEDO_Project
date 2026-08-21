@@ -60,6 +60,7 @@ interface DeviceModelProps {
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
+  onRemoveWeight: (index: number) => void;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -82,6 +83,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onFlowValveClick,
   onVolumetricValveClick,
   onAddWeight,
+  onRemoveWeight,
   position,
   rotation,
   scale,
@@ -721,8 +723,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       flowValve: [MESH.flowValve],
       weights: WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!),
     };
-    return new Set(lesson.available.flatMap((key) => parts[key] ?? []));
-  }, [lesson.available, state.showMonitor]);
+    const keys = new Set(lesson.available.flatMap((key) => parts[key] ?? []));
+
+    // The tray carries all seven deflectors whatever experiment is loaded, and the gate
+    // accepts only the ones this experiment is run with. Taking the rest out here is what
+    // stops a shelf the gate would refuse from offering a pointer cursor — the same
+    // actionable-vs-asked-for split BEDO-020 drew, at value granularity. The ids come from
+    // the gate via `lesson.selectableDeflectorIds`; this component decides nothing.
+    for (const d of DEFLECTORS) {
+      if (!lesson.selectableDeflectorIds.includes(d.id)) keys.delete(d.shelf);
+    }
+    return keys;
+  }, [lesson.available, lesson.selectableDeflectorIds, state.showMonitor]);
+
+  /** Whether the gate would accept a weight interaction — drives the discs' cursor. */
+  const weightsAreActionable = !state.showMonitor && lesson.available.includes('weights');
 
   /**
    * Where the guide arrow floats — null in free mode, or once the step is satisfied.
@@ -798,8 +813,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const stack = useMemo(() => {
     if (!scene || !anchors.pan) return [];
     const pan = anchors.pan;
-    const entries: { key: string; object: THREE.Object3D; offset: [number, number, number] }[] =
-      [];
+    const entries: {
+      key: string;
+      object: THREE.Object3D;
+      offset: [number, number, number];
+      /** Position in the stack — the identity `REMOVE_WEIGHT` uses. */
+      index: number;
+      hitRadius: number;
+    }[] = [];
 
     // Each disc seats on top of the one before it, using its measured thickness — the
     // denominations are different heights, so a fixed increment either embeds them in
@@ -833,6 +854,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         key: `${idx}-${grams}`,
         object,
         offset: [pan[0] - proto.position.x, pan[1] + cum + h / 2 - centre.y, pan[2] - proto.position.z],
+        index: idx,
+        // Sized to the disc, and never taller than the disc is thick, so the proxies of
+        // stacked discs do not swallow each other.
+        hitRadius: Math.max(Math.min(h * 0.5, 0.02), 0.006),
       });
       cum += h;
     });
@@ -1158,9 +1183,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       <primitive object={scene} />
 
       <group ref={weightStackRef}>
-        {stack.map(({ key, object, offset }) => (
+        {stack.map(({ key, object, offset, index, hitRadius }) => (
           <group key={key} position={offset}>
             <primitive object={object} />
+            {/*
+              "Click on the weight on holder — the weight removed from the tank holder"
+              (Jetforce_Storyboard.pptx sl. 32, state D). An invisible proxy exactly like
+              every other hotspot; the disc's own transform, geometry, scale and materials
+              are untouched, and nothing is added to the scene while the pan is empty.
+            */}
+            <mesh
+              onPointerOver={(e) => {
+                e.stopPropagation();
+                if (weightsAreActionable) document.body.style.cursor = 'pointer';
+              }}
+              onPointerOut={() => {
+                document.body.style.cursor = 'default';
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveWeight(index);
+              }}
+            >
+              <sphereGeometry args={[hitRadius, 10, 8]} />
+              <meshBasicMaterial visible={false} />
+            </mesh>
           </group>
         ))}
       </group>

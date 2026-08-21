@@ -18,6 +18,7 @@ interface Scene3DProps {
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
+  onRemoveWeight: (index: number) => void;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
@@ -165,6 +166,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onFlowValveClick,
   onVolumetricValveClick,
   onAddWeight,
+  onRemoveWeight,
 }) => {
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
@@ -231,6 +233,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onFlowValveClick={onFlowValveClick}
             onVolumetricValveClick={onVolumetricValveClick}
             onAddWeight={onAddWeight}
+            onRemoveWeight={onRemoveWeight}
             position={sceneConfig.characterPosition}
             rotation={[
               (sceneConfig.characterRotation[0] * Math.PI) / 180,

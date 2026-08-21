@@ -426,6 +426,22 @@ describe('nothing bypasses the interaction gate', () => {
     expect(sites.length).toBe(5);
   });
 
+  it('no component writes the rig’s state for itself', () => {
+    // BEDO-022 §28. The two pieces of apparatus state this task touches are the ones a
+    // component is most tempted to edit in place — a selected id and an array of discs.
+    for (const file of componentFiles) {
+      const code = strip(readFileSync(path.join(REPO_ROOT, 'src', 'components', file), 'utf8'));
+      expect(code, `${file} assigns selectedDeflectorId`).not.toMatch(
+        /selectedDeflectorId\s*=[^=]/
+      );
+      expect(code, `${file} assigns loadedWeightsG`).not.toMatch(/loadedWeightsG\s*=[^=]/);
+      // Array mutators on the tray, which would change the rig behind the runtime's back.
+      expect(code, `${file} mutates loadedWeightsG`).not.toMatch(
+        /loadedWeightsG\.(push|pop|shift|unshift|splice|sort|reverse)\s*\(/
+      );
+    }
+  });
+
   it('never commits an apparatus intent without the gate', () => {
     const code = strip(readFileSync(path.join(REPO_ROOT, 'src', 'App.tsx'), 'utf8'));
     const APPARATUS_INTENTS = [
@@ -438,6 +454,7 @@ describe('nothing bypasses the interaction gate', () => {
       'CLOSE_VOLUMETRIC_VALVE',
       'SELECT_DEFLECTOR',
       'ADD_WEIGHT',
+      'REMOVE_WEIGHT',
       'REMOVE_ALL_WEIGHTS',
     ];
     for (const intent of APPARATUS_INTENTS) {

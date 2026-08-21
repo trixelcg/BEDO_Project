@@ -91,4 +91,8 @@ export const LESSON_BLOCK_PRESENTATION: Record<LessonBlockReason, { en: string; 
     en: 'Follow the highlighted step first.',
     ar: 'يرجى اتباع الخطوة الحالية أولاً.',
   },
+  DEFLECTOR_NOT_IN_EXPERIMENT: {
+    en: 'This experiment uses a different deflector.',
+    ar: 'هذه التجربة تستخدم عاكساً مختلفاً.',
+  },
 };

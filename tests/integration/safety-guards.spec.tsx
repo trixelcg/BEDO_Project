@@ -88,13 +88,22 @@ describe('error 2 — the cover has to come off before a deflector goes on', () 
   });
 
   it('accepts the selection once the tank is open', () => {
+    // Exp. 2, because it is the one experiment BEDO's sheet gives a genuine choice in —
+    // *"Drag the 120° or 180° semi-circular deflector"* — so there is an in-scope
+    // selection that actually changes something. This spec used to install the 180° disc
+    // while Exp. 1 was loaded and assert that the app took it, which was `BUG-05` written
+    // down as an expectation; the deflector's *scope* is now covered by
+    // `tests/integration/deflector-scope.spec.tsx` and guard 2 is what is left here.
+    click('Experiments');
+    click('Exp. 2 — Semi-circular deflector');
+    click('Steps');
     click('Guided Mode');
     openCover();
 
-    clickMesh('scene-deflector-180');
+    clickMesh('scene-deflector-120');
 
     expect(warning()).toBeNull();
-    expect(screen.getByText(/Drag the Semi-circular \(180°\) onto the rod/)).toBeDefined();
+    expect(screen.getByText(/Drag the Semi-circular \(120°\) onto the rod/)).toBeDefined();
   });
 });
 

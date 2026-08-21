@@ -6,7 +6,7 @@ import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
 import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
 import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparatusGate';
-import { getDeflector } from './domain/apparatus';
+import { DEFLECTORS, getDeflector } from './domain/apparatus';
 import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
 import { markReady } from './lib/readiness';
 import { SCENE_CONFIG } from './lib/sceneConfig';
@@ -14,13 +14,10 @@ import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
 import type { LessonContext, LessonExpectation } from './lesson/schema';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
-import {
-  selectAvailableDeflectors,
-  selectExperiment,
-  selectReadings,
-} from './simulation/selectors';
+import { selectExperiment, selectReadings } from './simulation/selectors';
 import {
   availableAffordances,
+  deflectorsSelectableIn,
   evaluateInteraction,
   type Interaction,
   type InteractionDecision,
@@ -67,7 +64,22 @@ export default function App() {
 
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
-  const availableDeflectors = useMemo(() => selectAvailableDeflectors(simulation), [simulation]);
+  /**
+   * The deflectors the panel and the tray offer.
+   *
+   * Read from the gate, not from the experiment directly: the list a learner is shown and
+   * the list the gate will accept have to be the same list, and `BUG-05` is what happens
+   * when the panel filters and nothing else does. In free mode all seven are offered,
+   * which is also what the 3D tray has always shown — so the two surfaces finally agree.
+   */
+  const selectableDeflectorIds = useMemo(
+    () => deflectorsSelectableIn(simulation.experimentId, lessonState.mode),
+    [simulation.experimentId, lessonState.mode]
+  );
+  const availableDeflectors = useMemo(
+    () => DEFLECTORS.filter((d) => selectableDeflectorIds.includes(d.id)),
+    [selectableDeflectorIds]
+  );
   const steps = useMemo(() => {
     const d = getDeflector(simulation.apparatus.selectedDeflectorId);
     return buildSteps(d.nameEn, d.nameAr);
@@ -164,6 +176,7 @@ export default function App() {
       const decision: InteractionDecision = evaluateInteraction({
         interaction,
         apparatus: runtime.getState().apparatus,
+        experimentId: runtime.getState().experimentId,
         step: runner.getCurrentStep(),
         lesson: CURRENT_LESSON,
         mode: runner.getState().mode,
@@ -270,6 +283,15 @@ export default function App() {
 
   const handleClearWeights = () => act({ type: 'REMOVE_ALL_WEIGHTS' });
 
+  /**
+   * Take one disc back off the holder.
+   *
+   * By stack position, which is what the storyboard's *"click on the weight on holder"*
+   * means when two discs of the same denomination are on the pan. Same gate, same runtime,
+   * same state machine as adding one.
+   */
+  const handleRemoveWeight = (index: number) => act({ type: 'REMOVE_WEIGHT', index });
+
   // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => applyAdvance(runner.confirm(context));
 
@@ -363,6 +385,10 @@ export default function App() {
     if (!import.meta.env.DEV) return;
     (window as unknown as Record<string, unknown>).__bedoTest = {
       coverClick: handleCoverClick,
+      // The tray is seven meshes inside the canvas with no DOM equivalent, and the panel
+      // only ever offers the in-scope ones — so this is how the browser suite reaches
+      // past it to check that the gate, and not the shorter list, is what refuses.
+      selectDeflector: handleSelectDeflector,
     };
   });
 
@@ -389,6 +415,7 @@ export default function App() {
       // The step's own controls, plus the ones available at any point — the volumetric
       // valve, which is part of the rig but not part of the procedure.
       panelControls: [...currentStep.panelControls, ...(CURRENT_LESSON.alwaysAvailable ?? [])],
+      selectableDeflectorIds,
       // What the gate will accept, handed to the scene so a blocked hotspot need not
       // re-derive the policy — and so an always-available one is not drawn as dead.
       available: [...availableAffordances(CURRENT_LESSON, currentStep, lessonState.mode)],
@@ -400,6 +427,7 @@ export default function App() {
     [
       isGuided,
       lessonState.mode,
+      selectableDeflectorIds,
       currentStep,
       steps,
       runner,
@@ -453,6 +481,7 @@ export default function App() {
         onFlowValveClick={handleFlowValveClick}
         onVolumetricValveClick={handleToggleVolumetricValve}
         onAddWeight={handleAddWeight}
+        onRemoveWeight={handleRemoveWeight}
       />
 
       <UIOverlay
@@ -468,6 +497,7 @@ export default function App() {
         onSetValve={handleSetValve}
         onAddWeight={handleAddWeight}
         onClearWeights={handleClearWeights}
+        onRemoveWeight={handleRemoveWeight}
         onTogglePower={handleTogglePower}
         onToggleVolumetricValve={handleToggleVolumetricValve}
         onToggleMonitor={handleToggleMonitor}

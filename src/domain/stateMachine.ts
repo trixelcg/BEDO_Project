@@ -68,6 +68,17 @@ export type ApparatusAction =
   | { readonly type: 'CLOSE_VOLUMETRIC_VALVE' }
   | { readonly type: 'SELECT_DEFLECTOR'; readonly deflectorId: number }
   | { readonly type: 'ADD_WEIGHT'; readonly massG: number }
+  /**
+   * Take one disc back off the holder.
+   *
+   * Identified by its **position in the stack**, not by its mass: the tray can be loaded
+   * with two 50 g discs, and `loadedWeightsG.filter(g => g !== 50)` would take both off.
+   * The index is the smallest identifier that is actually correct, it is the order the
+   * discs were added and therefore the order they are stacked, and it is what the scene
+   * already keys each rendered disc by. A three.js UUID would be a rendering detail
+   * leaking into the domain.
+   */
+  | { readonly type: 'REMOVE_WEIGHT'; readonly index: number }
   | { readonly type: 'REMOVE_ALL_WEIGHTS' };
 
 /**
@@ -202,11 +213,32 @@ export function attempt(state: ApparatusState, action: ApparatusAction): Transit
       });
     }
 
+    case 'REMOVE_WEIGHT': {
+      // `Jetforce_Storyboard.pptx` sl. 32, state D, clickable 5:
+      //   "Weights on holder → B — Click on the weight on holder — The weight removed
+      //    from the tank holder in 2 sec."
+      // BEDO's own state table (`Jet force_State machine.docx`) lists only clickables 1-7
+      // and omits this eighth one; the storyboard's per-state slides are the fuller
+      // specification. See docs/37 §7.
+      //
+      // Unguarded, for the same reason clearing the tray is: it is the direction that
+      // *resolves* error5, and refusing it while the tank is open would be a deadlock.
+      if (action.index < 0 || action.index >= state.loadedWeightsG.length) {
+        // Not a student action — no disc is rendered at that position — so it is a no-op
+        // rather than a refusal, and raises no message.
+        return unchanged(state);
+      }
+      return accept({
+        ...state,
+        loadedWeightsG: state.loadedWeightsG.filter((_, i) => i !== action.index),
+      });
+    }
+
     case 'REMOVE_ALL_WEIGHTS': {
       if (state.loadedWeightsG.length === 0) return unchanged(state);
       // Clearing the tray is unguarded, including while the tank is open — which is how
-      // a student recovers from error5. Removing a *single* disc by clicking it on the
-      // holder is specified but has never been implemented; see docs/30 §8.
+      // a student recovers from error5. Taking a *single* disc off is `REMOVE_WEIGHT`,
+      // added by BEDO-022; this stays, and is still the panel's one-press escape.
       return accept({ ...state, loadedWeightsG: [] });
     }
   }

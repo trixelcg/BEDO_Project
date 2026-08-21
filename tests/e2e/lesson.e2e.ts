@@ -208,6 +208,109 @@ test.describe('guided walkthrough', () => {
     await expect(sidebar(page).getByText('Closed', { exact: true })).toBeVisible();
   });
 
+  /**
+   * BUG-05, in a real browser (BEDO-022 §24).
+   *
+   * Exp. 1's worksheet prints F = ρAV². Installing the 180° hemisphere doubles the
+   * momentum factor and every number in the table with it, while the header, the formula
+   * and the answer sheet all still say Exp. 1. The tray offers all seven discs whatever
+   * sheet is loaded, so refusing the wrong one is the only thing that keeps the run
+   * honest.
+   */
+  test('refuses another experiment’s deflector, then computes the right force', async ({
+    page,
+  }) => {
+    await openApp(page);
+
+    await pressCover(page);
+    await expectStep(page, 2);
+
+    // The panel offers only the disc Exp. 1 is run with — and, since BEDO-022, so does
+    // the gate behind the tray.
+    await expect(button(page, 'Flat surface (90°)')).toBeVisible();
+    await expect(button(page, 'Semi-circular (180°)')).toHaveCount(0);
+
+    // Reach past the panel the way the 3D tray would, and be refused.
+    await page.evaluate(() => window.__bedoTest!.selectDeflector(180));
+    await expect(page.locator('.warning-popup')).toContainText(
+      'This experiment uses a different deflector.'
+    );
+    await expectStep(page, 2);
+    await dismissPopup(page);
+
+    // Exp. 1's own disc is accepted and the step completes.
+    await button(page, 'Flat surface (90°)').click();
+    await confirmStep(page);
+    await expectStep(page, 3);
+
+    // Carry on to the table and check the force is the one F = ρAV² gives.
+    await pressCover(page);
+    await button(page, 'Turn On Pump').click();
+    await setValve(page, 0.4);
+    await confirmStep(page);
+    await dismissPopup(page);
+    for (const weight of ['+50g', '+20g', '+10g']) await button(page, weight).click();
+    await confirmStep(page);
+    await dismissPopup(page);
+    await setValve(page, 0.5);
+    await confirmStep(page);
+    await dismissPopup(page);
+    for (const weight of ['+200g', '+50g', '+10g']) await button(page, weight).click();
+    await confirmStep(page);
+    await expectStep(page, 9);
+    await button(page, 'Open Data Monitor').click();
+
+    const rows = page.locator('.data-table tbody tr');
+    // k = 1.0. With the 180° disc these would read 1.6398 and 5.0606.
+    await expect(rows.nth(1).locator('td').nth(6)).toHaveText('0.8199');
+    await expect(rows.nth(2).locator('td').nth(6)).toHaveText('2.5303');
+  });
+
+  /**
+   * Taking one disc off the holder (BEDO-022 §25).
+   *
+   * Storyboard sl. 32: *"Click on the weight on holder — the weight removed from the tank
+   * holder in 2 sec."* Before this the only way back was clearing the whole tray.
+   */
+  test('removes a single weight and leaves the others on the holder', async ({ page }) => {
+    await openApp(page);
+    await pressCover(page);
+    await button(page, 'Flat surface (90°)').click();
+    await confirmStep(page);
+    await pressCover(page);
+    await button(page, 'Turn On Pump').click();
+    await setValve(page, 0.4);
+    await confirmStep(page);
+    await dismissPopup(page);
+    await expectStep(page, 6); // balance reading 1, target 80 g
+
+    // Overshoot, the way a learner does.
+    await button(page, '+200g').click();
+    await button(page, '+50g').click();
+    await expect(sidebar(page).getByText('250 g')).toBeVisible();
+    await expect(okButton(page)).toHaveCount(0);
+
+    // Take off only the 200 g disc. The 50 g one stays.
+    await button(page, 'Remove 200 g').click();
+    await expect(sidebar(page).getByText('50 g')).toBeVisible();
+    await expect(button(page, 'Remove 50 g')).toBeVisible();
+    await expect(button(page, 'Remove 200 g')).toHaveCount(0);
+
+    // Two identical discs are two discs: add a second 10 g and take one back off.
+    await button(page, '+10g').click();
+    await button(page, '+10g').click();
+    await expect(sidebar(page).getByText('70 g')).toBeVisible();
+    await button(page, 'Remove 10 g').first().click();
+    await expect(sidebar(page).getByText('60 g')).toBeVisible();
+
+    // Finish balancing and carry on — the derived state followed every removal.
+    await button(page, '+20g').click();
+    await expect(page.getByText('Pointer balanced!')).toBeVisible();
+    await confirmStep(page);
+    await dismissPopup(page);
+    await expectStep(page, 7);
+  });
+
   test('refuses an unsafe action and says why', async ({ page }) => {
     await openApp(page);
     await pressCover(page);

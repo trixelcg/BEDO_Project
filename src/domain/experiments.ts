@@ -330,6 +330,22 @@ export const getExperiment = (id: DeflectorFamily): ExperimentDef =>
 /** Deflectors belonging to an experiment, in tray order. */
 export const deflectorsFor = (id: DeflectorFamily) => DEFLECTORS.filter((d) => d.family === id);
 
+/**
+ * Is this deflector one the experiment is run with?
+ *
+ * **The single authority for `BUG-05`.** `angles` is transcribed from step 2 of each
+ * experiment sheet — *"Drag the 90° flat deflector"*, *"the 120° or 180° semi-circular
+ * deflector"*, *"the 135° conical surface deflector"*, *"the 45° oblique surface
+ * deflector"* with objectives reading *"(θ = 30°, 45° or 60°)"* — so two of the four
+ * genuinely offer a choice and two do not. Evidence in `docs/37 §2`.
+ *
+ * Nothing else may hold this mapping. Before BEDO-022 the panel enforced it by filtering
+ * the list it rendered, which the 3D tray could not do, and the state machine said so in
+ * a comment.
+ */
+export const isDeflectorInScope = (id: DeflectorFamily, deflectorId: number): boolean =>
+  getExperiment(id).angles.includes(deflectorId);
+
 /** The canonical count, per BEDO's four experiment sheets. Was 12 before BEDO-019. */
 export const TOTAL_STEPS = 11;
 

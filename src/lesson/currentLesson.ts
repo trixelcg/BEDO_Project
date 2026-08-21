@@ -8,6 +8,7 @@
  */
 
 import { FIRST_READING_VALVE, SECOND_READING_VALVE, VALVE_SNAP_MARGIN } from '../domain/physics';
+import { isDeflectorInScope } from '../domain/experiments';
 import type { Lesson, LessonContext } from './schema';
 
 /** The valve has reached a reading setpoint, allowing for the snap margin. */
@@ -54,9 +55,19 @@ export const CURRENT_LESSON: Lesson = {
       expectation: { type: 'SELECT_DEFLECTOR' },
       // Nothing observable marks a deflector as "installed" — the rod always carries one —
       // so this step has no completion condition of its own and the arrow stays up until
-      // the learner confirms. Preserved exactly as it behaves today.
+      // the learner confirms.
       isSatisfied: never,
-      advance: { kind: 'confirm', when: (c) => c.simulation.apparatus.isCoverOpen },
+      // The tank must be open, and the deflector on the rod must be one this experiment is
+      // run with. The gate already refuses an out-of-scope choice in guided mode, so this
+      // is belt and braces — but it is the *lesson's* own statement of what finishing this
+      // step means, and it catches the one route the gate does not cover: exploring in
+      // free mode and switching back. `BUG-05`, docs/37 §6.
+      advance: {
+        kind: 'confirm',
+        when: (c) =>
+          c.simulation.apparatus.isCoverOpen &&
+          isDeflectorInScope(c.simulation.experimentId, c.simulation.apparatus.selectedDeflectorId),
+      },
     },
     {
       id: 'mount-cover',

@@ -119,6 +119,6 @@ export async function confirmStep(page: Page): Promise<void> {
 declare global {
   interface Window {
     /** Dev-only; see src/App.tsx. */
-    __bedoTest?: { coverClick: () => void };
+    __bedoTest?: { coverClick: () => void; selectDeflector: (id: number) => boolean };
   }
 }

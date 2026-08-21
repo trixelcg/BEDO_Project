@@ -65,6 +65,14 @@ export interface LessonView {
    * not the first. See `src/interaction/gate.ts`.
    */
   available: readonly InteractionAffordance[];
+  /**
+   * Deflector angles the gate will accept right now — the experiment's own in guided mode,
+   * all seven in free.
+   *
+   * The scene needs the ids, not just the `deflectors` affordance: the tray carries all
+   * seven whatever experiment is loaded, and `BUG-05` was every one of them dispatching.
+   */
+  selectableDeflectorIds: readonly number[];
   /** The lesson has passed the step that installs the deflector. */
   hasInstalledDeflector: boolean;
   /** Which results row is being balanced, if any. */

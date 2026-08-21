@@ -12,7 +12,7 @@ import {
 } from '../../src/interaction/gate';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
 import { restingState, type ApparatusAction, type ApparatusState } from '../../src/domain/stateMachine';
-import type { StepId } from '../../src/domain/experiments';
+import type { ExperimentId, StepId } from '../../src/domain/experiments';
 
 /**
  * The interaction gate (BEDO-020).
@@ -41,11 +41,13 @@ const ask = (
   interaction: Interaction,
   stepId: StepId,
   over: Partial<ApparatusState> = {},
-  mode: 'guided' | 'free' = 'guided'
+  mode: 'guided' | 'free' = 'guided',
+  experimentId: ExperimentId = 'flat'
 ) =>
   evaluateInteraction({
     interaction,
     apparatus: apparatus(over),
+    experimentId,
     step: step(stepId),
     lesson: CURRENT_LESSON,
     mode,
@@ -65,7 +67,7 @@ const LEGAL: ReadonlyArray<
   readonly [InteractionAffordance, ApparatusAction, Partial<ApparatusState>]
 > = [
   ['cover', { type: 'OPEN_COVER' }, {}],
-  ['deflectors', { type: 'SELECT_DEFLECTOR', deflectorId: 1 }, { isCoverOpen: true }],
+  ['deflectors', { type: 'SELECT_DEFLECTOR', deflectorId: 90 }, { isCoverOpen: true }],
   ['power', { type: 'POWER_ON' }, {}],
   ['volumetricValve', { type: 'OPEN_VOLUMETRIC_VALVE' }, {}],
   ['flowValve', { type: 'SET_VALVE', opening: 0.4 }, { isPowerOn: true }],
@@ -160,6 +162,7 @@ describe('always available', () => {
     const decision = evaluateInteraction({
       interaction: act({ type: 'OPEN_VOLUMETRIC_VALVE' }),
       apparatus: apparatus(),
+      experimentId: 'flat',
       step: step('unscrew-cover'),
       lesson: withoutAlwaysAvailable,
       mode: 'guided',
@@ -327,6 +330,7 @@ describe('determinism', () => {
     evaluateInteraction({
       interaction: act({ type: 'OPEN_COVER' }),
       apparatus: state,
+      experimentId: 'flat',
       step: step('unscrew-cover'),
       lesson: CURRENT_LESSON,
       mode: 'guided',

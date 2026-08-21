@@ -27,7 +27,7 @@ Week  2  ░ BEDO-005..007 domain core        ║ ASSET TRACK  BEDO-030..033
 Week  3  ░ BEDO-008..010 simulation runtime ║ (parallel, DCC + gltf-transform)
 Week  4  ░ BEDO-011..013 loading + scene foundations
 Week  5  ░ BEDO-014..017 draw calls, coordinate correctness  ← P1 visual defects
-Week  6  ✅ BEDO-018..020 lesson engine + gate  │ ░ BEDO-021..023 interaction
+Week  6  ✅ BEDO-018..020, 022 lesson engine + gate  │ ░ BEDO-021, 023 interaction
 Week  7  ░ BEDO-024..027 camera + UI shell
 Week  8  ░ BEDO-028..031 rendering quality + audio/feedback
 Week  9  ░ BEDO-032..035 accessibility + i18n
@@ -349,12 +349,37 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** all three input paths produce the identical intent; step 2 copy matches behaviour in both languages.
 - **Tests** `intent.spec.ts`, E2E drag path.
 
-### ☐ BEDO‑022 — Deflector scope + weight removal `P1`
-- **Objective** Reject deflectors outside the loaded experiment; make loaded weights individually removable (click on holder → 2 s return).
-- **Reason** `BUG‑05` (Exp.1 silently runs with `k = 2.0` while every label says `F = ρAV²`), `UX‑24`; state machine `D →(weight-on-holder)→ B`.
+### ✅ BEDO‑022 — Deflector scope + weight removal `P1`
+- **Objective** Reject deflectors outside the loaded experiment; make loaded weights individually removable.
+- **Reason** `BUG‑05` (Exp.1 silently runs with `k = 2.0` while every label says `F = ρAV²`), `UX‑24`; storyboard sl. 32 `D →(weight on holder)→ B`.
 - **Dependencies** BEDO‑020 · **Risks** low.
 - **Acceptance** cross-experiment selection impossible from any surface; removing one disc updates the balance.
-- **Tests** `deflectorScope.spec.ts`, `weights.spec.ts`.
+- **Tests** `deflector-scope.spec.ts`, `weight-removal.spec.ts`, `deflector-scope.spec.tsx`.
+- **Status** ✅ Complete. **`BUG‑05` is closed.** It was `BUG‑04` one layer down: the panel
+  scoped the deflector list by *rendering a shorter list*, the 3D tray carries all seven
+  discs whatever sheet is open, and BEDO‑020's gate asks "may I touch the deflectors" but
+  not "which one". The scope is now a **value-level rule in the gate**, reading the one
+  authority that already existed — `EXPERIMENTS[].angles`, transcribed from step 2 of each
+  sheet. Two of the four experiments genuinely offer a choice (*"the 120° **or** 180°
+  semi-circular deflector"*), so it is a set per experiment, not a required id; a
+  `requiredDeflectorId` would have contradicted Exp. 2's own sheet. Refusal is a **second**
+  lesson reason, `DEFLECTOR_NOT_IN_EXPERIMENT` — the learner is on the right step touching
+  the right tray, and only the value is wrong. `install-deflector` now states the same rule
+  itself, which catches the one route the gate cannot: free-mode exploration followed by a
+  switch back. Free mode still explores, and no longer silently: the panel lists all seven
+  there, so the installed disc is always on screen. **Individual weight removal**
+  implemented from storyboard sl. 32 — `REMOVE_WEIGHT` by **stack position**, because two
+  50 g discs are two discs; unguarded, because it is the direction that resolves guard 5;
+  a no-op on an out-of-range index; and gated on the same `weights` affordance as adding
+  one, so the overload-recovery path BEDO‑020 opened stays open. Clear-all untouched.
+  Physics equations untouched — only the `k` reaching them. Scene fingerprint identical;
+  769 draw calls unchanged; +1.8 kB JS. **731 Vitest + 16 Playwright green**, with two
+  pre-existing tests corrected because they pinned `BUG‑05` as expected behaviour. Detail:
+  `docs/37`.
+
+  Discovered and recorded, not fixed: BEDO's two Phase 1 documents disagree about whether
+  the weight-on-holder click exists at all — the state-machine table has no row for it and
+  the storyboard specifies it in full (`docs/37 §7`).
 
 ### ☐ BEDO‑023 — Free mode `P1`
 - **Objective** Explicit "Record reading" action; growing table; live balance indicator in both modes.
@@ -535,7 +560,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `BUG‑02` weights 2.18 m off | **BEDO‑016** |
 | `BUG‑03` jet 18× too wide | **BEDO‑017** |
 | `BUG‑04` gating bypass | ✅ BEDO‑020 — one gate for both surfaces (`docs/36`) |
-| `BUG‑05` cross-experiment deflector | BEDO‑022 |
+| `BUG‑05` cross-experiment deflector | ✅ BEDO‑022 — one scope rule for both surfaces (`docs/37`) |
 | `BUG‑06` Free mode records nothing | BEDO‑023 |
 | `BUG‑07`/`08`/`10`/`11`/`12` UI/CSS | BEDO‑025, 026 |
 | `BUG‑09` RTL no-op | BEDO‑037 |

@@ -20,7 +20,7 @@ every interactable; no per-mesh bespoke handlers.
   passes `evaluateInteraction()` before anything is committed, and the cursor now reads the gate's answer
   rather than the step's highlight, so an always-available part is no longer drawn as dead. `docs/36 §8`.
 - `document.body.style.cursor` is mutated globally and can stick on `pointer` forever (`BUG‑18`).
-- Hidden tray weights keep firing, so the student can add discs that visibly do not exist (`BUG‑19`).
+- Hidden tray weights keep firing, so the student can add discs that visibly do not exist (`BUG‑19`). Still open — `BEDO-022` added removal but did not touch the tray's hit proxies.
 - The only interaction verb is *click*. The evaluation document's second complaint is precisely
   *"relies solely on basic clicks, lacking essential features like drag-and-drop"*.
 - No keyboard path at all, and two of the eleven steps have no DOM equivalent (`UX‑04`).
@@ -109,7 +109,7 @@ event — which is what lets the gesture layer below be added without the policy
 | `button` | click, `Enter`/`Space` | power switch, cover, monitor, OK | Power switch rotates 90° (storyboard sl. 29) |
 | `rotary` | click-to-toggle, drag-around-axis, arrow keys | flow valve, volumetric valve | *"rotates 90° counterclockwise … for opening"* (sl. 16) |
 | `lever` | drag along an axis, arrow keys | — reserved | |
-| `transferable` | click → **2 s animated move** | deflectors, weights | *"moves to the tank holder in 2 sec"* (sl. 14–16) |
+| `transferable` | click → **2 s animated move** | deflectors, weights | *"moves to the tank holder in 2 sec"* (sl. 14–16); the **reverse** is sl. 32's *"click on the weight on holder — the weight removed … in 2 sec"*, whose semantics `BEDO-022` implemented and whose animation `BEDO-021` still owes |
 | `draggable` + `dropTarget` | pointer drag, or keyboard pick-up/put-down | deflector → rod, weight → pan | **Explicitly required** by the evaluation PDF §2b and the Exp. sheets |
 
 ### 4.1 Resolving click vs drag
@@ -201,6 +201,8 @@ Every affordance is mirrored by a DOM control in `ui/controls/`, so the canvas i
 | Semantic intents (not events) | **done** — the gate takes an `Interaction`, never a gesture |
 | Actionable vs asked-for, exposed to the scene | **done** — `LessonView.available` |
 | Coaching feedback on a blocked intent | **minimal** — one typed reason, one sentence, bilingual. The toast/audio/animation system is still a separate task. |
+| Weight removal as an affordance | **done** — `REMOVE_WEIGHT` by stack position, gated on the same `weights` affordance as adding one, from panel and scene alike (`BEDO-022`, `docs/37 §8-10`) |
+| Deflector scope as a *value* rule | **done** — the one place the gate looks past the affordance group, because a tray of seven discs is one group with seven meanings (`BUG-05`) |
 | `Affordance` registry (§2) | not started |
 | `GestureRecogniser`, drag-and-drop (§4) | not started — every input is a discrete setpoint today |
 | Hit geometry (§5) | not started — still the clamped-sphere heuristic |

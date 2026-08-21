@@ -36,6 +36,8 @@
  */
 
 import { attempt, type ApparatusAction, type ApparatusState, type RejectionReason } from '../domain/stateMachine';
+import { DEFLECTORS } from '../domain/apparatus';
+import { getExperiment, isDeflectorInScope, type ExperimentId } from '../domain/experiments';
 import type { HighlightKey, Lesson, LessonStepDefinition, PanelControl } from '../lesson/schema';
 import type { LessonMode } from '../lesson/runner';
 
@@ -79,7 +81,16 @@ export type Interaction =
  * code between them would make the two indistinguishable at exactly the point where the
  * app has to choose what to say.
  */
-export type LessonBlockReason = 'NOT_EXPECTED_IN_CURRENT_STEP';
+export type LessonBlockReason =
+  | 'NOT_EXPECTED_IN_CURRENT_STEP'
+  /**
+   * The deflector is real, installable and belongs to a different experiment.
+   *
+   * A second reason rather than a second use of the first: the learner *is* on the step
+   * that asks for a deflector and *is* touching the right affordance. What is wrong is the
+   * value, and "you are not at this step yet" would be untrue and unhelpful. `BUG-05`.
+   */
+  | 'DEFLECTOR_NOT_IN_EXPERIMENT';
 
 export type InteractionDecision =
   | { readonly allowed: true; readonly why: 'EXPECTED' | 'ALWAYS_AVAILABLE' | 'FREE_MODE' }
@@ -94,6 +105,14 @@ export type InteractionDecision =
 
 export interface InteractionRequest {
   readonly interaction: Interaction;
+  /**
+   * Which experiment sheet is loaded.
+   *
+   * The apparatus does not know or care — a rod holds whatever you put on it — so this is
+   * not part of `ApparatusState`. It is the lesson's context, and only the deflector rule
+   * reads it.
+   */
+  readonly experimentId: ExperimentId;
   /** Read by the apparatus check. Ignored for presentation interactions. */
   readonly apparatus: ApparatusState;
   readonly step: LessonStepDefinition;
@@ -121,6 +140,7 @@ export const affordanceOf = (interaction: Interaction): InteractionAffordance =>
     case 'SET_VALVE':
       return 'flowValve';
     case 'ADD_WEIGHT':
+    case 'REMOVE_WEIGHT':
     case 'REMOVE_ALL_WEIGHTS':
       return 'weights';
   }
@@ -163,7 +183,7 @@ export const affordancesAvailableAt = (
  * Free mode skips the lesson question entirely and keeps the apparatus one.
  */
 export const evaluateInteraction = (request: InteractionRequest): InteractionDecision => {
-  const { interaction, apparatus, step, lesson, mode } = request;
+  const { interaction, apparatus, experimentId, step, lesson, mode } = request;
 
   // 1. Apparatus legality — pure, and nothing is committed by asking.
   if (interaction.kind === 'apparatus') {
@@ -173,6 +193,22 @@ export const evaluateInteraction = (request: InteractionRequest): InteractionDec
 
   // 2. Lesson legality — guided only.
   if (mode !== 'guided') return { allowed: true, why: 'FREE_MODE' };
+
+  // 2a. Value legality, for the one action whose *value* the lesson constrains.
+  //
+  // BEDO-020 gates on affordance groups, which answers "may I touch the deflectors" and
+  // not "which one". That granularity was right for every other control and is exactly
+  // the gap `BUG-05` lives in, so this is the one place the gate looks past the group.
+  if (interaction.kind === 'apparatus' && interaction.action.type === 'SELECT_DEFLECTOR') {
+    if (!isDeflectorInScope(experimentId, interaction.action.deflectorId)) {
+      return {
+        allowed: false,
+        blockedBy: 'lesson',
+        reason: 'DEFLECTOR_NOT_IN_EXPERIMENT',
+        affordance: 'deflectors',
+      };
+    }
+  }
 
   const affordance = affordanceOf(interaction);
   if (step.highlight.includes(affordance as HighlightKey) ||
@@ -220,3 +256,22 @@ export const availableAffordances = (
   mode === 'guided'
     ? affordancesAvailableAt(lesson, step)
     : new Set<InteractionAffordance>(ALL_AFFORDANCES);
+
+/**
+ * Which deflectors may go on the rod right now.
+ *
+ * **The one source** for both the policy and the controls that present it — the panel's
+ * list and the scene's tray both read this, so neither can offer something the gate would
+ * refuse, and neither can hide something it would accept. Enforcing a rule by rendering a
+ * shorter list is what `BUG-05` was, exactly as `BUG-04` was enforcing one by hiding a
+ * button.
+ *
+ * Guided runs the loaded experiment's own angles; free mode is unrestricted apparatus
+ * exploration and offers all seven. See `docs/37 §4` for why free mode is not a hole:
+ * every surface that names the experiment also names the installed deflector.
+ */
+export const deflectorsSelectableIn = (
+  experimentId: ExperimentId,
+  mode: LessonMode
+): readonly number[] =>
+  mode === 'guided' ? getExperiment(experimentId).angles : DEFLECTORS.map((d) => d.id);

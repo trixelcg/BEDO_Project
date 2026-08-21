@@ -38,6 +38,8 @@ interface UIOverlayProps {
   onSetValve: (val: number) => void;
   onAddWeight: (weight: number) => void;
   onClearWeights: () => void;
+  /** Take one disc off the holder, by its position in the stack. */
+  onRemoveWeight: (index: number) => void;
   onTogglePower: () => void;
   onToggleVolumetricValve: () => void;
   onToggleMonitor: () => void;
@@ -63,6 +65,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onSetValve,
   onAddWeight,
   onClearWeights,
+  onRemoveWeight,
   onTogglePower,
   onToggleVolumetricValve,
   onToggleMonitor,
@@ -545,6 +548,29 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                       </button>
                     ))}
                   </div>
+
+                  {/*
+                    The discs on the holder, in the order they were stacked. Clicking one
+                    takes that one off — the storyboard's "click on the weight on holder"
+                    (sl. 32), which the panel had no equivalent for. Position, not mass:
+                    two 50 g discs are two discs.
+                  */}
+                  {loadedWeightsG.length > 0 && (
+                    <div className="weight-pan-grid">
+                      {loadedWeightsG.map((g, index) => (
+                        <button
+                          key={`${index}-${g}`}
+                          className="weight-add-btn"
+                          onClick={() => onRemoveWeight(index)}
+                          title={isAr ? `إزالة ${g} غ` : `Remove ${g} g`}
+                          aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
+                          style={{ borderColor: 'var(--danger-red)', color: 'var(--danger-red)' }}
+                        >
+                          −{g}g
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   <button
                     className="btn-secondary"
