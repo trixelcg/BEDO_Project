@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { WATER_SHAPES } from '../../src/domain/apparatus';
+import { EXPERIMENTS, answerSheetFor, type ExperimentId } from '../../src/domain/experiments';
 import { REPO_ROOT, assetPath, fileSize } from '../helpers/glb';
 
 /**
@@ -53,7 +54,7 @@ describe('the water plume models', () => {
 // discovered when a student loads the page and something is silently absent. Scanned once,
 // at module scope, because two suites below check it from opposite directions: every
 // reference resolves to a file, and every served file has a reference.
-const MEDIA = /(['"`])(\/[\w./-]+\.(?:glb|webp|png|jpe?g|svg|mp4|hdr|exr))\1/g;
+const MEDIA = /(['"`])(\/[\w./-]+\.(?:glb|webp|png|jpe?g|svg|mp4|pdf|hdr|exr))\1/g;
 
 const sources = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -104,6 +105,13 @@ describe('the served asset set is closed', () => {
     'WaterShapes/Water_low.glb',
     'favicon.svg',
     'rosendal_plains_2_4k.webp',
+    // The worksheets the closing step opens, added by BEDO-019. Fetched on demand, never
+    // at boot — `README.txt` records their provenance beside them.
+    'answer-sheets/README.txt',
+    'answer-sheets/flat.pdf',
+    'answer-sheets/semi.pdf',
+    'answer-sheets/conical.pdf',
+    'answer-sheets/oblique.pdf',
   ];
 
   const served = (dir: string, prefix = ''): string[] =>
@@ -126,6 +134,7 @@ describe('the served asset set is closed', () => {
     // stale entry in PRODUCTION_ASSETS cannot keep a dead file alive.
     const fromSource = new Set(referenced.map((url) => url.replace(/^\//, '')));
     fromSource.add('favicon.svg'); // referenced by index.html, not by src/
+    fromSource.add('answer-sheets/README.txt'); // provenance note, not loaded by the app
     for (const asset of PRODUCTION_ASSETS) {
       expect(fromSource.has(asset), `${asset} is served but nothing references it`).toBe(true);
     }
@@ -171,5 +180,48 @@ describe('the app shell', () => {
     // docs/reference holds BEDO's own documents; they must never be served.
     expect(statSync(assetPath('docs/reference')).isDirectory()).toBe(true);
     expect(fileSize('public/Storyboard.pptx')).toBe(-1);
+  });
+});
+
+describe('the answer sheets', () => {
+  // BEDO-019. The closing step opens one worksheet per experiment, chosen by stable id
+  // rather than by file order — getting this wrong would hand a student the wrong sheet
+  // with no obvious symptom.
+  const EXPECTED: Record<string, string> = {
+    flat: '/answer-sheets/flat.pdf',
+    semi: '/answer-sheets/semi.pdf',
+    conical: '/answer-sheets/conical.pdf',
+    oblique: '/answer-sheets/oblique.pdf',
+  };
+
+  it.each(Object.entries(EXPECTED))('%s maps to %s, and the file is there', (id, url) => {
+    expect(answerSheetFor(id as ExperimentId)).toBe(url);
+    expect(fileSize(`public${url}`), `${url} is missing`).toBeGreaterThan(100_000);
+  });
+
+  it('covers every experiment, with no sheet shared between two', () => {
+    const ids = EXPERIMENTS.map((experiment) => experiment.id);
+    const urls = ids.map((id) => answerSheetFor(id));
+    expect(urls.every((url) => url !== null)).toBe(true);
+    expect(new Set(urls).size).toBe(ids.length);
+  });
+
+  it('every sheet is a PDF', () => {
+    for (const url of Object.values(EXPECTED)) {
+      const header = readFileSync(assetPath(`public${url}`)).subarray(0, 5).toString('latin1');
+      expect(header, `${url} is not a PDF`).toBe('%PDF-');
+    }
+  });
+
+  it('records where they came from', () => {
+    const readme = readFileSync(assetPath('public/answer-sheets/README.txt'), 'utf8');
+    expect(readme).toContain('Exp.{1..4} (Answer sheet).pdf');
+    expect(readme).toContain('not answer keys');
+  });
+
+  it('is small enough to stay off the critical path', () => {
+    // Roughly 1 MB in total, and none of it is fetched until a learner asks for it.
+    const total = Object.values(EXPECTED).reduce((sum, url) => sum + fileSize(`public${url}`), 0);
+    expect(total).toBeLessThan(2 * 1024 * 1024);
   });
 });

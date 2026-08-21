@@ -26,7 +26,7 @@ test('English is the language the lesson opens in', async ({ page }) => {
   await openApp(page);
 
   await expect(page.getByRole('heading', { name: EN_STEP_1 })).toBeVisible();
-  await expect(stepBadge(page)).toHaveText('Step 1 / 12');
+  await expect(stepBadge(page)).toHaveText('Step 1 / 11');
   await expect(sidebar(page).getByText('Measurement of Jet Forces')).toBeVisible();
   await expect(page.locator('.ui-container')).not.toHaveClass(/rtl/);
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
@@ -41,7 +41,7 @@ test('Arabic loads, flips the direction flag, and keeps the training UI usable',
 
   // Content is Arabic...
   await expect(page.getByRole('heading', { name: AR_STEP_1 })).toBeVisible();
-  await expect(stepBadge(page)).toHaveText('الخطوة 1 / 12');
+  await expect(stepBadge(page)).toHaveText('الخطوة 1 / 11');
   await expect(sidebar(page).getByText('قياس قوة نفث الماء')).toBeVisible();
 
   // ...and the overlay is marked right-to-left.
@@ -49,7 +49,7 @@ test('Arabic loads, flips the direction flag, and keeps the training UI usable',
 
   // The lesson still runs: step 1 completes and step 2 is announced in Arabic.
   await pressCover(page);
-  await expect(stepBadge(page)).toHaveText('الخطوة 2 / 12');
+  await expect(stepBadge(page)).toHaveText('الخطوة 2 / 11');
   await expect(page.getByRole('heading', { name: 'تثبيت العاكس' })).toBeVisible();
   await expect(page.locator('.ok-confirm-btn')).toHaveText('موافق');
 });

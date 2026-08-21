@@ -121,23 +121,47 @@ describe('quizzes', () => {
 describe('the guided procedure', () => {
   const steps = buildSteps('Flat surface (90°)', 'عاكس مسطح (90 درجة)');
 
-  it('is twelve steps, numbered 1..12 in order', () => {
-    // The current application ships twelve steps: the ten of the reference simulator plus
-    // Calculate (11) and the closing question (12) from the experiment sheets. The
-    // reconciliation of this against the sheets and the state-machine document is tracked
-    // separately in docs/23 (BEDO-041); BEDO-002 pins today's behaviour, unchanged.
-    expect(TOTAL_STEPS).toBe(12);
+  it('is eleven steps, numbered 1..11 in order', () => {
+    // BEDO-019: the canonical sequence from all four experiment sheets — nine apparatus
+    // steps, Calculate, then the closing step. Was twelve until the volumetric-valve step
+    // was removed; it appears in no sheet, and BEDO removed it from their own build in
+    // October 2025 (docs/32 §5.1, docs/35).
+    expect(TOTAL_STEPS).toBe(11);
     expect(steps).toHaveLength(TOTAL_STEPS);
-    expect(steps.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(steps.map((s) => s.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
-  it('keeps the step order the reference simulator uses', () => {
+  it('carries a stable id for every step, matching the sheets', () => {
+    expect(steps.map((s) => s.stepId)).toEqual([
+      'unscrew-cover',
+      'install-deflector',
+      'mount-cover',
+      'power-on',
+      'set-flow-reading-1',
+      'balance-reading-1',
+      'increase-flow-reading-2',
+      'balance-reading-2',
+      'open-monitor',
+      'record-actual-force',
+      'open-answer-sheet',
+    ]);
+  });
+
+  it('has no volumetric-valve step', () => {
+    // The one instruction BEDO-019 removed. The valve itself is untouched — see
+    // `state-machine.spec.ts` and `lesson-schema.spec.ts`.
+    expect(steps.map((s) => s.titleEn)).not.toContain('Volumetric valve');
+    for (const step of steps) {
+      expect(step.bodyEn.toLowerCase()).not.toContain('volumetric');
+    }
+  });
+
+  it('keeps the step order the experiment sheets specify', () => {
     expect(steps.map((s) => s.titleEn)).toEqual([
       'Unscrew the upper plate',
       'Install the deflector',
       'Screw the tank cover',
       'Power switch',
-      'Volumetric valve',
       'Adjust the flow valve',
       'Balance the pointer (reading 1)',
       'Increase the flow rate',
@@ -154,7 +178,6 @@ describe('the guided procedure', () => {
       'tray',
       'cover',
       'power',
-      'volumetricValve',
       'flowValve',
       'weights',
       'flowValve',
@@ -186,11 +209,18 @@ describe('the guided procedure', () => {
   });
 
   it('raises the observation popups the experiment sheets specify', () => {
-    const withNotice = steps.filter((s) => s.noticeEn).map((s) => s.id);
-    expect(withNotice).toEqual([6, 7, 8, 11]);
-    expect(steps[5].noticeEn).toContain('pushes the deflector upward');
-    expect(steps[6].noticeEn).toContain('shape of water impinging');
-    expect(steps[10].noticeEn).toContain('F_ac');
+    // Renumbered by BEDO-019; the popups themselves are unchanged and still hang off the
+    // same steps — flow, balance, flow again, and the recording step.
+    const withNotice = steps.filter((s) => s.noticeEn).map((s) => s.stepId);
+    expect(withNotice).toEqual([
+      'set-flow-reading-1',
+      'balance-reading-1',
+      'increase-flow-reading-2',
+      'record-actual-force',
+    ]);
+    expect(steps[4].noticeEn).toContain('pushes the deflector upward');
+    expect(steps[5].noticeEn).toContain('shape of water impinging');
+    expect(steps[9].noticeEn).toContain('F_ac');
   });
 
   it('is a pure function of the deflector name', () => {

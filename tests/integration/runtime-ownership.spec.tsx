@@ -58,7 +58,7 @@ describe('one source of truth', () => {
   });
 
   it('the results table follows the tray without a second copy of the weights', () => {
-    walkLesson(1, 6); // through to the first balance step
+    walkLesson(1, 5); // through to the first balance step
     click('+50g');
     expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
     click('+20g');
@@ -80,7 +80,7 @@ describe('one source of truth', () => {
   });
 
   it('the monitor reads the same readings the panel is balancing', () => {
-    walkLesson(1, 11);
+    walkLesson(1, 10);
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
     const mass = (row: number) => rows[row].querySelectorAll('td')[5].textContent;
     expect(mass(1)).toBe('80');
@@ -88,13 +88,13 @@ describe('one source of truth', () => {
   });
 
   it('reset returns the rig, the lesson and the table together', () => {
-    walkLesson(1, 6);
+    walkLesson(1, 5);
     click('+50g');
     expect(loadedWeightG()).toBe(50);
 
     click('Reset simulator');
 
-    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 12');
+    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 11');
     expect(coverState()).toBe('Closed');
     // The table is derived, so it resets with the rig rather than needing its own clear.
     click('Free Mode');
@@ -104,14 +104,14 @@ describe('one source of truth', () => {
   });
 
   it('switching experiment reloads the rig and the readings', () => {
-    walkLesson(1, 6);
+    walkLesson(1, 5);
     click('+50g');
 
     click('Experiments');
     click('Exp. 3 — Conical surface deflector');
     click('Steps');
 
-    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 12');
+    expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 11');
     expect(coverState()).toBe('Closed');
     // The conical sheet's deflector is on the rod, so step 2 names it.
     clickMesh('scene-cover');

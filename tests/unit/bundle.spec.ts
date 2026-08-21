@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { REPO_ROOT } from '../helpers/glb';
@@ -61,6 +61,18 @@ describeBuilt('the production bundle', () => {
       expect(source).not.toContain('Save Config');
       expect(source).not.toContain('Apparatus Transformations');
     }
+  });
+
+  it('does not bundle the answer sheets into the initial payload', () => {
+    // They are ~1 MB of PDF. The closing step fetches one on demand; none of it may end
+    // up inside the JS chunk (BEDO-019 §25).
+    for (const source of sources()) {
+      expect(source).not.toContain('%PDF');
+    }
+    const js = bundles().reduce((total, file) => total + statSync(file).size, 0);
+    expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
+      1_300_000
+    );
   });
 
   it('makes no request to a configuration endpoint', () => {
@@ -138,6 +150,12 @@ describeBuilt('the production bundle', () => {
         'WaterShapes/Water60_Cone.glb',
         'WaterShapes/Water90_Flat.glb',
         'WaterShapes/Water_low.glb',
+        // The worksheets the closing step opens (BEDO-019). On disk, fetched on demand.
+        'answer-sheets/README.txt',
+        'answer-sheets/conical.pdf',
+        'answer-sheets/flat.pdf',
+        'answer-sheets/oblique.pdf',
+        'answer-sheets/semi.pdf',
         'favicon.svg',
         'index.html',
         'rosendal_plains_2_4k.webp',

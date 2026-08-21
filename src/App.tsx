@@ -2,17 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
+import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
 import type { RejectionReason } from './domain/stateMachine';
 import { REJECTION_PRESENTATION } from './lib/apparatusGate';
 import { getDeflector } from './domain/apparatus';
-import { buildSteps, type ExperimentId } from './domain/experiments';
+import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
 import { markReady } from './lib/readiness';
 import { SCENE_CONFIG } from './lib/sceneConfig';
 import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
 import type { LessonContext, LessonExpectation } from './lesson/schema';
-import { CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
+import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
 import {
   selectAvailableDeflectors,
   selectExperiment,
@@ -32,6 +33,8 @@ import './index.css';
 interface LessonAndUiState {
   language: Language;
   showMonitor: boolean;
+  /** The worksheet overlay, opened by the closing step. */
+  showAnswerSheet: boolean;
   quizAnswer: number | null;
   /** A student-defined weight denomination the panel offers. Buys a button, not physics. */
   customWeightG: number;
@@ -42,6 +45,7 @@ interface LessonAndUiState {
 const initialLessonState = (language: Language = 'en'): LessonAndUiState => ({
   language,
   showMonitor: false,
+  showAnswerSheet: false,
   quizAnswer: null,
   customWeightG: 25,
   warningMessage: null,
@@ -214,6 +218,20 @@ export default function App() {
 
   const handleAnswerQuiz = (choice: number) => setUi((prev) => ({ ...prev, quizAnswer: choice }));
 
+  /**
+   * The closing step: open this experiment's worksheet.
+   *
+   * The document is fetched only when asked for — it is never part of the initial load.
+   * Opening it finishes the numbered procedure; the assessment stays where it is, beside
+   * the lesson rather than inside it.
+   */
+  const handleOpenAnswerSheet = () => {
+    setUi((prev) => ({ ...prev, showAnswerSheet: true }));
+    applyAdvance(runner.notify('OPEN_ANSWER_SHEET', context));
+  };
+
+  const handleCloseAnswerSheet = () => setUi((prev) => ({ ...prev, showAnswerSheet: false }));
+
   const handleToggleMonitor = () => {
     const opening = !ui.showMonitor;
     setUi((prev) => ({ ...prev, warningMessage: null, showMonitor: opening }));
@@ -289,11 +307,24 @@ export default function App() {
       isSatisfied: runner.isSatisfied(context),
       canConfirm: runner.canConfirm(context),
       highlight: currentStep.highlight,
-      panelControls: currentStep.panelControls,
+      // The step's own controls, plus the ones available at any point — the volumetric
+      // valve, which is part of the rig but not part of the procedure.
+      panelControls: [...currentStep.panelControls, ...(CURRENT_LESSON.alwaysAvailable ?? [])],
       hasInstalledDeflector: runner.hasReached('install-deflector'),
       activeReadingIndex: simulation.activeReadingIndex,
+      isComplete: lessonState.isComplete,
+      answerSheetUrl: answerSheetFor(simulation.experimentId),
     }),
-    [isGuided, currentStep, steps, runner, context, simulation.activeReadingIndex]
+    [
+      isGuided,
+      currentStep,
+      steps,
+      runner,
+      context,
+      simulation.activeReadingIndex,
+      simulation.experimentId,
+      lessonState.isComplete,
+    ]
   );
 
   /**
@@ -361,7 +392,17 @@ export default function App() {
         clearWarning={clearWarning}
         clearNotice={clearNotice}
         onOkClick={handleStepOkClick}
+        onOpenAnswerSheet={handleOpenAnswerSheet}
       />
+
+      {ui.showAnswerSheet && lessonView.answerSheetUrl && (
+        <AnswerSheet
+          url={lessonView.answerSheetUrl}
+          experimentName={ui.language === 'ar' ? experiment.nameAr : experiment.nameEn}
+          isArabic={ui.language === 'ar'}
+          onClose={handleCloseAnswerSheet}
+        />
+      )}
 
       {view.showMonitor && (
         <SoftwareMonitor

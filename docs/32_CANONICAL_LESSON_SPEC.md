@@ -12,6 +12,12 @@ content but is **not a numbered step**.
 **Nothing in `src/` changes.** The current twelve-step flow stays until an implementation
 task is authorised.
 
+
+> **Implemented by BEDO‑019** — see `docs/35`. Eleven numbered steps, the volumetric valve
+> as an always-available affordance, the assessment outside the numbered flow, and the four
+> answer-sheet worksheets shipped and opened by the closing step. The evidence below is
+> unchanged; only its status is.
+
 ---
 
 ## 1. Sources read

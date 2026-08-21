@@ -299,7 +299,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   556 green; scene fingerprint identical, draw calls 769 unchanged. **BUG‑04's duplication half is fixed;
   gating is untouched** because enforcing it would change behaviour (`BEDO‑020`). Detail: `docs/34`.
 
-### ☐ BEDO‑019 — Reconcile the step list to the experiment sheets `P1`
+### ✅ BEDO‑019 — Reconcile the step list to the experiment sheets `P1`
 - **Objective** 11 steps per the sheets; volumetric valve becomes clickable and state-neutral; step 11 surfaces the real answer sheet PDFs.
 - **Reason** `docs/14 §5` — step 5 (volumetric valve) exists in **no** experiment sheet, and causes two of the four disorienting camera trips.
 - **✅ Now a data edit.** BEDO‑018 made the schema semantic, so the canonical migration is: delete one step
@@ -309,6 +309,15 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Acceptance** step list matches Exp.1–4 docx exactly, both languages.
 - **Tests** `lessonDefinition.spec.ts` compares against a transcribed fixture. Today's twelve steps are pinned
   by `experiments.spec.ts` and `lesson.e2e.ts`; both change **only** once D‑2 is decided.
+- **Status** ✅ Complete. **Eleven numbered steps**, as all four experiment sheets specify. The
+  volumetric-valve instruction is gone from the procedure and the valve is not: it moved to
+  `Lesson.alwaysAvailable`, so it is on the panel at *every* step, still operable from the 3D scene, still in
+  the state machine — and inert, exactly as BEDO's state-machine document describes. The closing step now
+  opens the **real worksheet**, one per experiment, mapped by stable id and fetched on demand (boot is still
+  15 requests / 27.02 MB). The assessment is preserved and unnumbered. **There is no step 12** — completion is
+  a state. Ten of eleven step ids were untouched, and BEDO‑018's architecture meant no code followed the
+  renumbering. Scene fingerprint identical; draw calls 769 unchanged; 585 tests green. Twelve baseline
+  expectations were changed deliberately, each recorded with its evidence in `docs/35 §8`.
 
 ### ☐ BEDO‑020 — Interaction engine + single gate `P1`
 - **Objective** Affordance registry with mandatory `a11y` descriptors; gesture recogniser; intent bus; **one** gate.
@@ -530,9 +539,9 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `CQ‑01`..`21` | BEDO‑002, 004, 005, 014, 025 |
 | `PERF‑12` 39 MB of unrequested assets in `dist/` | ✅ BEDO‑004 |
 | Video modal cannot be closed (found by BEDO‑004) | BEDO‑026/027 — see `docs/28 §11` |
-| Lesson step count (12 shipped vs 11 canonical) | ✅ BEDO‑041 resolved (`docs/32`); implementation is BEDO‑019 |
-| R3F step 5 (volumetric valve) has no primary-source support | BEDO‑019 — remove the number, keep the affordance |
-| Answer-sheet worksheet (4 PDFs) never wired up | BEDO‑019 / `D‑6` |
+| Lesson step count (12 shipped vs 11 canonical) | ✅ BEDO‑041 resolved (`docs/32`), ✅ BEDO‑019 implemented (`docs/35`) |
+| R3F step 5 (volumetric valve) has no primary-source support | ✅ BEDO‑019 — number removed, affordance kept |
+| Answer-sheet worksheet (4 PDFs) never wired up | ✅ BEDO‑019 — shipped, mapped by experiment id, lazy |
 | Lever-arm constant: does one exist? | ✅ BEDO‑005 — no; 1:1 per BEDO's own simulator (`docs/29 §8`) |
 | Spring travels below rest against storyboard sl. 8 | ✅ BEDO‑007 (`docs/31`) |
 | Storyboard `(200×100)` contradicts the xlsx `/200*1000` | Open — BEDO's own inconsistency (`docs/31 §2`) |

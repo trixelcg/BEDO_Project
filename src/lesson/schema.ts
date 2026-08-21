@@ -51,7 +51,7 @@ export type LessonExpectation =
   | { readonly type: 'ADD_WEIGHT' }
   | { readonly type: 'OPEN_MONITOR' }
   | { readonly type: 'RECORD_ACTUAL_FORCE' }
-  | { readonly type: 'ANSWER_QUESTION' };
+  | { readonly type: 'OPEN_ANSWER_SHEET' };
 
 /** Groups of apparatus parts a step invites the learner to touch. */
 export type HighlightKey =
@@ -69,7 +69,8 @@ export type PanelControl =
   | 'volumetricValve'
   | 'flowValve'
   | 'weights'
-  | 'monitor';
+  | 'monitor'
+  | 'answerSheet';
 
 /** Everything a completion condition is allowed to look at. */
 export interface LessonContext {
@@ -149,6 +150,15 @@ export interface LessonStepDefinition {
 
 export interface Lesson {
   readonly steps: readonly LessonStepDefinition[];
+  /**
+   * Controls available at every step, independent of the procedure.
+   *
+   * Added by BEDO-019 for the volumetric valve: BEDO's state machine makes it clickable in
+   * every state, and no experiment sheet instructs it, so it is an affordance rather than
+   * a step. Without this it would have been reachable only from the 3D scene in guided
+   * mode, which would be a capability regression dressed up as a spec alignment.
+   */
+  readonly alwaysAvailable?: readonly PanelControl[];
 }
 
 /** Steps in order, by id — the runner walks the array, nothing else may. */

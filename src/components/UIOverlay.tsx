@@ -45,6 +45,7 @@ interface UIOverlayProps {
   clearWarning: () => void;
   clearNotice: () => void;
   onOkClick: () => void;
+  onOpenAnswerSheet: () => void;
 }
 
 type Panel = 'steps' | 'experiments' | 'params';
@@ -69,6 +70,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   clearWarning,
   clearNotice,
   onOkClick,
+  onOpenAnswerSheet,
 }) => {
   const [showVideo, setShowVideo] = useState(false);
   const [panel, setPanel] = useState<Panel>('steps');
@@ -353,6 +355,32 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                     {isAr ? activeStep.titleAr : activeStep.titleEn}
                   </h3>
                   <p className="step-desc">{isAr ? activeStep.bodyAr : activeStep.bodyEn}</p>
+
+                  {show('answerSheet') && (
+                    <button
+                      className="btn-primary interactive answer-sheet-btn"
+                      onClick={onOpenAnswerSheet}
+                      style={{
+                        marginTop: 12,
+                        width: '100%',
+                        background: 'var(--success-green)',
+                        color: '#fff',
+                        fontWeight: 'bold',
+                      }}
+                    >
+                      {isAr ? 'عرض ورقة الإجابة' : 'Open the answer sheet'}
+                    </button>
+                  )}
+
+                  {lesson.isComplete && (
+                    <p
+                      className="step-desc"
+                      data-testid="lesson-complete"
+                      style={{ marginTop: 10, color: 'var(--success-green)', fontWeight: 600 }}
+                    >
+                      {isAr ? '✅ اكتملت التجربة.' : '✅ Experiment complete.'}
+                    </p>
+                  )}
 
                   {okVisible && (
                     <button

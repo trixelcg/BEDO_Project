@@ -89,8 +89,11 @@ export const loadedWeightG = (): number => {
 
 /**
  * Walks the guided lesson from `from` up to and including `to`, asserting the step number
- * before each action. Shared by the lesson-flow spec and the export-contract spec so
- * there is exactly one description of how the lesson is driven.
+ * before each action.
+ *
+ * The canonical eleven-step sequence (BEDO-019). The volumetric valve is no longer a step,
+ * so the walk goes straight from powering the pump to opening the flow valve; steps 5-11
+ * are what used to be 6-12.
  */
 export const walkLesson = (from: number, to: number) => {
   const actions: Record<number, () => void> = {
@@ -99,31 +102,28 @@ export const walkLesson = (from: number, to: number) => {
     3: () => clickMesh('scene-cover'),
     4: () => click(/Turn On Pump/),
     5: () => {
-      click('Open volumetric valve');
-      clickOk();
-    },
-    6: () => {
       setValve(0.4);
       clickOk();
     },
-    7: () => {
+    6: () => {
       click('+50g');
       click('+20g');
       click('+10g');
       clickOk();
     },
-    8: () => {
+    7: () => {
       setValve(0.5);
       clickOk();
     },
-    9: () => {
+    8: () => {
       click('+200g');
       click('+50g');
       click('+10g');
       clickOk();
     },
-    10: () => click('Open Data Monitor'),
-    11: () => click(/^Calculate$/),
+    9: () => click('Open Data Monitor'),
+    10: () => click(/^Calculate$/),
+    11: () => click('Open the answer sheet'),
   };
 
   for (let step = from; step <= to; step++) {

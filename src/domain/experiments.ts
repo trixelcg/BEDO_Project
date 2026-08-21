@@ -34,14 +34,13 @@ export type StepId =
   | 'install-deflector'
   | 'mount-cover'
   | 'power-on'
-  | 'open-volumetric-valve'
   | 'set-flow-reading-1'
   | 'balance-reading-1'
   | 'increase-flow-reading-2'
   | 'balance-reading-2'
   | 'open-monitor'
   | 'record-actual-force'
-  | 'finish';
+  | 'open-answer-sheet';
 
 export interface ExperimentStep {
   /** Stable identity. Use this, never the number. */
@@ -85,12 +84,16 @@ const NOTICE_IMPINGE = {
 };
 
 /**
- * The guided procedure. Every experiment runs the same twelve steps; only the deflector
+ * The guided procedure: eleven steps, shared by all four experiments — only the deflector
  * named in step 2 changes.
  *
- * Steps 1-10 follow the shipped reference simulator. Steps 11 and 12 come from the
- * experiment sheets and were missing entirely: the student must press Calculate to record
- * F_ac, then open the answer sheet.
+ * This is BEDO's own sequence, from the four Phase 2 experiment sheets (`docs/32 §3`):
+ * nine apparatus steps, then Calculate, then the closing step that opens the answer sheet.
+ *
+ * It used to be twelve. The extra one instructed the student to open the volumetric
+ * control valve, which appears in **no** experiment sheet, is absent from the storyboard's
+ * state tables, and was removed by BEDO from their own Unity build in October 2025. The
+ * valve is still part of the rig and still operable — it simply is not a step. `docs/35`.
  */
 export const buildSteps = (deflectorName: string, deflectorNameAr: string): ExperimentStep[] => [
   {
@@ -130,17 +133,8 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'power',
   },
   {
-    stepId: 'open-volumetric-valve',
-    id: 5,
-    titleEn: 'Volumetric valve',
-    titleAr: 'صمام التحكم الحجمي',
-    bodyEn: 'Slightly open the volumetric control valve of the unit.',
-    bodyAr: 'افتح صمام التحكم الحجمي للوحدة قليلاً.',
-    target: 'volumetricValve',
-  },
-  {
     stepId: 'set-flow-reading-1',
-    id: 6,
+    id: 5,
     titleEn: 'Adjust the flow valve',
     titleAr: 'صمام التحكم في التدفق',
     bodyEn: 'Slightly open the flow control valve of the unit to control the flow rate.',
@@ -151,7 +145,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   },
   {
     stepId: 'balance-reading-1',
-    id: 7,
+    id: 6,
     titleEn: 'Balance the pointer (reading 1)',
     titleAr: 'موازنة المؤشر (القراءة 1)',
     bodyEn: 'Add weights to balance the weight base with the pointer tip.',
@@ -162,7 +156,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   },
   {
     stepId: 'increase-flow-reading-2',
-    id: 8,
+    id: 7,
     titleEn: 'Increase the flow rate',
     titleAr: 'زيادة تدفق المياه',
     bodyEn: 'Increase the opening of the flow control valve.',
@@ -173,7 +167,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   },
   {
     stepId: 'balance-reading-2',
-    id: 9,
+    id: 8,
     titleEn: 'Balance the pointer (reading 2)',
     titleAr: 'موازنة المؤشر (القراءة 2)',
     bodyEn: 'Add weights to balance the weight base with the pointer tip.',
@@ -182,7 +176,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   },
   {
     stepId: 'open-monitor',
-    id: 10,
+    id: 9,
     titleEn: 'Open the software monitor',
     titleAr: 'عرض شاشة المراقبة',
     bodyEn: 'Switch to the software monitor.',
@@ -191,7 +185,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   },
   {
     stepId: 'record-actual-force',
-    id: 11,
+    id: 10,
     titleEn: 'Record the actual force',
     titleAr: 'تسجيل القوة الفعلية',
     bodyEn: 'Click the “Calculate” button on the table to record the value of F_ac.',
@@ -203,12 +197,14 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
       'لاحظ قراءات الجدول والمنحنى بين القوة الفعلية والقوة النظرية. يمكنك الضغط على "Save Screen" و "Export Data" لحفظ القراءات.',
   },
   {
-    stepId: 'finish',
-    id: 12,
+    stepId: 'open-answer-sheet',
+    id: 11,
     titleEn: 'You finished!',
     titleAr: 'لقد انتهيت!',
-    bodyEn: 'Answer the question below to complete the experiment.',
-    bodyAr: 'أجب عن السؤال أدناه لإكمال التجربة.',
+    // The closing instruction as BEDO's own experiment sheets write it. The app calls it
+    // the answer sheet rather than the "Document" tab, because that is the control it has.
+    bodyEn: 'Open the answer sheet to record and check your results.',
+    bodyAr: 'افتح ورقة الإجابة لتسجيل نتائجك والتحقق منها.',
     target: null,
   },
 ];
@@ -334,4 +330,26 @@ export const getExperiment = (id: DeflectorFamily): ExperimentDef =>
 /** Deflectors belonging to an experiment, in tray order. */
 export const deflectorsFor = (id: DeflectorFamily) => DEFLECTORS.filter((d) => d.family === id);
 
-export const TOTAL_STEPS = 12;
+/** The canonical count, per BEDO's four experiment sheets. Was 12 before BEDO-019. */
+export const TOTAL_STEPS = 11;
+
+/**
+ * The worksheet the closing step opens, one per experiment.
+ *
+ * Keyed by experiment id, never by file order — `docs/35 §5`. Copied unmodified from
+ * BEDO's Phase 2 delivery; provenance in `public/answer-sheets/README.txt`. Fetched on
+ * demand, never at boot.
+ *
+ * Despite the name these are not answer keys: each is a blank worksheet the student fills
+ * in by hand, computing Q, Vo, V^2, F_th and F_ac and plotting F against Q.
+ */
+export const ANSWER_SHEETS: Record<ExperimentId, string> = {
+  flat: '/answer-sheets/flat.pdf',
+  semi: '/answer-sheets/semi.pdf',
+  conical: '/answer-sheets/conical.pdf',
+  oblique: '/answer-sheets/oblique.pdf',
+};
+
+/** The worksheet for an experiment, or null when none has been delivered. */
+export const answerSheetFor = (experimentId: ExperimentId): string | null =>
+  ANSWER_SHEETS[experimentId] ?? null;

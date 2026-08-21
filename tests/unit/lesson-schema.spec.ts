@@ -20,26 +20,31 @@ const context = (commands: SimulationCommand[] = []): LessonContext => {
   return { simulation: runtime.getState(), readings: selectReadings(runtime.getState()) };
 };
 
-/** The twelve, in order, as the application ships them today. */
+/**
+ * The canonical eleven, in order (BEDO-019).
+ *
+ * Nine apparatus steps, then Calculate, then the closing step that opens the answer sheet —
+ * exactly the sequence all four BEDO experiment sheets specify (`docs/32 §3`). The
+ * volumetric valve is absent because it appears in none of them.
+ */
 const EXPECTED_ORDER: StepId[] = [
   'unscrew-cover',
   'install-deflector',
   'mount-cover',
   'power-on',
-  'open-volumetric-valve',
   'set-flow-reading-1',
   'balance-reading-1',
   'increase-flow-reading-2',
   'balance-reading-2',
   'open-monitor',
   'record-actual-force',
-  'finish',
+  'open-answer-sheet',
 ];
 
 describe('definition integrity', () => {
-  it('is the twelve steps that ship today, in order', () => {
+  it('is the canonical eleven steps, in order', () => {
     expect(CURRENT_LESSON.steps.map((s) => s.id)).toEqual(EXPECTED_ORDER);
-    expect(CURRENT_LESSON_STEP_COUNT).toBe(12);
+    expect(CURRENT_LESSON_STEP_COUNT).toBe(11);
   });
 
   it('gives every step a unique id', () => {
@@ -47,10 +52,10 @@ describe('definition integrity', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('numbers them 1..12 for display', () => {
-    expect(CURRENT_LESSON.steps.map((s) => s.displayNumber)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-    ]);
+  it('numbers them 1..11 for display, once each', () => {
+    const numbers = CURRENT_LESSON.steps.map((s) => s.displayNumber);
+    expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(new Set(numbers).size).toBe(numbers.length);
   });
 
   it('matches the bilingual content step for step, by id', () => {
@@ -68,7 +73,7 @@ describe('definition integrity', () => {
     for (const step of CURRENT_LESSON.steps) {
       if (step.target === null) {
         // Only the monitor-side steps have no anchor.
-        expect(['record-actual-force', 'finish']).toContain(step.id);
+        expect(['record-actual-force', 'open-answer-sheet']).toContain(step.id);
       }
     }
   });
@@ -97,10 +102,11 @@ describe('definition integrity', () => {
 
 describe('identity is the id, not the position', () => {
   it('finds a step by name wherever it sits', () => {
-    expect(stepIndex(CURRENT_LESSON, 'balance-reading-1')).toBe(6);
-    // The number is metadata hanging off the definition, not the way it is found.
+    expect(stepIndex(CURRENT_LESSON, 'balance-reading-1')).toBe(5);
+    // The number is metadata hanging off the definition, not the way it is found. It moved
+    // from 7 to 6 in BEDO-019 and no code noticed.
     const step = CURRENT_LESSON.steps.find((s) => s.id === 'balance-reading-1')!;
-    expect(step.displayNumber).toBe(7);
+    expect(step.displayNumber).toBe(6);
   });
 
   it('survives renumbering — BEDO-019 changes data, not code', () => {
@@ -110,7 +116,7 @@ describe('identity is the id, not the position', () => {
       steps: CURRENT_LESSON.steps.map((step, i) => ({ ...step, displayNumber: i + 100 })),
     };
     expect(stepIndex(renumbered, 'open-monitor')).toBe(stepIndex(CURRENT_LESSON, 'open-monitor'));
-    expect(renumbered.steps.find((s) => s.id === 'finish')!.displayNumber).toBe(111);
+    expect(renumbered.steps.find((s) => s.id === 'open-answer-sheet')!.displayNumber).toBe(110);
   });
 });
 
@@ -121,7 +127,6 @@ describe('completion conditions', () => {
     { id: 'unscrew-cover', satisfyWith: [{ type: 'OPEN_COVER' }] },
     { id: 'mount-cover', satisfyWith: [] }, // satisfied at rest: the cover starts shut
     { id: 'power-on', satisfyWith: [{ type: 'POWER_ON' }] },
-    { id: 'open-volumetric-valve', satisfyWith: [{ type: 'OPEN_VOLUMETRIC_VALVE' }] },
     {
       id: 'set-flow-reading-1',
       satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }],

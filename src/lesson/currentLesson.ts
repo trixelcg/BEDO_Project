@@ -1,13 +1,10 @@
 /**
- * The lesson the application ships today, as data.
+ * The canonical lesson: eleven numbered steps, as BEDO's four experiment sheets specify.
  *
- * **This is a transcription, not a redesign.** Every condition below is the one that was
- * previously written as a comparison against a step number, in whichever of the three
- * files happened to own it. `docs/34 §3` is the line-by-line mapping.
- *
- * The canonical structure in `docs/32` — eleven steps, the volumetric valve demoted to an
- * affordance, assessment separated from the closing step — is deliberately **not** here.
- * `BEDO-019` makes that change by editing this file, which is the point of the exercise.
+ * `BEDO-018` made this a data file; `BEDO-019` then made the change it was built for —
+ * nine apparatus steps, then Calculate, then the closing step that opens the answer sheet.
+ * The volumetric valve moved to `alwaysAvailable`, the assessment moved out of the
+ * numbered flow, and no code needed editing to follow any of it. `docs/35`.
  */
 
 import { FIRST_READING_VALVE, SECOND_READING_VALVE, VALVE_SNAP_MARGIN } from '../domain/physics';
@@ -25,6 +22,15 @@ const never = () => false;
 const always = () => true;
 
 export const CURRENT_LESSON: Lesson = {
+  /**
+   * Controls the learner can reach at any point, regardless of step.
+   *
+   * The volumetric valve lives here after BEDO-019. It is part of the rig — the state
+   * machine gives it a transition in every state, and it turns without changing anything —
+   * but no experiment sheet instructs it, so it is an affordance rather than a step.
+   * `docs/35 §3`.
+   */
+  alwaysAvailable: ['volumetricValve'],
   steps: [
     {
       id: 'unscrew-cover',
@@ -73,20 +79,8 @@ export const CURRENT_LESSON: Lesson = {
       advance: { kind: 'action' },
     },
     {
-      id: 'open-volumetric-valve',
-      displayNumber: 5,
-      target: 'volumetricValve',
-      highlight: ['volumetricValve'],
-      panelControls: ['volumetricValve'],
-      expectation: { type: 'OPEN_VOLUMETRIC_VALVE' },
-      isSatisfied: (c) => c.simulation.apparatus.isVolumetricValveOpen,
-      advance: { kind: 'confirm', when: (c) => c.simulation.apparatus.isVolumetricValveOpen },
-      // Confirming forces the valve open even if it somehow is not — as the old switch did.
-      onComplete: [{ type: 'OPEN_VOLUMETRIC_VALVE' }],
-    },
-    {
       id: 'set-flow-reading-1',
-      displayNumber: 6,
+      displayNumber: 5,
       target: 'flowValve',
       highlight: ['flowValve'],
       panelControls: ['flowValve'],
@@ -101,7 +95,7 @@ export const CURRENT_LESSON: Lesson = {
     },
     {
       id: 'balance-reading-1',
-      displayNumber: 7,
+      displayNumber: 6,
       target: 'weights',
       highlight: ['weights'],
       panelControls: ['weights'],
@@ -112,7 +106,7 @@ export const CURRENT_LESSON: Lesson = {
     },
     {
       id: 'increase-flow-reading-2',
-      displayNumber: 8,
+      displayNumber: 7,
       target: 'flowValve',
       highlight: ['flowValve'],
       panelControls: ['flowValve'],
@@ -126,7 +120,7 @@ export const CURRENT_LESSON: Lesson = {
     },
     {
       id: 'balance-reading-2',
-      displayNumber: 9,
+      displayNumber: 8,
       target: 'weights',
       highlight: ['weights'],
       panelControls: ['weights'],
@@ -137,7 +131,7 @@ export const CURRENT_LESSON: Lesson = {
     },
     {
       id: 'open-monitor',
-      displayNumber: 10,
+      displayNumber: 9,
       target: 'overview',
       highlight: [],
       panelControls: ['monitor'],
@@ -150,7 +144,7 @@ export const CURRENT_LESSON: Lesson = {
     },
     {
       id: 'record-actual-force',
-      displayNumber: 11,
+      displayNumber: 10,
       target: null,
       highlight: [],
       panelControls: ['monitor'],
@@ -159,16 +153,15 @@ export const CURRENT_LESSON: Lesson = {
       advance: { kind: 'action' },
     },
     {
-      id: 'finish',
-      displayNumber: 12,
+      id: 'open-answer-sheet',
+      displayNumber: 11,
       target: null,
       highlight: [],
-      panelControls: ['monitor'],
-      // The closing step carries the assessment question today. `docs/32` shows BEDO's own
-      // sheets keep the two apart — the question is unnumbered content and the closing
-      // step opens the answer-sheet document — but separating them is BEDO-019's content
-      // migration, not this task's.
-      expectation: { type: 'ANSWER_QUESTION' },
+      panelControls: ['monitor', 'answerSheet'],
+      // BEDO's sheets close with "You finished! Click the 'Document' tab to view the
+      // answer sheet". Opening it finishes the numbered procedure; the assessment sits
+      // beside the lesson, unnumbered, exactly as the sheets place it.
+      expectation: { type: 'OPEN_ANSWER_SHEET' },
       isSatisfied: always,
       advance: { kind: 'action' },
     },

@@ -69,7 +69,7 @@ export async function currentStep(page: Page): Promise<number> {
 
 export async function expectStep(page: Page, step: number): Promise<void> {
   await expect(stepBadge(page), `expected the lesson to be on step ${step}`).toHaveText(
-    new RegExp(`\\b${step}\\s*/\\s*12`)
+    new RegExp(`\\b${step}\\s*/\\s*11`)
   );
 }
 

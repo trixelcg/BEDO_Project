@@ -15,7 +15,7 @@ import {
 } from './helpers';
 
 /**
- * The current twelve-step lesson, in a real browser (BEDO-002 §7).
+ * The canonical eleven-step lesson, in a real browser.
  *
  * The goal is not pixel fidelity — it is proof that the lesson is still completable end
  * to end against the real bundle, the real DOM and the real WebGL page. Every transition
@@ -31,14 +31,12 @@ test.describe('guided walkthrough', () => {
     await stubApparatusModel(page);
   });
 
-  test('completes all twelve steps of Exp. 1 and reaches the closing question', async ({
-    page,
-  }) => {
+  test('completes all eleven steps of Exp. 1 and opens the answer sheet', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(String(error)));
 
     await openApp(page);
-    await expect(stepBadge(page)).toHaveText('Step 1 / 12');
+    await expect(stepBadge(page)).toHaveText('Step 1 / 11');
     await expect(page.getByRole('heading', { name: 'Unscrew the upper plate' })).toBeVisible();
 
     // 1 — unscrew the upper plate
@@ -62,21 +60,20 @@ test.describe('guided walkthrough', () => {
     await button(page, 'Turn On Pump').click();
     await expectStep(page, 5);
 
-    // 5 — volumetric valve
+    // The volumetric valve is no longer a step — it is an affordance, still on the panel
+    // and still operable, and operating it must not move the lesson (`docs/35 §3`).
+    await expect(button(page, 'Open volumetric valve')).toBeVisible();
     await button(page, 'Open volumetric valve').click();
-    await expect(button(page, 'Volumetric valve open')).toBeVisible();
-    await confirmStep(page);
-    await dismissPopup(page);
-    await expectStep(page, 6);
+    await expectStep(page, 5);
 
-    // 6 — open the flow valve to the first reading setpoint
+    // 5 — open the flow valve to the first reading setpoint
     await setValve(page, 0.4);
     await expect(page.getByText('40%')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page); // "the water jet pushes the deflector upward"
-    await expectStep(page, 7);
+    await expectStep(page, 6);
 
-    // 7 — balance the pointer, reading 1 (target 80 g)
+    // 6 — balance the pointer, reading 1 (target 80 g)
     await expect(page.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeVisible();
     await expect(okButton(page)).toHaveCount(0);
     for (const weight of ['+50g', '+20g', '+10g']) {
@@ -85,38 +82,38 @@ test.describe('guided walkthrough', () => {
     await expect(page.getByText('Pointer balanced!')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page); // "the shape of water impinging the deflector"
-    await expectStep(page, 8);
+    await expectStep(page, 7);
 
-    // 8 — increase the flow to the second setpoint
+    // 7 — increase the flow to the second setpoint
     await setValve(page, 0.5);
     await expect(page.getByText('50%')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page);
-    await expectStep(page, 9);
+    await expectStep(page, 8);
 
-    // 9 — balance the pointer, reading 2 (target 260 g)
+    // 8 — balance the pointer, reading 2 (target 260 g)
     await expect(page.getByText(/Unbalanced \(target ≈ 260 g\)/)).toBeVisible();
     for (const weight of ['+200g', '+50g', '+10g']) {
       await button(page, weight).click();
     }
     await expect(page.getByText('Pointer balanced!')).toBeVisible();
     await confirmStep(page);
-    await expectStep(page, 10);
+    await expectStep(page, 9);
 
-    // 10 — open the software monitor
+    // 9 — open the software monitor
     await expect(sidebar(page).getByText('2 / 2')).toBeVisible(); // both readings taken
     await button(page, 'Open Data Monitor').click();
     await expect(page.locator('.monitor-fullscreen')).toBeVisible();
-    await expectStep(page, 11);
+    await expectStep(page, 10);
 
-    // 11 — record the actual force
+    // 10 — record the actual force
     const rows = page.locator('.data-table tbody tr');
     await expect(rows).toHaveCount(4);
     await expect(rows.nth(1).locator('td').nth(7)).toHaveText('—'); // F_ac not yet recorded
     await button(page, 'Calculate').click();
     await expect(button(page, 'F_ac recorded')).toBeDisabled();
     await dismissPopup(page);
-    await expectStep(page, 12);
+    await expectStep(page, 11);
 
     // The table now holds both readings and their measured force.
     await expect(rows.nth(1).locator('td').nth(5)).toHaveText('80');
@@ -126,18 +123,30 @@ test.describe('guided walkthrough', () => {
     await expect(rows.nth(1).locator('td').nth(7)).toHaveText('0.7848'); // F_ac = 80 g x g
     await expect(rows.nth(2).locator('td').nth(7)).toHaveText('2.5506'); // F_ac = 260 g x g
 
-    // 12 — the closing question
+    // The assessment is still here, and still unnumbered.
     await expect(
       page.getByText('If the flow velocity doubles, how does the force change?')
     ).toBeVisible();
     await button(page, 'It quadruples').click();
     await expect(page.getByText(/Correct\./)).toBeVisible();
 
-    // Behind the monitor, the lesson is finished.
-    await button(page, 'Close').click();
+    // 11 — the closing step: open the answer sheet
+    await expect(stepBadge(page)).toHaveText('Step 11 / 11');
+    await page.locator('.monitor-header').getByRole('button', { name: 'Close' }).first().click();
     await expect(page.getByRole('heading', { name: 'You finished!' })).toBeVisible();
-    await expect(stepBadge(page)).toHaveText('Step 12 / 12');
-    expect(await currentStep(page)).toBe(12);
+
+    await button(page, 'Open the answer sheet').click();
+    const sheet = page.getByTestId('answer-sheet');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator('iframe')).toHaveAttribute('src', '/answer-sheets/flat.pdf');
+
+    // Closable — not a dead end.
+    await sheet.getByRole('button', { name: 'Close' }).click();
+    await expect(sheet).toHaveCount(0);
+
+    // Eleven steps, and a completion state rather than a twelfth.
+    await expect(page.getByTestId('lesson-complete')).toBeVisible();
+    expect(await currentStep(page)).toBe(11);
 
     expect(errors, `page errors during the lesson:\n${errors.join('\n')}`).toEqual([]);
   });
@@ -156,14 +165,7 @@ test.describe('guided walkthrough', () => {
     await button(page, 'Turn On Pump').click();
     await expectStep(page, 5);
 
-    // Step 5 will not confirm until the volumetric valve is open.
-    await expect(okButton(page)).toHaveCount(0);
-    await button(page, 'Open volumetric valve').click();
-    await confirmStep(page);
-    await dismissPopup(page);
-    await expectStep(page, 6);
-
-    // Step 6 will not confirm below the reading setpoint.
+    // Step 5 will not confirm below the reading setpoint.
     await setValve(page, 0.15);
     await expect(okButton(page)).toHaveCount(0);
     await setValve(page, 0.4);

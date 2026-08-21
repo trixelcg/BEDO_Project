@@ -22,7 +22,7 @@ test('the app reports app-shell, training and scene readiness', async ({ page })
   await openApp(page, { waitForScene: true });
 
   await expect(sidebar(page)).toBeVisible();
-  await expect(stepBadge(page)).toHaveText('Step 1 / 12');
+  await expect(stepBadge(page)).toHaveText('Step 1 / 11');
 
   // The shell and the training panel are up as soon as the bundle runs.
   const shell = await page.getAttribute('html', 'data-bedo-app-ready');
@@ -73,7 +73,7 @@ test('startup requests no configuration file and logs no errors', async ({ page 
   page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
   await openApp(page);
-  await expect(stepBadge(page)).toHaveText('Step 1 / 12');
+  await expect(stepBadge(page)).toHaveText('Step 1 / 11');
 
   expect(requested.filter((path) => path.includes('config.json'))).toEqual([]);
   expect(requested.filter((path) => path.startsWith('/api'))).toEqual([]);

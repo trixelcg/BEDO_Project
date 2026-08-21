@@ -9,8 +9,10 @@
 > lint or explain them; and the runner **returns** the commands a finished step asks for
 > instead of dispatching them, so the simulation keeps a single mutator.
 >
-> The content is still the shipped twelve steps. `BEDO‑019` migrates it to the canonical
-> eleven of `docs/32` by editing data.
+> **Content migrated by BEDO‑019** (`docs/35`): the canonical eleven steps are implemented.
+> The volumetric valve moved to `Lesson.alwaysAvailable`, the closing step opens the real
+> answer-sheet worksheet, and the assessment sits outside the numbered flow. It was a data
+> edit — `currentLesson.ts` and the copy — with no change to the runner.
 
 
 **Principle:** a lesson step describes **intent**. UI components contain **no** rules for advancing lessons.
@@ -156,9 +158,11 @@ count and was correct.
   unnumbered block between step 10 and step 11. BEDO's Bernoulli trainer keeps its MCQ in a
   separate `Questions` asset, outside `StepsText` — the same shape is right here.
 
+**Done in BEDO‑019:** step 11 opens the real worksheet, one per experiment, fetched on
+demand (`docs/35 §4`).
+
 **Still open:** the sheets say *drag* the deflector and every implementation clicks
-(`BUG‑22`), and step 11's answer-sheet document — a blank fill-in worksheet, four PDFs —
-is not wired up at all (`D‑6`).
+(`BUG‑22`).
 
 **`step id ≠ display number`.** No rule may key on an index; `BALANCE_ROW = {7: 1, 9: 2}`
 in `App.tsx` is the current instance of exactly that problem.

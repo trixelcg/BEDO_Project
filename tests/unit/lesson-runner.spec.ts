@@ -200,13 +200,12 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
       { display: 2, id: 'install-deflector', act: () => run([{ type: 'SELECT_DEFLECTOR', deflectorId: 90 }]), finish: 'confirm' },
       { display: 3, id: 'mount-cover', act: () => run([{ type: 'CLOSE_COVER' }]), finish: 'action', expectation: 'CLOSE_COVER' },
       { display: 4, id: 'power-on', act: () => run([{ type: 'POWER_ON' }]), finish: 'action', expectation: 'POWER_ON' },
-      { display: 5, id: 'open-volumetric-valve', act: () => run([{ type: 'OPEN_VOLUMETRIC_VALVE' }]), finish: 'confirm' },
-      { display: 6, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: 0.4 }]), finish: 'confirm' },
-      { display: 7, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
-      { display: 8, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: 0.5 }]), finish: 'confirm' },
-      { display: 9, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
-      { display: 10, id: 'open-monitor', act: () => {}, finish: 'confirm' },
-      { display: 11, id: 'record-actual-force', act: () => run([{ type: 'RECORD_ACTUAL_FORCE' }]), finish: 'action', expectation: 'RECORD_ACTUAL_FORCE' },
+      { display: 5, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: 0.4 }]), finish: 'confirm' },
+      { display: 6, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
+      { display: 7, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: 0.5 }]), finish: 'confirm' },
+      { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
+      { display: 9, id: 'open-monitor', act: () => {}, finish: 'confirm' },
+      { display: 10, id: 'record-actual-force', act: () => run([{ type: 'RECORD_ACTUAL_FORCE' }]), finish: 'action', expectation: 'RECORD_ACTUAL_FORCE' },
     ];
 
     for (const stage of walk) {
@@ -221,9 +220,9 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
       expect(result.advanced, `${stage.id} did not advance`).toBe(true);
     }
 
-    // Twelve: the closing step, where the lesson ends.
-    expect(runner.getCurrentStep().id).toBe('finish');
-    expect(runner.getCurrentStep().displayNumber).toBe(12);
+    // Eleven: the closing step, which opens the answer sheet and ends the procedure.
+    expect(runner.getCurrentStep().id).toBe('open-answer-sheet');
+    expect(runner.getCurrentStep().displayNumber).toBe(11);
   });
 
   it('produces the same readings the old flow produced', () => {
@@ -238,7 +237,6 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
     step(() => {}, 'confirm');
     step(() => run([{ type: 'CLOSE_COVER' }]), 'action', 'CLOSE_COVER');
     step(() => run([{ type: 'POWER_ON' }]), 'action', 'POWER_ON');
-    step(() => run([{ type: 'OPEN_VOLUMETRIC_VALVE' }]), 'confirm');
     step(() => run([{ type: 'SET_VALVE', opening: 0.4 }]), 'confirm');
     step(() => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
     step(() => run([{ type: 'SET_VALVE', opening: 0.5 }]), 'confirm');
@@ -254,14 +252,14 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
   it('opens the monitor step by either path, as it always could', () => {
     const { runner, context } = harness();
     // Jump to the monitor step by construction rather than by walking.
-    const runner2 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(9) });
+    const runner2 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(8) });
     expect(runner2.getCurrentStep().id).toBe('open-monitor');
 
     // Path A: opening the monitor directly.
     expect(runner2.notify('OPEN_MONITOR', context()).advanced).toBe(true);
 
     // Path B: the OK button.
-    const runner3 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(9) });
+    const runner3 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(8) });
     expect(runner3.canConfirm(context())).toBe(true);
     expect(runner3.confirm(context()).advanced).toBe(true);
     expect(runner.getState().currentStepId).toBe('unscrew-cover'); // untouched

@@ -21,15 +21,17 @@ import {
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
 /**
- * The current twelve-step lesson, end to end in jsdom (BEDO-002 §6).
+ * The canonical eleven-step lesson, end to end in jsdom.
  *
- * This is the fast, deterministic twin of the Playwright walkthrough: same engine, same
+ * The fast, deterministic twin of the Playwright walkthrough: same engine, same
  * transitions, no browser. Playwright then proves the same path works against a real
  * page; this proves it step by step, and is where a regression is diagnosed.
  *
- * The step count is deliberately pinned at today's twelve. The reference material
- * describes eleven instructional steps, and reconciling the two is tracked separately
- * (docs/23, BEDO-041) — BEDO-002 protects what ships today.
+ * **Migrated from twelve steps by BEDO-019.** The volumetric-valve step was removed — it
+ * appears in none of BEDO's four experiment sheets and BEDO removed it from their own
+ * build — so every step from the flow valve onwards moved down by one, and the lesson now
+ * closes by opening the answer sheet rather than by answering a question. Evidence:
+ * `docs/32 §5.1`, migration: `docs/35`.
  */
 
 beforeEach(() => {
@@ -50,12 +52,13 @@ describe('the guided lesson', () => {
     expect(warning()).toBeNull();
   });
 
-  it('completes all twelve steps and reaches the closing question', () => {
-    walk(1, 11);
+  it('completes all eleven steps and reaches the closing step', () => {
+    walk(1, 10);
 
-    expectStep(12, 'You finished!');
+    expectStep(11, 'You finished!');
 
-    // The monitor is open, F_ac has been recorded, and the quiz is answerable.
+    // The monitor is open and F_ac has been recorded. The assessment is still here and
+    // still answerable — it simply is not a numbered step any more (`docs/32 §5.3`).
     const question = screen.getByText('If the flow velocity doubles, how does the force change?');
     expect(question).toBeDefined();
 
@@ -64,10 +67,16 @@ describe('the guided lesson', () => {
     expect(
       screen.getByText(/Force is proportional to the square of the velocity/)
     ).toBeDefined();
+
+    // Opening the answer sheet finishes the procedure; there is no step 12.
+    click('Open the answer sheet');
+    expect(screen.getByTestId('answer-sheet')).toBeDefined();
+    expect(screen.getByTestId('lesson-complete')).toBeDefined();
+    expect(currentStep()).toBe(11);
   });
 
   it('records exactly the two readings the student balanced', () => {
-    walk(1, 11);
+    walk(1, 10);
 
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
     expect(rows).toHaveLength(4);
@@ -100,16 +109,26 @@ describe('the progression rules the lesson enforces', () => {
 
   it('will not confirm step 5 until the volumetric valve is open', () => {
     walk(1, 4);
-    expectStep(5, 'Volumetric valve');
+    expectStep(5, 'Adjust the flow valve');
     expect(okButton()).toBeNull();
 
-    click('Open volumetric valve');
+    setValve(0.4);
     expect(okButton()).not.toBeNull();
   });
 
+  it('no longer asks the learner to open the volumetric valve', () => {
+    // BEDO-019. The instruction is gone from the numbered procedure; the valve itself is
+    // still there, and `state-machine.spec.ts` proves it still works.
+    walk(1, 3);
+    expectStep(4, 'Power switch');
+    click(/Turn On Pump/);
+    // Straight to the flow valve — what used to be step 6.
+    expectStep(5, 'Adjust the flow valve');
+  });
+
   it('will not confirm step 6 until the valve reaches the reading setpoint', () => {
-    walk(1, 5);
-    expectStep(6, 'Adjust the flow valve');
+    walk(1, 4);
+    expectStep(5, 'Adjust the flow valve');
 
     setValve(0.1);
     expect(okButton()).toBeNull();
@@ -120,8 +139,8 @@ describe('the progression rules the lesson enforces', () => {
   });
 
   it('will not confirm a balance step until the pointer is actually balanced', () => {
-    walk(1, 6);
-    expectStep(7, 'Balance the pointer (reading 1)');
+    walk(1, 5);
+    expectStep(6, 'Balance the pointer (reading 1)');
 
     expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
     expect(okButton()).toBeNull();
@@ -136,14 +155,14 @@ describe('the progression rules the lesson enforces', () => {
   });
 
   it('clears the tray between the two readings', () => {
-    walk(1, 7);
-    expectStep(8, 'Increase the flow rate');
+    walk(1, 6);
+    expectStep(7, 'Increase the flow rate');
     expect(loadedWeightG()).toBe(0);
   });
 
   it('asks for a heavier balance at the higher flow', () => {
-    walk(1, 8);
-    expectStep(9, 'Balance the pointer (reading 2)');
+    walk(1, 7);
+    expectStep(8, 'Balance the pointer (reading 2)');
     expect(screen.getByText(/Unbalanced \(target ≈ 260 g\)/)).toBeDefined();
 
     // The reading-1 mass is no longer enough now the flow has been increased.
@@ -155,12 +174,11 @@ describe('the progression rules the lesson enforces', () => {
 
   it('does not advance when the pump is switched off again', () => {
     walk(1, 4);
-    expectStep(5, 'Volumetric valve');
+    expectStep(5, 'Adjust the flow valve');
 
-    // The panel only shows the step-5 control, so the pump is switched off the way a
-    // student would at that point: by clicking the switch on the rig.
+    // Switching the pump off is legal, but it is not this step's action, so the lesson
+    // holds where it is.
     clickMesh('scene-power');
-    // Power off is legal, but it is not the step 5 action, so the lesson holds.
     expect(currentStep()).toBe(5);
   });
 
@@ -178,7 +196,7 @@ describe('the progression rules the lesson enforces', () => {
 
 describe('the observations the experiment sheets specify', () => {
   it('raises the jet-push notice when the flow valve is first set', () => {
-    walk(1, 5);
+    walk(1, 4);
     setValve(0.4);
     clickOk();
 
@@ -188,7 +206,7 @@ describe('the observations the experiment sheets specify', () => {
   });
 
   it('raises the impingement notice after the first balance', () => {
-    walk(1, 6);
+    walk(1, 5);
     click('+50g');
     click('+20g');
     click('+10g');
@@ -209,7 +227,7 @@ describe('the observations the experiment sheets specify', () => {
 
 describe('reset', () => {
   it('returns the lesson to step 1 with the rig at rest', () => {
-    walk(1, 6);
+    walk(1, 5);
     click('+50g');
     expect(loadedWeightG()).toBe(50);
 

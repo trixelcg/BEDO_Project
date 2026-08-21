@@ -60,6 +60,10 @@ export interface LessonView {
   hasInstalledDeflector: boolean;
   /** Which results row is being balanced, if any. */
   activeReadingIndex: number | null;
+  /** The numbered procedure is finished. Not a step — there is no step 12. */
+  isComplete: boolean;
+  /** The worksheet this experiment's closing step opens, or null if none shipped. */
+  answerSheetUrl: string | null;
 }
 
 export interface SimulationView {

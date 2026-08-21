@@ -50,7 +50,7 @@ afterEach(() => {
 describe('the exported CSV', () => {
   /** Runs the whole lesson, exports, and returns the file as lines. */
   const exportCsv = async () => {
-    walkLesson(1, 11);
+    walkLesson(1, 10);
     const captured = captureDownload();
     click('Export Data');
     expect(captured.blob, 'Export Data produced no file').toBeDefined();
@@ -137,7 +137,7 @@ describe('the exported CSV', () => {
 
   it('leaves F_ac empty until the student presses Calculate', async () => {
     // Everything except step 11.
-    walkLesson(1, 10);
+    walkLesson(1, 9);
     const captured = captureDownload();
     click('Export Data');
     const lines = (await captured.blob!.text()).split('\n');
@@ -178,7 +178,7 @@ describe('the on-screen readings table', () => {
     );
 
   it('has exactly these eight columns, in this order', () => {
-    walkLesson(1, 10);
+    walkLesson(1, 9);
     expect(headers()).toEqual([
       'Row',
       'Q (L/min)',
@@ -192,23 +192,23 @@ describe('the on-screen readings table', () => {
   });
 
   it('shows the readings with their current formatting', () => {
-    walkLesson(1, 11);
+    walkLesson(1, 10);
     expect(cells(1)).toEqual(['2', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848']);
     expect(cells(2)).toEqual(['3', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506']);
   });
 
   it('shows a dash for F_ac until Calculate is pressed', () => {
-    walkLesson(1, 10);
+    walkLesson(1, 9);
     expect(cells(1)[7]).toBe('—');
   });
 
   it('prints the total loaded weight in grams and newtons', () => {
-    walkLesson(1, 11);
+    walkLesson(1, 10);
     expect(screen.getByText('340 g × g = 3.335 N')).toBeDefined();
   });
 
   it('uses the Arabic headers when the lesson is in Arabic', () => {
-    walkLesson(1, 10);
+    walkLesson(1, 9);
     click('العربية');
     expect(headers()).toEqual([
       'القراءة',
