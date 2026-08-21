@@ -1,5 +1,18 @@
 # 14 — Lesson Engine
 
+> **Implemented in BEDO‑018 — see `docs/34`.** `src/lesson/{schema,currentLesson,runner}.ts`.
+>
+> Differences from the design below, all deliberate: **two** completion notions rather than
+> one (`isSatisfied` for the arrow, `advance.when` for the OK button) because the shipped
+> app genuinely needed both and collapsing them would have changed behaviour; conditions
+> are predicates rather than a serialisable `Condition` algebra, since nothing yet needs to
+> lint or explain them; and the runner **returns** the commands a finished step asks for
+> instead of dispatching them, so the simulation keeps a single mutator.
+>
+> The content is still the shipped twelve steps. `BEDO‑019` migrates it to the canonical
+> eleven of `docs/32` by editing data.
+
+
 **Principle:** a lesson step describes **intent**. UI components contain **no** rules for advancing lessons.
 
 ---
@@ -72,8 +85,9 @@ type Condition =
   | { all: Condition[] } | { any: Condition[] } | { not: Condition };
 ```
 
-**One evaluator** (`lesson/engine/conditions.ts`) serves the arrow, the OK button, the highlight, the progress
-rail and the tests. They cannot disagree.
+**One evaluator** serves the arrow, the OK button, the highlight and the tests — implemented as
+`isSatisfied`/`canConfirm` on `LessonRunner`. They cannot disagree, and a source audit in
+`domain-boundary.spec.ts` fails the build if a component reconstructs either from a step number.
 
 ---
 

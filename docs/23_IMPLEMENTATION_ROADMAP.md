@@ -282,17 +282,28 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
 ## Phase F — Lesson engine & interaction
 
-### ☐ BEDO‑018 — Lesson schema + runner `P1`
+### ✅ BEDO‑018 — Lesson schema + runner `P1`
 - **Objective** `LessonStep` as data with declarative `Condition`s; `LessonRunner` owning progression and gating; one condition evaluator for arrow, OK, highlight and rail.
 - **Reason** Rules are spread over three files with **two disagreeing "done" predicates** (`CQ‑06 #5`).
 - **Affected** `src/lesson/**` (new), `App.tsx:285‑331`, `UIOverlay.tsx:106‑112`, `DeviceModel.tsx:696‑705`.
 - **Dependencies** BEDO‑008 · **Risks** medium — behaviour must match exactly.
 - **Acceptance** E2E identical; no lesson rule remains in any component.
 - **Tests** `lesson.spec.ts`, lesson linter in CI.
+- **Status** ✅ Complete. `src/lesson/{schema,currentLesson,runner}.ts` — the twelve shipped steps as data,
+  each with a stable `StepId`, and `displayNumber` demoted to metadata. **One completion authority**: the
+  `switch (currentStep)` in `App`, `okVisible` in `UIOverlay` and the arrow's `done` in `DeviceModel` — which
+  genuinely disagreed on steps 1/3/4/11/12 — now all read the runner. `READING_FOR_STEP = {7:1, 9:2}` is gone;
+  a step that starts a reading carries `BEGIN_READING { index }` as its own data. A source audit fails the
+  build if any production file compares a step to a number, switches on one, or declares
+  `Record<number, number>`. `lesson-flow.spec.tsx` passes **unchanged** — the parity contract. 58 tests added,
+  556 green; scene fingerprint identical, draw calls 769 unchanged. **BUG‑04's duplication half is fixed;
+  gating is untouched** because enforcing it would change behaviour (`BEDO‑020`). Detail: `docs/34`.
 
 ### ☐ BEDO‑019 — Reconcile the step list to the experiment sheets `P1`
 - **Objective** 11 steps per the sheets; volumetric valve becomes clickable and state-neutral; step 11 surfaces the real answer sheet PDFs.
 - **Reason** `docs/14 §5` — step 5 (volumetric valve) exists in **no** experiment sheet, and causes two of the four disorienting camera trips.
+- **✅ Now a data edit.** BEDO‑018 made the schema semantic, so the canonical migration is: delete one step
+  entry, renumber `displayNumber`, split `finish`, update the copy. No code follows a step number (`docs/34 §10`).
 - **✅ Specification settled** by BEDO‑041 (`docs/32`): 11 numbered steps with stable ids, assessment as a separate structure, one procedure shared by four experiments. **`D‑2` is no longer blocking.** The answer-sheet PDFs are blank fill-in worksheets, not answer keys — surfacing them is part of this task.
 - **Dependencies** BEDO‑018, **BEDO‑041** · **⚠️ Needs decision D‑2.**
 - **Acceptance** step list matches Exp.1–4 docx exactly, both languages.
@@ -499,7 +510,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `BUG‑01`/`UX‑01` black screen | BEDO‑011 + 032/033 |
 | `BUG‑02` weights 2.18 m off | **BEDO‑016** |
 | `BUG‑03` jet 18× too wide | **BEDO‑017** |
-| `BUG‑04` gating bypass | BEDO‑020 — apparatus-safety half gated in ✅ BEDO‑006; lesson gating still open |
+| `BUG‑04` gating bypass | BEDO‑020 — apparatus safety gated in ✅ BEDO‑006, knowledge duplication removed in ✅ BEDO‑018; **only the gating itself remains** |
 | `BUG‑05` cross-experiment deflector | BEDO‑022 |
 | `BUG‑06` Free mode records nothing | BEDO‑023 |
 | `BUG‑07`/`08`/`10`/`11`/`12` UI/CSS | BEDO‑025, 026 |

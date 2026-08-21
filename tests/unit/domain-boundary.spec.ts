@@ -19,6 +19,7 @@ import { REPO_ROOT } from '../helpers/glb';
 
 const DOMAIN = path.join(REPO_ROOT, 'src', 'domain');
 const SIMULATION = path.join(REPO_ROOT, 'src', 'simulation');
+const LESSON = path.join(REPO_ROOT, 'src', 'lesson');
 
 /** Packages and paths the domain must never reach for. */
 const FORBIDDEN = [
@@ -211,6 +212,127 @@ describe('src/simulation imports only the domain', () => {
     for (const file of domainFiles()) {
       const source = readFileSync(path.join(DOMAIN, file), 'utf8');
       expect(source, `src/domain/${file} imports the simulation`).not.toContain('simulation/');
+    }
+  });
+});
+
+/**
+ * The lesson layer's dependency rule (BEDO-018 §30).
+ *
+ * `src/lesson/` may read the domain and the simulation's types and selectors. It may not
+ * touch React, a renderer or the DOM — the runner has to be walkable in a plain test,
+ * which is what `lesson-runner.spec.ts` does.
+ */
+describe('src/lesson imports only downwards', () => {
+  const lessonFiles = () => readdirSync(LESSON).filter((f) => f.endsWith('.ts'));
+
+  it('has the modules it is supposed to have', () => {
+    expect(lessonFiles().sort()).toEqual(['currentLesson.ts', 'runner.ts', 'schema.ts']);
+  });
+
+  it.each(readdirSync(LESSON).filter((f) => f.endsWith('.ts')))(
+    '%s imports no framework, renderer or DOM',
+    (file) => {
+      const source = readFileSync(path.join(LESSON, file), 'utf8');
+      for (const specifier of imports(source)) {
+        for (const { pattern, why } of FORBIDDEN) {
+          // The lesson may read the domain and the simulation; it may not read src/lib,
+          // components or app types.
+          if (pattern.source.includes('domain')) continue;
+          expect(
+            pattern.test(specifier),
+            `src/lesson/${file} imports "${specifier}" — ${why}`
+          ).toBe(false);
+        }
+        if (specifier.startsWith('.')) {
+          const allowed =
+            !specifier.startsWith('../') ||
+            specifier.startsWith('../domain/') ||
+            specifier.startsWith('../simulation/');
+          expect(allowed, `src/lesson/${file} imports "${specifier}", which is out of bounds`).toBe(
+            true
+          );
+        }
+      }
+    }
+  );
+
+  it.each(readdirSync(LESSON).filter((f) => f.endsWith('.ts')))(
+    '%s touches no browser global and stays deterministic',
+    (file) => {
+      const code = readFileSync(path.join(LESSON, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      for (const global of FORBIDDEN_GLOBALS) {
+        expect(code.includes(global), `src/lesson/${file} uses ${global}`).toBe(false);
+      }
+      expect(code).not.toMatch(/Math\.random\(|Date\.now\(|new Date\(/);
+    }
+  );
+
+  it('runs with no DOM present', async () => {
+    const { createLessonRunner } = await import('../../src/lesson/runner');
+    const { CURRENT_LESSON } = await import('../../src/lesson/currentLesson');
+    expect(typeof document).toBe('undefined');
+    expect(createLessonRunner(CURRENT_LESSON).getCurrentStep().id).toBe('unscrew-cover');
+  });
+});
+
+/**
+ * No step-number business logic (BEDO-018 §6, §25, §26).
+ *
+ * Three files used to decide things by comparing `currentStep` against a literal, and two
+ * of them disagreed about when a step was finished. This is the ratchet that stops that
+ * coming back: numbers may be *displayed* and may sit in the schema as metadata, but no
+ * code may branch on one.
+ */
+describe('lesson progression is semantic', () => {
+  const strip = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  const read = (relative: string) => strip(readFileSync(path.join(REPO_ROOT, relative), 'utf8'));
+
+  const PRODUCTION = [
+    'src/App.tsx',
+    'src/components/UIOverlay.tsx',
+    'src/components/DeviceModel.tsx',
+    'src/components/Scene3D.tsx',
+    'src/lesson/runner.ts',
+    'src/lesson/schema.ts',
+    'src/lesson/currentLesson.ts',
+    'src/simulation/runtime.ts',
+    'src/simulation/state.ts',
+    'src/simulation/selectors.ts',
+  ];
+
+  it.each(PRODUCTION)('%s branches on no step number', (file) => {
+    const code = read(file);
+    // `step === 7`, `currentStep >= 2`, `switch (currentStep)`, `{ 7: 1, 9: 2 }`.
+    expect(code, 'compares a step against a number').not.toMatch(
+      /\b(currentStep|step|stepId)\s*(===|!==|>=|<=|>|<)\s*\d/
+    );
+    expect(code, 'switches on a step number').not.toMatch(/switch\s*\(\s*\w*[sS]tep\w*\s*\)/);
+    expect(code, 'maps step numbers to values').not.toMatch(/Record<number,\s*number>/);
+  });
+
+  it('no component keeps its own copy of "is this step finished"', () => {
+    // The three predicates that used to drift. Each of these components now asks the
+    // runner; none of them reconstructs the answer from apparatus state plus a number.
+    for (const file of ['src/components/UIOverlay.tsx', 'src/components/DeviceModel.tsx']) {
+      const code = read(file);
+      expect(code, `${file} still computes valve readiness itself`).not.toContain(
+        'VALVE_SNAP_MARGIN'
+      );
+      expect(code, `${file} still decides balance itself`).not.toMatch(
+        /recordedRows\[\d\]\?\.isBalanced/
+      );
+    }
+  });
+
+  it('the simulation still knows nothing about lessons', () => {
+    for (const file of ['src/simulation/runtime.ts', 'src/simulation/state.ts', 'src/simulation/selectors.ts']) {
+      const code = read(file);
+      expect(code, `${file} mentions a lesson step`).not.toMatch(/currentStep|lesson|StepId/i);
     }
   });
 });

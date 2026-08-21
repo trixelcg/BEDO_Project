@@ -3,15 +3,14 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import { DeviceModel } from './DeviceModel';
-import type { SimulationView } from '../types/index';
+import type { LessonView, SimulationView } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
 import type { AnchorKey } from '../domain/apparatus';
 import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
-import type { ExperimentStep } from '../domain/experiments';
 
 interface Scene3DProps {
   state: SimulationView;
-  steps: ExperimentStep[];
+  lesson: LessonView;
   sceneConfig: SceneConfig;
   onCoverClick: () => void;
   onSelectDeflector: (id: number) => void;
@@ -158,7 +157,7 @@ const CameraRig: React.FC<{
 
 export const Scene3D: React.FC<Scene3DProps> = ({
   state,
-  steps,
+  lesson,
   sceneConfig,
   onCoverClick,
   onSelectDeflector,
@@ -171,17 +170,12 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   const [anchors, setAnchors] = useState<Anchors>({});
   const handleAnchors = useCallback((next: Anchors) => setAnchors(next), []);
 
-  // Only the guided flow drives the camera; in free mode the student owns the view.
-  const focusTarget =
-    state.mode === 'guided'
-      ? (steps.find((s) => s.id === state.currentStep)?.target ?? null)
-      : null;
-
-  // Step 1 is framed on the whole bench rather than the cover it points at, so the app
-  // opens — and Reset returns — to the view the operator actually stands in. The arrow and
-  // the highlight still call out the plate; it is plainly visible from here.
-  const cameraTarget: AnchorKey | null =
-    state.mode === 'guided' && state.currentStep === 1 ? 'overview' : focusTarget;
+  // Only the guided flow drives the camera; in free mode the student owns the view. Both
+  // of these are answered by the lesson runner now — the step says what it is about, and
+  // where the camera should stand if that differs. The first step points its arrow at the
+  // plate but frames the whole bench, so the app opens on the view the operator stands in.
+  const focusTarget: AnchorKey | null = lesson.target;
+  const cameraTarget: AnchorKey | null = lesson.cameraView;
 
   return (
     <div className="canvas-container">
@@ -226,6 +220,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         <Suspense fallback={<ModelLoadingPlaceholder />}>
           <DeviceModel
             state={state}
+            lesson={lesson}
             focusTarget={focusTarget}
             groupRef={apparatusRef}
             anchors={anchors}

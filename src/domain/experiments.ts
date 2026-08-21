@@ -23,8 +23,30 @@ export interface QuizQuestion {
   explainAr: string;
 }
 
+/**
+ * Stable identity for a step of the procedure.
+ *
+ * Content is keyed by name, not by position, so the lesson engine never has to ask "what
+ * is step 7" — and `BEDO-019` can renumber the procedure without any code following it.
+ */
+export type StepId =
+  | 'unscrew-cover'
+  | 'install-deflector'
+  | 'mount-cover'
+  | 'power-on'
+  | 'open-volumetric-valve'
+  | 'set-flow-reading-1'
+  | 'balance-reading-1'
+  | 'increase-flow-reading-2'
+  | 'balance-reading-2'
+  | 'open-monitor'
+  | 'record-actual-force'
+  | 'finish';
+
 export interface ExperimentStep {
-  /** 1-based step number shown to the student. */
+  /** Stable identity. Use this, never the number. */
+  stepId: StepId;
+  /** 1-based step number shown to the student. Display only. */
   id: number;
   titleEn: string;
   titleAr: string;
@@ -72,6 +94,7 @@ const NOTICE_IMPINGE = {
  */
 export const buildSteps = (deflectorName: string, deflectorNameAr: string): ExperimentStep[] => [
   {
+    stepId: 'unscrew-cover',
     id: 1,
     titleEn: 'Unscrew the upper plate',
     titleAr: 'فك اللوحة العلوية',
@@ -80,6 +103,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'cover',
   },
   {
+    stepId: 'install-deflector',
     id: 2,
     titleEn: 'Install the deflector',
     titleAr: 'تثبيت العاكس',
@@ -88,6 +112,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'tray',
   },
   {
+    stepId: 'mount-cover',
     id: 3,
     titleEn: 'Screw the tank cover',
     titleAr: 'إغلاق غطاء الخزان',
@@ -96,6 +121,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'cover',
   },
   {
+    stepId: 'power-on',
     id: 4,
     titleEn: 'Power switch',
     titleAr: 'تشغيل الطاقة',
@@ -104,6 +130,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'power',
   },
   {
+    stepId: 'open-volumetric-valve',
     id: 5,
     titleEn: 'Volumetric valve',
     titleAr: 'صمام التحكم الحجمي',
@@ -112,6 +139,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'volumetricValve',
   },
   {
+    stepId: 'set-flow-reading-1',
     id: 6,
     titleEn: 'Adjust the flow valve',
     titleAr: 'صمام التحكم في التدفق',
@@ -122,6 +150,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     noticeAr: NOTICE_JET_PUSH.ar,
   },
   {
+    stepId: 'balance-reading-1',
     id: 7,
     titleEn: 'Balance the pointer (reading 1)',
     titleAr: 'موازنة المؤشر (القراءة 1)',
@@ -132,6 +161,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     noticeAr: NOTICE_IMPINGE.ar,
   },
   {
+    stepId: 'increase-flow-reading-2',
     id: 8,
     titleEn: 'Increase the flow rate',
     titleAr: 'زيادة تدفق المياه',
@@ -142,6 +172,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     noticeAr: NOTICE_JET_PUSH.ar,
   },
   {
+    stepId: 'balance-reading-2',
     id: 9,
     titleEn: 'Balance the pointer (reading 2)',
     titleAr: 'موازنة المؤشر (القراءة 2)',
@@ -150,6 +181,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'weights',
   },
   {
+    stepId: 'open-monitor',
     id: 10,
     titleEn: 'Open the software monitor',
     titleAr: 'عرض شاشة المراقبة',
@@ -158,6 +190,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     target: 'overview',
   },
   {
+    stepId: 'record-actual-force',
     id: 11,
     titleEn: 'Record the actual force',
     titleAr: 'تسجيل القوة الفعلية',
@@ -170,6 +203,7 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
       'لاحظ قراءات الجدول والمنحنى بين القوة الفعلية والقوة النظرية. يمكنك الضغط على "Save Screen" و "Export Data" لحفظ القراءات.',
   },
   {
+    stepId: 'finish',
     id: 12,
     titleEn: 'You finished!',
     titleAr: 'لقد انتهيت!',

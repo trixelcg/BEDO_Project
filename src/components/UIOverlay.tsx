@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import type { CustomParams, ExperimentId, Language, SimulationView } from '../types/index';
+import type {
+  CustomParams,
+  ExperimentId,
+  Language,
+  LessonView,
+  Mode,
+  SimulationView,
+} from '../types/index';
 import {
   Layers,
   Power,
@@ -14,21 +21,17 @@ import {
 } from 'lucide-react';
 import { WEIGHTS, type DeflectorDef } from '../domain/apparatus';
 import { markReady } from '../lib/readiness';
-import { EXPERIMENTS, TOTAL_STEPS, type ExperimentDef, type ExperimentStep } from '../domain/experiments';
-import {
-  FIRST_READING_VALVE,
-  SECOND_READING_VALVE,
-  VALVE_SNAP_MARGIN,
-  flowRateLMin,
-} from '../domain/physics';
+import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
+import { flowRateLMin } from '../domain/physics';
+import type { PanelControl } from '../lesson/schema';
 
 interface UIOverlayProps {
   state: SimulationView;
-  steps: ExperimentStep[];
+  lesson: LessonView;
   experiment: ExperimentDef;
   availableDeflectors: DeflectorDef[];
   onSelectLanguage: (lang: Language) => void;
-  onSetMode: (mode: SimulationView['mode']) => void;
+  onSetMode: (mode: Mode) => void;
   onSelectExperiment: (id: ExperimentId) => void;
   onSetParams: (params: Partial<CustomParams>) => void;
   onSelectDeflector: (id: number) => void;
@@ -48,7 +51,7 @@ type Panel = 'steps' | 'experiments' | 'params';
 
 export const UIOverlay: React.FC<UIOverlayProps> = ({
   state,
-  steps,
+  lesson,
   experiment,
   availableDeflectors,
   onSelectLanguage,
@@ -74,8 +77,6 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   useEffect(() => markReady('training'), []);
 
   const {
-    mode,
-    currentStep,
     language,
     selectedDeflectorId,
     isCoverOpen,
@@ -89,31 +90,24 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   } = state;
 
   const isAr = language === 'ar';
-  const guided = mode === 'guided';
-  const activeStep = steps.find((s) => s.id === currentStep);
+  const guided = lesson.isGuided;
+  const activeStep = lesson.step;
 
   const totalLoadedWeight = loadedWeightsG.reduce((a, b) => a + b, 0);
   const flow = flowRateLMin(valveOpening, params.pumpFlowLMin);
 
-  const valveReady =
-    (currentStep === 6 && valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
-    (currentStep === 8 && valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN);
-
-  const balanceRow = currentStep === 7 ? 1 : currentStep === 9 ? 2 : null;
-  const activeRow = balanceRow !== null ? recordedRows[balanceRow] : undefined;
+  // Which reading is being balanced is simulation state, and whether the step is ready to
+  // confirm is the lesson runner's answer. Both used to be worked out here from the step
+  // number, in a predicate that disagreed with the one in `DeviceModel`.
+  const activeRow =
+    lesson.activeReadingIndex !== null ? recordedRows[lesson.activeReadingIndex] : undefined;
   const readingsTaken = [1, 2].filter((i) => (recordedRows[i]?.loadedMassG ?? 0) > 0).length;
 
-  // In Free mode every control is on the panel at once; in Guided mode only the one the
+  // In Free mode every control is on the panel at once; in Guided mode only the ones the
   // current step asks for.
-  const show = (...stepIds: number[]) => !guided || stepIds.includes(currentStep);
+  const show = (control: PanelControl) => !guided || lesson.panelControls.includes(control);
 
-  const okVisible =
-    guided &&
-    ((currentStep === 2 && isCoverOpen) ||
-      (currentStep === 5 && state.isVolumetricValveOpen) ||
-      valveReady ||
-      (balanceRow !== null && !!activeRow?.isBalanced) ||
-      currentStep === 10);
+  const okVisible = lesson.canConfirm;
 
   const weightOptions = [...WEIGHTS.map((w) => w.grams), params.customWeightG].filter(
     (g, i, arr) => g > 0 && arr.indexOf(g) === i
@@ -188,10 +182,10 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 flex: 1,
                 fontSize: '11px',
                 padding: '6px',
-                background: mode === m ? 'rgba(245,130,32,0.14)' : 'transparent',
-                borderColor: mode === m ? '#f58220' : 'rgba(255,255,255,0.08)',
-                color: mode === m ? '#f58220' : '#fff',
-                fontWeight: mode === m ? 700 : 400,
+                background: (guided ? 'guided' : 'free') === m ? 'rgba(245,130,32,0.14)' : 'transparent',
+                borderColor: (guided ? 'guided' : 'free') === m ? '#f58220' : 'rgba(255,255,255,0.08)',
+                color: (guided ? 'guided' : 'free') === m ? '#f58220' : '#fff',
+                fontWeight: (guided ? 'guided' : 'free') === m ? 700 : 400,
               }}
             >
               {m === 'free'
@@ -352,8 +346,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 >
                   <div className="step-badge">
                     {isAr
-                      ? `الخطوة ${currentStep} / ${TOTAL_STEPS}`
-                      : `Step ${currentStep} / ${TOTAL_STEPS}`}
+                      ? `الخطوة ${lesson.displayNumber} / ${lesson.totalSteps}`
+                      : `Step ${lesson.displayNumber} / ${lesson.totalSteps}`}
                   </div>
                   <h3 className="step-title" style={{ marginTop: 8, marginBottom: 6 }}>
                     {isAr ? activeStep.titleAr : activeStep.titleEn}
@@ -393,7 +387,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Deflector selection */}
-              {show(2) && (
+              {show('deflectors') && (
                 <div
                   className="glass-card"
                   style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}
@@ -423,7 +417,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Power */}
-              {show(4) && (
+              {show('power') && (
                 <button
                   className="btn-primary interactive"
                   onClick={onTogglePower}
@@ -445,7 +439,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Volumetric valve */}
-              {show(5) && (
+              {show('volumetricValve') && (
                 <div className="glass-card" style={{ marginBottom: 12 }}>
                   <button
                     className="btn-secondary"
@@ -473,7 +467,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Flow valve */}
-              {show(6, 8) && (
+              {show('flowValve') && (
                 <div className="glass-card valve-slider-container" style={{ marginBottom: 12 }}>
                   <div className="slider-label">
                     <span>{isAr ? 'صمام التدفق (n):' : 'Flow control valve (n):'}</span>
@@ -504,7 +498,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Weights */}
-              {show(7, 9) && (
+              {show('weights') && (
                 <div
                   className="glass-card"
                   style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}
@@ -554,7 +548,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               )}
 
               {/* Monitor */}
-              {show(10, 11, 12) && (
+              {show('monitor') && (
                 <button
                   className="btn-primary"
                   onClick={onToggleMonitor}

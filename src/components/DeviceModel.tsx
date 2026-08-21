@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useGLTF } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import type { SimulationView } from '../types/index';
+import type { LessonView, SimulationView } from '../types/index';
 import {
   DEFLECTORS,
   MESH,
@@ -24,12 +24,7 @@ import {
   type Anchors,
 } from '../lib/apparatusView';
 import { springDeflectionMm } from '../domain/spring';
-import {
-  FIRST_READING_VALVE,
-  SECOND_READING_VALVE,
-  VALVE_SNAP_MARGIN,
-  jetState,
-} from '../domain/physics';
+import { jetState } from '../domain/physics';
 import { markReady } from '../lib/readiness';
 
 type Action =
@@ -53,6 +48,7 @@ interface Hotspot {
 
 interface DeviceModelProps {
   state: SimulationView;
+  lesson: LessonView;
   /** Part the current guided step is about — null in free mode. */
   focusTarget: AnchorKey | null;
   groupRef: React.RefObject<THREE.Group | null>;
@@ -75,6 +71,7 @@ interface DeviceModelProps {
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
+  lesson,
   focusTarget,
   groupRef,
   anchors,
@@ -547,11 +544,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     DEFLECTORS.forEach((d) => {
       const shelf = pick(d.shelf);
       const installed = pick(d.installed);
-      const chosen = state.currentStep >= 2 && state.selectedDeflectorId === d.id;
+      const chosen = lesson.hasInstalledDeflector && state.selectedDeflectorId === d.id;
       if (shelf) shelf.visible = !chosen;
       if (installed) installed.visible = chosen;
     });
-  }, [scene, state.currentStep, state.selectedDeflectorId]);
+  }, [scene, lesson.hasInstalledDeflector, state.selectedDeflectorId]);
 
   /**
    * Read every interactive part's real position and size back off the GLB.
@@ -678,7 +675,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const trayDeflectors = DEFLECTORS.map((d) => d.shelf);
     const trayWeights = WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!);
 
-    if (state.mode === 'free') {
+    if (!lesson.isGuided) {
       return new Set([
         MESH.tankCover,
         MESH.powerSwitch,
@@ -689,38 +686,37 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ]);
     }
 
-    const s = state.currentStep;
-    if (s === 1 || s === 3) return new Set([MESH.tankCover]);
-    if (s === 2) return new Set(trayDeflectors);
-    if (s === 4) return new Set([MESH.powerSwitch]);
-    if (s === 5) return new Set([MESH.volumetricValve]);
-    if (s === 6 || s === 8) return new Set([MESH.flowValve]);
-    if (s === 7 || s === 9) return new Set(trayWeights);
-    return new Set();
-  }, [state.mode, state.currentStep, state.showMonitor]);
+    // In guided mode it is whatever the current step invites the learner to touch. The
+    // step definition says so; this no longer works it out from a step number.
+    const parts: Record<string, string[]> = {
+      cover: [MESH.tankCover],
+      deflectors: trayDeflectors,
+      power: [MESH.powerSwitch],
+      volumetricValve: [MESH.volumetricValve],
+      flowValve: [MESH.flowValve],
+      weights: trayWeights,
+    };
+    return new Set(lesson.highlight.flatMap((key) => parts[key] ?? []));
+  }, [lesson.isGuided, lesson.highlight, state.showMonitor]);
 
-  /** Where the guide arrow floats — null in free mode, or once the step is satisfied. */
+  /**
+   * Where the guide arrow floats — null in free mode, or once the step is satisfied.
+   *
+   * "Satisfied" is the lesson runner's answer now. This component used to decide it here
+   * with its own list of step numbers, while `UIOverlay` decided it separately for the OK
+   * button, and the two genuinely disagreed (`CQ-06 #5`). Both read one evaluator now,
+   * and each still produces exactly the behaviour it did before.
+   */
   const arrowPos = useMemo<[number, number, number] | null>(() => {
-    if (state.showMonitor || state.mode !== 'guided' || !focusTarget) return null;
-    const step = state.currentStep;
-
-    const done =
-      (step === 1 && state.isCoverOpen) ||
-      (step === 3 && !state.isCoverOpen) ||
-      (step === 4 && state.isPowerOn) ||
-      (step === 5 && state.isVolumetricValveOpen) ||
-      (step === 6 && state.valveOpening >= FIRST_READING_VALVE - VALVE_SNAP_MARGIN) ||
-      (step === 8 && state.valveOpening >= SECOND_READING_VALVE - VALVE_SNAP_MARGIN) ||
-      (step === 7 && !!state.recordedRows[1]?.isBalanced) ||
-      (step === 9 && !!state.recordedRows[2]?.isBalanced) ||
-      step >= 10;
+    if (state.showMonitor || !lesson.isGuided || !focusTarget) return null;
+    if (lesson.isSatisfied) return null;
 
     const anchor = anchors[focusTarget];
-    if (done || !anchor) return null;
+    if (!anchor) return null;
 
     const off = ANCHOR_VIEW[focusTarget]?.arrowOffset ?? DEFAULT_ARROW_OFFSET;
     return [anchor[0] + off[0], anchor[1] + off[1], anchor[2] + off[2]];
-  }, [state, anchors, focusTarget]);
+  }, [state.showMonitor, lesson.isGuided, lesson.isSatisfied, anchors, focusTarget]);
 
   const handleHotspot = (action: Action) => {
     switch (action.kind) {
@@ -870,7 +866,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const wanted = new Set<string>();
     if (!state.showMonitor) {
       if (hoveredKey) wanted.add(hoveredKey);
-      if (state.mode === 'guided' && focusTarget) liveKeys.forEach((k) => wanted.add(k));
+      if (lesson.isGuided && focusTarget) liveKeys.forEach((k) => wanted.add(k));
     }
 
     highlighted.current.forEach((key) => {
