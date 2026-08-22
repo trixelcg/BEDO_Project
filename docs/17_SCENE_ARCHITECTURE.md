@@ -133,69 +133,71 @@ This section exists because both P0 visual defects are coordinate/mapping failur
 *never use arbitrary world-space offsets when a coordinate transform can derive the correct value*, and
 *never make visual geometry define the simulation truth*.
 
-### 5.1 The three named spaces
+### 5.1 The four named spaces
 
 | Space | Definition | Used for |
 |---|---|---|
-| **GLB space** | As authored. This model is *baked*: every tray node shares translation `(0, 1.239, −1.232)` while its geometry lives far away in vertex coordinates. | Reading authored data only. |
-| **Apparatus-local** | Inside `<group position={[0,−1.8,0]} scale={1.8}>`. | All anchors, hotspots, measurements. |
-| **World** | After the group transform. | Camera, lights, raycasting. |
+| **Mesh-local** | Vertex coordinates inside a `BufferGeometry`, before any node transform. | Reading authored geometry. |
+| **Node-local** | A node's TRS *relative to its glTF parent*. This model is *baked*: *every* top-level node — the rod, all five weights, everything — shares the translation `(0, 1.238958, −1.231891)`, the exporter's Z-up → Y-up conversion, while the real geometry lives in vertex coordinates. | Almost nothing. **A node's `position` in this model is not where the object is.** |
+| **Apparatus-local** | Inside `<group position={[0,−1.8,0]} scale={1.8}>`. The GLB is a `<primitive>` child of this group with no transform of its own, so apparatus-local and the GLB's own scene space coincide. | All anchors, hotspots, drop regions, measurements. |
+| **World** | After the group transform. One model unit is one metre of real apparatus; the 1.8 scale is presentation. | Camera, lights, raycasting. |
 
-**Rules.** Every transform helper names its spaces in its signature (`glbToLocal`, `localToWorld`). A value
-crossing a boundary is converted, never assumed. Presentation code may consume measured geometry; it may never
-feed measured geometry back into the domain.
+**Rules.**
 
-### 5.2 Defect 1 — loaded weights render 2.18 m from the pan (`BUG‑02`)
+1. A value crossing a boundary is converted, never assumed.
+2. **No vector may take one axis from one space and another axis from another.** This is not a style
+   preference — it is the exact shape of `BUG‑02` (§5.2), and it is the thing to check first when geometry
+   lands somewhere impossible.
+3. **Never read `object.position` as "where this is"** in this model. Measure geometry — a `Box3`, or the
+   vertices themselves. `position` is the shared export constant above.
+4. Prefer keeping placement in apparatus-local for as long as possible and letting the group transform do the
+   rest, rather than converting individual objects to world space repeatedly.
+5. Presentation code may consume measured geometry; it may never feed measured geometry back into the domain.
+   `src/domain` cannot import three.js at all — `tests/unit/domain-boundary.spec.ts` enforces it.
 
-**Current root cause.** `DeviceModel.tsx:790‑794`:
+### 5.2 Defect 1 — loaded weights rendered 2.18 m from the pan (`BUG‑02`) — **RESOLVED, BEDO‑016**
+
+Fixed. Full account, measurements and source-asset findings: **`docs/39`**. Kept here because the *shape* of
+the mistake is the reason §5.1 rule 2 exists.
+
+**Root cause.** One vector mixed two coordinate spaces:
 
 ```ts
-offset: [ pan[0] - proto.position.x,                    // node translation
+offset: [ pan[0] - proto.position.x,                    // node-local translation
           pan[1] + cum + h/2 - centre.y,                // measured bbox centre
-          pan[2] - proto.position.z ],                  // node translation
+          pan[2] - proto.position.z ],                  // node-local translation
 ```
 
-X and Z subtract the **node translation**; Y subtracts the **measured bounding-box centre**. Two different
-spaces in one vector, and neither X nor Z accounts for the baked vertex offset.
+Because the export is baked, `proto.position` is the *same constant* for every object, so subtracting it did
+not move a disc towards the pan — it displaced every disc by `−(0, 1.239, −1.232)` wherever it was. Measured at
+HEAD before the fix: **2.196500 world units**, 1.2203 model units, ≈1.22 m of apparatus.
 
-**Coordinate spaces involved.** GLB node translation, GLB vertex space, apparatus-local.
+**A second error compounded it.** The pan anchor took `deflector_rod`'s bounding-box **crown** — which is the
+tip of the thin retaining post the annular discs slide down, not the plate they rest on. The earlier audit
+recorded Y as correct because it compared against that same crown; against the real plate the Y error is a
+constant **+0.104421** world units (58 mm of apparatus).
 
-**Computed error** (from `Weight_50` in the binary): node `T = (0, 1.239, −1.232)`; world bbox centre
-`(0.139, 1.063, −0.021)` ⇒ vertex-space centre `(0.139, −0.176, 1.211)`; pan anchor `(0.010, 1.490, −0.229)`.
+**Authoritative source of truth.** The **pan plate's top face**, found as the widest lamina on `deflector_rod`
+and returned in apparatus-local space by `measureHolderAnchor` (`src/lib/holderAnchor.ts`). *Not* the rod's
+crown, not the tray, not a node translation, and never inferred from where a weight currently is.
 
-| Axis | Rendered | Correct | Error (local) | Error (world ×1.8) |
-|---|---|---|---|---|
-| X | 0.149 | 0.010 | +0.139 | **+0.25 m** |
-| Y | 1.494 | 1.490 | +0.004 ✅ | +0.007 m |
-| Z | 0.982 | −0.229 | +1.211 | **+2.18 m** |
-
-Y is right, which is why nobody noticed: the discs are simply outside the frame, inside the lab wall.
-
-**Authoritative source of truth.** The **pan anchor**, measured from `deflector_rod`'s bounding-box crown in
-apparatus-local space. Not the tray, not the node translation.
-
-**Intended fix.**
-1. *Preferred (DCC):* re-export each weight with its origin at its own centre, so `clone()` + `position.copy(pan)`
-   just works. → `docs/19 § DCC_ASSET_ACTIONS_REQUIRED` D‑3.
-2. *Runtime (works today, single space):*
-
-```ts
-const disc = proto.clone(true);
-scene.add(disc);                                  // establish a parent BEFORE measuring
-disc.updateWorldMatrix(true, true);
-const centre = new Box3().setFromObject(disc).getCenter(new Vector3());   // world
-const targetWorld = panWorld.clone().setY(panWorld.y + cumulativeHeight + halfHeight);
-disc.position.add(targetWorld.sub(centre));       // ONE space, ALL THREE AXES
+```
+deflector_rod geometry → HolderAnchor → Seat[] → slot group → disc, click proxy, removal flight
 ```
 
-The invariant: *measure and correct in the same space, on every axis.*
+The slot group's origin **is** the seat, the disc is recentred into it and the click proxy sits at the origin,
+so the visible disc and its interaction target cannot drift apart.
 
-**Regression test.** `weightStack.spec.ts` — load the fixture, stack `[50, 100, 200]`, assert each disc's world
-bbox centre is within **5 mm** of the pan axis in X/Z and that discs stack in Y without interpenetration.
+**Fix location.** Runtime, not DCC. The GLB's pivots are not mis-placed in a way Blender could repair — they
+are all identical because the transform was baked, which is valid glTF. A re-export would risk the 33-name
+contract in `tests/unit/glb-contract.spec.ts` for no mathematical gain. `docs/39 §6` records the trade-off.
 
-**Visual acceptance.** At the `pointer` view, 1920×1080: every loaded disc is visible on the pan, seated
-concentric with the rod, stacked bottom-to-top in load order, casting a shadow on the pan. A screenshot with
-250 g loaded shows three discs.
+**Result.** Horizontal error **0.000000**; residual vertical error is the deliberate 1 mm seating clearance
+per disc. **2.1965 → 0.0018 world units.**
+
+**Regression tests.** `tests/unit/holder-anchor.spec.ts`, 27 tests against the shipped GLB. The load-bearing
+one moves a node's translation without moving a vertex and asserts the anchor does not budge — rule 2, as an
+executable statement.
 
 ### 5.3 Defect 2 — the water jet is ~18× too wide (`BUG‑03`)
 

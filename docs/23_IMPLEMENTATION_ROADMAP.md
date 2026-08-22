@@ -26,7 +26,7 @@ Week  1  ✅ BEDO-001 security  │ ▶ BEDO-002..004 baseline + tests + hygiene
 Week  2  ░ BEDO-005..007 domain core        ║ ASSET TRACK  BEDO-030..033
 Week  3  ░ BEDO-008..010 simulation runtime ║ (parallel, DCC + gltf-transform)
 Week  4  ░ BEDO-011..013 loading + scene foundations
-Week  5  ░ BEDO-014..017 draw calls, coordinate correctness  ← P1 visual defects
+Week  5  ░ BEDO-014, 015, 017 draw calls + water  │ ✅ BEDO-016 coordinate correctness
 Week  6  ✅ BEDO-018..020, 022 lesson engine + gate  │ ░ BEDO-021, 023 interaction
 Week  7  ░ BEDO-024..027 camera + UI shell
 Week  8  ░ BEDO-028..031 rendering quality + audio/feedback
@@ -257,14 +257,56 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Tests** Playwright perf spec (B‑1..B‑3).
 - **Perf** 769 → ~90–120 draws; 22 → ~3 FB binds.
 
-### ☐ BEDO‑016 — ★ Coordinate-space strategy + weight placement `P1`
-- **Objective** Implement the three named spaces with typed converters; fix the weight stack to measure and correct in **one** space on **all three axes**.
-- **Reason** **`BUG‑02` — discs render 2.18 m from the pan** because X/Z use the node translation while Y uses a measured bbox centre. Root cause, spaces, computed error, fix, test and visual criterion are in `docs/17 §5.2`.
-- **Affected** `src/scene/apparatus/WeightStack.tsx`, `src/assets/measureApparatus.ts`, `src/three/spaces.ts` (new).
-- **Dependencies** BEDO‑013, BEDO‑014 · **Risks** low once the space discipline exists.
-- **Acceptance** every disc's world bbox centre within **5 mm** of the pan axis in X/Z; stacked in Y without interpenetration; **visible on the pan at the `pointer` view with 250 g loaded**.
-- **Tests** `weightStack.spec.ts` + visual regression.
-- **Perf** none.
+### ✅ BEDO‑016 — ★ Coordinate-space strategy + weight placement `P1`
+- **Objective** Fix the weight stack to measure and correct in **one** space on **all three axes**.
+- **Reason** **`BUG‑02` — discs render 2.18 m from the pan** because X/Z use the node translation while Y uses a measured bbox centre.
+- **Acceptance** every disc's world bbox centre within **5 mm** of the pan axis in X/Z; stacked in Y without interpenetration; **visible on the pan**.
+- **Status** ✅ Complete. **`BUG‑02` is closed.** Reproduced first, at HEAD, against the running
+  application: **2.196500 world units** — 1.2203 model units, ≈1.22 m of apparatus — matching the
+  audit's ≈2.18 m exactly. Two things the audit did not record: the invisible **click proxies sat
+  1.93 units from the discs they represented**, and **Y was wrong too**, by a constant 58 mm, because
+  the audit compared against the rod's *crown* rather than the pan.
+
+  The root cause was not a wrong number but a wrong *kind* of number. `proto.position` is a node's
+  translation relative to its glTF parent, and this export is **baked**: every top-level node — the
+  rod, all five discs, everything — carries the identical `(0, 1.238958, −1.231891)`, the exporter's
+  Z-up conversion. Subtracting it did not move a disc *towards* the pan; it displaced every disc by
+  the same constant wherever it was.
+
+  There is **no pan node in the GLB** — the plate is part of `deflector_rod`, at y ∈ [1.430594,
+  1.433344] with a 0.040774 radius, under a thin retaining post that reaches 1.490356. The discs are
+  annular, bore 6.353 mm against a 5.153 mm post: they *slide down the post onto the plate*, which is
+  independent confirmation of where they belong. `src/lib/holderAnchor.ts` now finds that plate as the
+  widest lamina on the rod and returns its top face in **apparatus-local space only** — no axis from a
+  node transform, no world round-trip, no magic constant. The slot group's origin **is** the seat, so
+  the drawn disc and its hit proxy cannot diverge; the proxy became a cylinder of the disc's own
+  measured radius and thickness, retiring two hand-picked clamps.
+
+  **Result: horizontal error exactly 0.000000**; the residual is the deliberate 1 mm seating clearance
+  per disc. **2.1965 → 0.0018 world units.** Proxy offset **1.930381 → 0**. Under a lifted spring the
+  pan and the disc rise by the same 0.045690 and the seating error does not change.
+
+  The fix is at **runtime, not in the DCC**: the pivots are not mis-placed in a way Blender could
+  repair — they are all identical because the transform was baked, which is valid glTF — so a
+  re-export would risk the 33-name contract in `tests/unit/glb-contract.spec.ts` for no mathematical
+  gain. **The production GLB was not modified.**
+
+  Empty-baseline scene fingerprint **identical in every section** bar the JS chunk hash; 769 draw
+  calls, 217 055 triangles, 22 framebuffer binds and 42 programs all unchanged. In loaded states
+  **draw calls and triangles are identical too** — the only delta is +1 transform node per disc, the
+  recentring group. No `useFrame` added; the anchor is measured once at load.
+
+  **825 tests green** (798 + 27 new coordinate tests, run against the shipped GLB via a new
+  `tests/helpers/model.ts`), and the six real pointer-drag browser tests — including the two-second
+  weight removal — pass against the 26 MB apparatus. Physics, spring, lesson and gate untouched.
+  Detail: `docs/39`.
+
+  Still open and deliberately untouched: `BUG‑03` water width (`BEDO‑017`), the rod being off-screen
+  at step 2 (camera work), and the missing **tray → holder** 2 s transfer — storyboard sl. 16 says the
+  weight *moves* to the holder, and BEDO‑021 built only the reverse. Now that the destination is
+  correct and proven, that is the natural next step.
+- **Tests** `tests/unit/holder-anchor.spec.ts` + `scripts/weight-anchor.mjs` before/after capture.
+- **Perf** neutral — see above.
 
 ### ☐ BEDO‑017 — ★ Water jet physical-to-visual mapping `P1`
 - **Objective** Derive jet diameter from `NOZZLE_AREA_M2` (`d = 2√(A/π) = 0.010 m`), not from tank width; switch plume by `theoreticalV > 0`; make flow rate visibly legible.
@@ -538,6 +580,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Reason** Removes runtime scene-graph surgery permanently; gives the water plumes real UVs at physical size.
 - **Dependencies** **⚠️ `.blend` ownership confirmation** · **Risks** external dependency.
 - **Note** D‑2/D‑3 have good runtime answers (BEDO‑016/017) and must **not** block the P1 fixes.
+  D‑3 is now moot: `BEDO‑016` proved the runtime anchor is exact and the weights need no re-export (`docs/39 §6`).
 
 ---
 
@@ -615,7 +658,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 |---|---|
 | `ARCH‑09` security | ✅ BEDO‑001 |
 | `BUG‑01`/`UX‑01` black screen | BEDO‑011 + 032/033 |
-| `BUG‑02` weights 2.18 m off | **BEDO‑016** |
+| `BUG‑02` weights 2.18 m off | ✅ BEDO‑016 — one authoritative pan anchor in one space (`docs/39`) |
 | `BUG‑03` jet 18× too wide | **BEDO‑017** |
 | `BUG‑04` gating bypass | ✅ BEDO‑020 — one gate for both surfaces (`docs/36`) |
 | `BUG‑05` cross-experiment deflector | ✅ BEDO‑022 — one scope rule for both surfaces (`docs/37`) |

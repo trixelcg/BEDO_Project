@@ -23,6 +23,12 @@ import {
   springTravelLimitMm,
   type Anchors,
 } from '../lib/apparatusView';
+import {
+  measureHolderAnchor,
+  recentreOffset,
+  stackSeats,
+  type HolderAnchor,
+} from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
 import { jetState } from '../domain/physics';
 import { markReady, markTransfer } from '../lib/readiness';
@@ -190,6 +196,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const highlighted = useRef<Set<string>>(new Set());
   /** Nozzle exit, in the apparatus's local space. */
   const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
+  /**
+   * The weight pan, measured from the rod's own geometry (BEDO-016).
+   *
+   * The single physical truth behind every loaded disc: what is drawn, what the pointer
+   * hits, and where a removal flight starts. Apparatus-local, like every other measured
+   * point here, and captured at rest — the live lift the pan rides on is added by the
+   * frame loop, not baked in (see `weightStackRef`).
+   */
+  const [holderAnchor, setHolderAnchor] = useState<HolderAnchor | null>(null);
   /** The glass tank the water fills, in the apparatus's local space. */
   const [tankBounds, setTankBounds] = useState<{
     cx: number;
@@ -740,15 +755,30 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     assign('volumetricValve', [MESH.volumetricValve]);
     assign('overview', [MESH.tankCover, MESH.flowValve, MESH.powerSwitch, ...trayDeflectors]);
 
-    // The weight pan sits on top of the rod, so take the rod's crown rather than its
-    // centre.
-    if (localBox([MESH.rod])) {
-      tmp.box.getCenter(tmp.center);
-      const crown = group.worldToLocal(
-        new THREE.Vector3(tmp.center.x, tmp.box.max.y, tmp.center.z)
-      );
-      nextAnchors.pan = [crown.x, crown.y, crown.z];
+    // The weight pan, from the rod's own vertices (BEDO-016).
+    //
+    // This used to be the rod's *crown* — the top of its bounding box — which is the tip
+    // of the thin retaining post, 57 mm of model above the plate the discs actually rest
+    // on. The pan is the widest thing on the rod, so `measureHolderAnchor` finds the plate
+    // itself and returns its top face. `docs/39 §5` has the measured profile.
+    const rod = pick(MESH.rod);
+    let anchor = rod ? measureHolderAnchor(rod, group) : null;
+    if (rod && anchor) {
+      // The anchor has to describe the pan **at rest**, because the frame loop adds the
+      // live `holderLift` to the stack on top of it. This measurement is taken on mount,
+      // before a frame has run, so there is nothing to strip — but stripping it anyway
+      // means a future dependency change cannot quietly bake a lifted rod into the anchor
+      // and count the same lift twice. `raiseDeflectorGhost` guards its seat the same way.
+      const lifted = rod.position.y - baseY(rod, MESH.rod);
+      if (lifted !== 0) {
+        const [x, y, z] = anchor.surface;
+        anchor = { ...anchor, surface: [x, y - lifted, z] };
+      }
     }
+    setHolderAnchor(anchor);
+    // The camera's idea of "the pan" is the same point the discs sit on. No step frames
+    // this anchor today, so nothing moves; when one does, it will frame the real plate.
+    if (anchor) nextAnchors.pan = [...anchor.surface];
 
     // Where a dragged deflector may be let go: the tank you carry it to and the rod it
     // seats in, both measured, both padded, both in the apparatus's own space so the rod
@@ -817,7 +847,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     ];
 
     setHotspots(list.filter((h): h is Hotspot => h !== null));
-  }, [scene, groupRef, onAnchors, tmp, modelScale]);
+  }, [scene, groupRef, onAnchors, tmp, modelScale, baseY]);
 
   /**
    * Parts the student is invited to touch right now.
@@ -963,31 +993,39 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * Weights the student has loaded, as clones of the real tray objects.
    *
    * The GLB is baked, so a weight's geometry carries the tray's coordinates in its
-   * vertices — dropping that raw geometry into a mesh at a new position (what this
-   * did before) renders it at the wrong place and the wrong size, which is why no
-   * weights were ever visible on the pan. Cloning the object keeps its baked
-   * transform, and we shift it by the pan-minus-tray delta.
+   * vertices — dropping that raw geometry into a mesh at a new position renders it at the
+   * wrong place and the wrong size, which is why no weights were ever visible on the pan.
+   * Cloning the object keeps its baked transform, and the clone is then *recentred* onto
+   * its seat rather than nudged by a delta.
+   *
+   * ## One space (BEDO-016)
+   *
+   * Every number below is apparatus-local. The clone is measured DETACHED — a clone has no
+   * ancestors, so its bounding box is exactly where it would draw itself if parented at
+   * the origin — and `recentreOffset` is the single subtraction that undoes that, leaving
+   * the slot group free to sit on the seat `stackSeats` computed from the pan. No axis
+   * comes from a node's `position`, which is what used to throw the stack 1.22 m off the
+   * holder (`docs/39 §4`).
+   *
+   * Each entry exposes its `seat` as well as its `recentre`, because the seat is the
+   * disc's actual place in the world and everything else — the click proxy, the start of a
+   * removal flight — is expressed against it instead of recomputing the geometry.
    */
   const stack = useMemo(() => {
-    if (!scene || !anchors.pan) return [];
-    const pan = anchors.pan;
-    const entries: {
+    if (!scene || !holderAnchor) return [];
+
+    // Measure first, place second: a seat depends on the thickness of every disc below it,
+    // so the whole stack has to be known before any one of it can be positioned.
+    const discs: {
       key: string;
       object: THREE.Object3D;
-      offset: [number, number, number];
-      /** Position in the stack — the identity `REMOVE_WEIGHT` uses. */
+      /** Where the clone's bounds land when it is parented at the origin. */
+      measured: THREE.Vector3;
+      thickness: number;
+      radius: number;
       index: number;
-      hitRadius: number;
     }[] = [];
 
-    // Each disc seats on top of the one before it, using its measured thickness — the
-    // denominations are different heights, so a fixed increment either embeds them in
-    // each other or floats them apart.
-    //
-    // The clone is measured DETACHED: a clone loses its ancestors' transforms, and in
-    // this baked GLB those carry real offsets, so the in-scene position of the original
-    // says nothing about where the clone will land once mounted under our own group.
-    let cum = 0.001; // clear the pan's top face
     state.loadedWeightsG.forEach((grams, idx) => {
       const def = WEIGHTS.find((w) => w.grams === grams);
       const proto = pick(def?.mesh ?? 'Weight_Custom');
@@ -1005,22 +1043,32 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       object.updateWorldMatrix(true, true);
       const box = new THREE.Box3().setFromObject(object);
       if (box.isEmpty()) return;
-      const centre = box.getCenter(new THREE.Vector3());
-      const h = Math.max(box.getSize(new THREE.Vector3()).y, 0.002);
+      const size = box.getSize(new THREE.Vector3());
 
-      entries.push({
+      discs.push({
         key: `${idx}-${grams}`,
         object,
-        offset: [pan[0] - proto.position.x, pan[1] + cum + h / 2 - centre.y, pan[2] - proto.position.z],
+        measured: box.getCenter(new THREE.Vector3()),
+        thickness: size.y,
+        // The discs are circular, so either horizontal extent is the diameter.
+        radius: Math.max(size.x, size.z) / 2,
         index: idx,
-        // Sized to the disc, and never taller than the disc is thick, so the proxies of
-        // stacked discs do not swallow each other.
-        hitRadius: Math.max(Math.min(h * 0.5, 0.02), 0.006),
       });
-      cum += h;
     });
-    return entries;
-  }, [scene, pick, anchors.pan, state.loadedWeightsG]);
+
+    const seats = stackSeats(
+      holderAnchor,
+      discs.map((d) => d.thickness)
+    );
+
+    return discs.map((disc, i) => ({
+      ...disc,
+      /** The disc's centre on the holder. The slot group is parked exactly here. */
+      seat: seats[i].centre,
+      /** Pulls the baked clone's centre onto its slot's origin. */
+      recentre: recentreOffset(disc.measured),
+    }));
+  }, [scene, pick, holderAnchor, state.loadedWeightsG]);
 
   // ==================================================================================
   // Drag and physical transfer (BEDO-021)
@@ -1078,6 +1126,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
     return clone;
   }, []);
+
+  /**
+   * A flying disc, wrapped so that the wrapper's origin is the disc itself (BEDO-016).
+   *
+   * The same recentring the stack slots use, so a disc that lifts off the holder is held
+   * by the point the learner is looking at rather than by the GLB's distant shared origin
+   * — and so a flight's start, its end and the seat it came from are all one arithmetic.
+   * The deflector ghosts express this differently, through `restCentre`; both say that a
+   * carried part follows the pointer by its centre.
+   */
+  const weightGhostWrapper = useCallback(
+    (entry: (typeof stack)[number]): THREE.Group => {
+      const wrapper = new THREE.Group();
+      const inner = new THREE.Group();
+      inner.position.set(entry.recentre[0], entry.recentre[1], entry.recentre[2]);
+      inner.add(cloneFor(entry.object));
+      wrapper.add(inner);
+      return wrapper;
+    },
+    [cloneFor]
+  );
 
   /**
    * Puts a part back under the rule that normally governs it.
@@ -1184,20 +1253,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const entry = entries[index];
       if (!group || !entry) return null;
 
-      const wrapper = new THREE.Group();
-      wrapper.add(cloneFor(entry.object));
+      const wrapper = weightGhostWrapper(entry);
       const stackLift = weightStackRef.current?.position.y ?? 0;
-      wrapper.position.set(entry.offset[0], entry.offset[1] + stackLift, entry.offset[2]);
+      wrapper.position.set(entry.seat[0], entry.seat[1] + stackLift, entry.seat[2]);
 
-      // Where the clone sits when its wrapper is at the origin: its baked tray transform.
-      entry.object.updateWorldMatrix(true, true);
       const grams = state.loadedWeightsG[index];
       const ghost: Ghost = {
         id: `weight:${index}`,
         wrapper,
         grams,
         from: wrapper.position.clone(),
-        to: new THREE.Vector3(),
+        // Home is the tray slot this disc was cloned from, which is precisely where its
+        // baked geometry already sits — `entry.measured` (`docs/39 §8`).
+        to: entry.measured.clone(),
         followsPointer: true,
         liftsWithCover: false,
         restCentre: new THREE.Vector3(),
@@ -1212,7 +1280,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       );
       return ghost;
     },
-    [groupRef, cloneFor, syncGhosts, state.loadedWeightsG, camera, dragTmp, dragPlane]
+    [
+      groupRef,
+      weightGhostWrapper,
+      syncGhosts,
+      state.loadedWeightsG,
+      camera,
+      dragTmp,
+      dragPlane,
+    ]
   );
 
   /**
@@ -1362,7 +1438,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // it cannot tell by id: with two discs of the same mass the position it reads back
         // out of the state need not be the position that was asked for. So it is told.
         sceneHandledRemovalRef.current = true;
-        startFlight(ghost.id, 'weight-removal', new THREE.Vector3(), false);
+        // `ghost.to` is the tray slot the disc was cloned from, worked out when it was
+        // raised. It used to be the origin, which happened to land the disc back on the
+        // tray only because the wrapper carried the clone's whole baked offset.
+        startFlight(ghost.id, 'weight-removal', ghost.to, false);
       } else {
         startFlight(ghost.id, 'return-to-source', ghost.from, false);
       }
@@ -1436,17 +1515,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const group = groupRef.current;
     if (!entry || !group) return;
 
-    const wrapper = new THREE.Group();
-    wrapper.add(cloneFor(entry.object));
+    const wrapper = weightGhostWrapper(entry);
     const stackLift = weightStackRef.current?.position.y ?? 0;
-    wrapper.position.set(entry.offset[0], entry.offset[1] + stackLift, entry.offset[2]);
+    wrapper.position.set(entry.seat[0], entry.seat[1] + stackLift, entry.seat[2]);
 
     const ghost: Ghost = {
       id,
       wrapper,
       grams: previous[index],
+      // Off the seat it was on, back to the tray slot it came from — the same two points
+      // the 3D path uses, so the panel button and the disc in the tank fly identically.
       from: wrapper.position.clone(),
-      to: new THREE.Vector3(),
+      to: entry.measured.clone(),
       followsPointer: false,
       liftsWithCover: false,
       restCentre: new THREE.Vector3(),
@@ -1677,14 +1757,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     lift(MESH.tankCover, coverOffsetRef.current);
     lift(MESH.screws, screwOffsetRef.current);
 
+    // How far the rod — and so the weight pan on top of it — is off its resting height
+    // this frame: the plate carries the rod up when it is unscrewed, and the spring moves
+    // it again under load.
+    //
+    // Named once and shared (`docs/39 §8`). The loaded discs are drawn in the apparatus's
+    // own space from an anchor measured at rest, so what keeps them on the pan is that
+    // they ride *this* number and not a second one that happens to match today. Parenting
+    // the stack under the rod would say the same thing, but the rod is a GLB node in a
+    // baked model whose origin is nowhere near its geometry; a shared lift on a sibling
+    // group is the same arithmetic without re-parenting the asset.
+    const holderLift = coverOffsetRef.current + deflection;
+
     // Central rod and pointer pin move with cover offset and deflection
     const rodObj = pick(MESH.rod);
     if (rodObj) {
-      rodObj.position.y = baseY(rodObj, MESH.rod) + coverOffsetRef.current + deflection;
+      rodObj.position.y = baseY(rodObj, MESH.rod) + holderLift;
     }
     const pinObj = pick(MESH.pointerPin);
     if (pinObj) {
-      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + coverOffsetRef.current + deflection;
+      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + holderLift;
     }
 
     // The spring rises with the cover offset
@@ -1707,7 +1799,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // The deflector moves with cover offset and spring deflection
       activeDef.position.y = damp(
         activeDef.position.y,
-        baseY(activeDef, deflector.installed) + coverOffsetRef.current + deflection,
+        baseY(activeDef, deflector.installed) + holderLift,
         10
       );
     }
@@ -1772,8 +1864,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
+    // The very same lift the rod above is given, so the stack cannot drift off the plate
+    // when the cover is unscrewed or the spring moves under load.
     if (weightStackRef.current) {
-      weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
+      weightStackRef.current.position.set(0, holderLift, 0);
     }
 
     // A tray disc is out of sight while it is on the holder, and stays out of sight for
@@ -1800,7 +1894,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         if (progress === null) continue;
         ghost.wrapper.position.lerpVectors(ghost.from, ghost.to, progress);
         if (ghost.liftsWithCover) {
-          ghost.wrapper.position.y += (coverOffsetRef.current + deflection) * progress;
+          ghost.wrapper.position.y += holderLift * progress;
         }
       }
       if (settled.length) {
@@ -1841,15 +1935,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       <primitive object={scene} />
 
       <group ref={weightStackRef}>
-        {stack.map(({ key, object, offset, index, hitRadius }) => (
-          <group key={key} position={offset}>
-            <primitive object={object} />
+        {stack.map(({ key, object, seat, recentre, index, thickness, radius }) => (
+          // The slot's origin *is* the disc's seat on the pan, so the disc and the target
+          // the pointer hits cannot drift apart: one is recentred onto this origin, the
+          // other simply sits at it (`docs/39 §7`).
+          <group key={key} position={seat}>
+            <group position={recentre}>
+              <primitive object={object} />
+            </group>
             {/*
               "Click on the weight on holder — the weight removed from the tank holder in
               2 sec" (Jetforce_Storyboard.pptx sl. 32, state D). An invisible proxy exactly
               like every other hotspot; the disc's own transform, geometry, scale and
               materials are untouched, and nothing is added to the scene while the pan is
               empty.
+
+              A disc, not a sphere. The proxy used to be a sphere whose radius was clamped
+              between two hand-picked numbers to stop stacked discs swallowing one another
+              — and it sat at the slot's origin while the disc itself was drawn 1.9 m away,
+              so the clickable weight and the visible weight were never in the same place
+              (`docs/39 §13`). Given the disc's own measured radius and thickness there is
+              nothing to tune: the target is the disc's real footprint, it can never reach
+              into a neighbour, and it is far easier to hit than the old 6 mm ball.
 
               The storyboard's gesture is a click, so a click is what this is: a press and
               release under the movement threshold resolves to `activate`. Pulling the disc
@@ -1866,7 +1973,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                 if (!drag.current()) document.body.style.cursor = 'default';
               }}
             >
-              <sphereGeometry args={[hitRadius, 10, 8]} />
+              <cylinderGeometry args={[radius, radius, thickness, 24, 1]} />
               <meshBasicMaterial visible={false} />
             </mesh>
           </group>
