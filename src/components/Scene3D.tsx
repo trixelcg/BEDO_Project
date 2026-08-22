@@ -13,12 +13,13 @@ interface Scene3DProps {
   lesson: LessonView;
   sceneConfig: SceneConfig;
   onCoverClick: () => void;
-  onSelectDeflector: (id: number) => void;
+  /** Returns whether the gate accepted it — the scene animates the transfer only if so. */
+  onSelectDeflector: (id: number) => boolean;
   onPowerClick: () => void;
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
-  onRemoveWeight: (index: number) => void;
+  onRemoveWeight: (index: number) => boolean;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {

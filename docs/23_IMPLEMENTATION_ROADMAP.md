@@ -341,13 +341,71 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 
   Still open from `docs/16`, now split out: the affordance registry, gesture recogniser, hit geometry
   (`BUG‑19`), canvas cursor (`BUG‑18`) and keyboard parity (`UX‑04`) — the *input* half of the engine.
+  **`BEDO‑021` then took the gesture recogniser and `BUG‑19`;** the registry, the general hit geometry,
+  `BUG‑18` and `UX‑04` remain.
 
-### ☐ BEDO‑021 — Drag-and-drop + 2 s transfers `P1`
+### ✅ BEDO‑021 — Drag-and-drop + 2 s transfers `P1`
 - **Objective** `transferable` affordance supporting click→2 s move, pointer drag with ghost + drop target, and keyboard pick-up/put-down.
 - **Reason** **Explicit client requirement** — eval PDF §2b *"lacking essential features like drag-and-drop"*; Exp. sheets say *"Drag the 90° flat deflector"*; storyboard specifies the 2 s animation (`BUG‑22`).
 - **Dependencies** BEDO‑020, BEDO‑010 · **Risks** medium — drag on a 3D canvas needs care with OrbitControls.
 - **Acceptance** all three input paths produce the identical intent; step 2 copy matches behaviour in both languages.
 - **Tests** `intent.spec.ts`, E2E drag path.
+- **Status** ✅ Complete. **`BUG‑22` is closed, and `BUG‑19` with it.** Step 2 says *drag* in all four
+  sheets and in both languages, and now the learner drags: a tray deflector is picked up, carried on a
+  camera-facing plane, and dropped on the rod — whose drop region is a bounding sphere **measured from
+  `deflector_rod`** and tested in apparatus space, so it rides up with the tank cover instead of being a
+  pixel guess. The gesture layer (`src/interaction/drag.ts`, pure) decides only what a gesture *means*;
+  `interactionFor(source)` is given the source and never the outcome, so a press-and-release
+  (`activate` — the storyboard's own gesture) and a drag onto the rod (`commit`) map to the **identical**
+  `Interaction` and reach the **identical** `BEDO‑020` gate. `tests/unit/drag-parity.spec.ts` walks every
+  deflector × step × experiment × mode × cover state and asserts the two decisions are deep-equal, so a
+  drag-specific lesson policy — `BUG‑04` with a third surface — cannot appear unnoticed.
+
+  **The deflector step 2 names was not on the tray to drag.** The scene drew one on the rod the moment the
+  lesson *reached* step 2, so the flat disc the sheet tells the learner to drag was already installed and
+  absent from the table — and the browser test caught the gesture falling through to OrbitControls instead.
+  That is BEDO's model back to front: the storyboard's initial state is *"the weights and deflectors on the
+  table"* (sl. 29) and one reaches the rod only when the learner puts it there (sl. 31). Fixed with two
+  semantic pieces — `LessonRunner.hasCompleted(id)` ("past this step", the distinction `hasReached` cannot
+  draw) and `App` remembering that a deflector *was* installed — so the rod is empty at steps 1–2 as BEDO
+  describes, the install has somewhere to fly to, and **free mode now seats a deflector too**, which it
+  never did. `docs/38 §3.1`.
+
+  **The drop target is the tank as well as the rod, because BEDO names both** — *"the deflector moves to
+  the tank to install it in the rod"* (sl. 7/8/14/31) — and because without the tank the drag is impossible
+  at the step that asks for it: measured on the shipped build, at step 2 the plate is up, the rod rides up
+  with it, the camera has flown to the tray, and the rod projects two and a half viewport heights above the
+  screen while the tank sits at (210, 9). Both regions are measured, padded boxes tested by ray–AABB in
+  apparatus space, and the highlight follows whichever one the pointer is over, so the feedback is always on
+  a part the learner can see.
+
+  **BEDO's two seconds are implemented, not approximated.** The storyboard says *"the deflector moves to
+  the tank to install it in the rod in 2 seconds"* (sl. 7, 8, 14) and *"the weight removed from the tank
+  holder in 2 sec"* (sl. 32, state D); `src/interaction/transfer.ts` owns the stopwatch and the easing and
+  imports nothing. Animation never gates progression — BEDO's own state machine transitions on the click
+  and the two seconds are its animation, so the runtime is authoritative the instant the gate accepts
+  (`docs/38 §4`). A missed drop asks the gate nothing at all and returns the object in 0.35 s
+  (implementation timing; no source describes a failed drop). A refused one shows the message it always
+  showed and returns the same way. The GLB's own nodes are never moved by a gesture: a cloned ghost rides
+  the pointer, so a cancelled drag has nothing to unwind and `SimulationRuntime` never sees a coordinate.
+
+  OrbitControls is suspended from the press — three's controls start orbiting on `pointerdown`, so waiting
+  for the threshold would swing the camera through the first pixels of every drag — and restored on all
+  seven exit paths, `pointercancel` and unmount included, each with its own regression test. The
+  click/drag threshold is held constant in **device** pixels rather than CSS pixels, so the same wrist
+  movement means the same thing on a 1× and a 2× display. The 2D panel is untouched and remains the
+  keyboard path; canvas-native pick-up/put-down still belongs to `UX‑04`/`BEDO‑036`.
+
+  Scene fingerprint identical to `after-bedo022` in all ten sections bar the JS chunk hash; 769 draw calls,
+  217 055 triangles, 22 framebuffer binds and 42 shader programs all unchanged. **Scene object count is 290
+  at rest before and after a drag** — a carried object is a clone raised on `pointerdown` and disposed when
+  the flight lands (290/219 idle → 294/221 carrying → 290/219 installed), and no new `useFrame` was added.
+  +10 kB of JS (1 240 895 → 1 251 320). **All 737 pre-existing tests pass unedited** bar one deliberate
+  module-list update; 798 green in total, and the six real pointer-drag browser tests pass against the
+  26 MB apparatus. Detail: `docs/38`.
+
+  Still open from `docs/16`: the affordance registry, general hit geometry, the canvas cursor (`BUG‑18`)
+  and keyboard parity (`UX‑04`).
 
 ### ✅ BEDO‑022 — Deflector scope + weight removal `P1`
 - **Objective** Reject deflectors outside the loaded experiment; make loaded weights individually removable.
@@ -568,8 +626,9 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `BUG‑14`/`15`/`16` fabricated data | BEDO‑009 |
 | `BUG‑17` material leak | BEDO‑013 |
 | `BUG‑20` floating screws | BEDO‑014 |
+| `BUG‑19` hidden tray weights clickable | ✅ BEDO‑021 — one predicate for the renderer and the hit test (`docs/38 §12`) |
 | `BUG‑21` no flow feedback | BEDO‑017, 030 |
-| `BUG‑22` drag-and-drop | BEDO‑021 |
+| `BUG‑22` drag-and-drop | ✅ BEDO‑021 — the sheets' drag, and the storyboard's 2 s transfer (`docs/38`) |
 | `BUG‑25` video | BEDO‑039 |
 | `BUG‑30` no audio | BEDO‑030 |
 | `BUG‑33` no error boundary | BEDO‑011 |

@@ -27,3 +27,19 @@ export function markReady(stage: ReadyStage): void {
   root.dataset[key] = String(Math.round(performance.now()));
   performance.mark?.(READY_MARK(stage));
 }
+
+/**
+ * Whether a physical transfer is in flight (`BEDO-021 §33`).
+ *
+ * Ships, exactly as the readiness markers do, and for the same reason: a browser test
+ * must not have to guess how long a two-second animation takes. It writes one data
+ * attribute on `<html>` — `data-bedo-transfer="active"` or `"idle"` — and is written only
+ * when the answer changes, never per frame. Nothing in the application reads it.
+ */
+export function markTransfer(active: boolean): void {
+  if (typeof document === 'undefined') return;
+  const value = active ? 'active' : 'idle';
+  const root = document.documentElement;
+  if (root.dataset.bedoTransfer === value) return;
+  root.dataset.bedoTransfer = value;
+}

@@ -349,7 +349,14 @@ describe('src/interaction is a pure policy layer', () => {
   const INTERACTION = path.join(REPO_ROOT, 'src', 'interaction');
 
   it('has the modules it is supposed to have', () => {
-    expect(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')).sort()).toEqual(['gate.ts']);
+    // `drag.ts` and `transfer.ts` joined the gate in BEDO-021: what a gesture *means* and
+    // how long a physical transfer takes are both policy-adjacent and both entirely
+    // framework-free, so they are held to the same import rule as the gate below.
+    expect(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')).sort()).toEqual([
+      'drag.ts',
+      'gate.ts',
+      'transfer.ts',
+    ]);
   });
 
   it.each(readdirSync(INTERACTION).filter((f) => f.endsWith('.ts')))(

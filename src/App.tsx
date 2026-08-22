@@ -41,16 +41,38 @@ interface LessonAndUiState {
   quizAnswer: number | null;
   /** A student-defined weight denomination the panel offers. Buys a button, not physics. */
   customWeightG: number;
+  /**
+   * A deflector has been installed on the rod in this run.
+   *
+   * BEDO's state machine starts the rig with *"the weights and deflectors on the table"*
+   * (storyboard sl. 29) and only puts one in the rod when the learner installs it (sl. 31,
+   * state C). "Has the lesson reached step 2" is not the same question and gave the wrong
+   * answer at exactly the wrong moment: the deflector step 2 says to drag was already
+   * drawn on the rod, and therefore not on the tray to be dragged (`BEDO-021`, `docs/38
+   * §3.1`).
+   *
+   * Kept beside the lesson rather than inside the runner because it is not a step: a
+   * learner who confirms step 2 without touching anything has still installed the disc the
+   * sheet loads with, which is what the `hasCompleted` fallback below covers.
+   */
+  deflectorInstalled: boolean;
+  /** Bumped by Reset and by loading another sheet. See `LessonView.runId`. */
+  runId: number;
   warningMessage: { en: string; ar: string; code: ErrorCode } | null;
   notice: { en: string; ar: string } | null;
 }
 
-const initialLessonState = (language: Language = 'en'): LessonAndUiState => ({
+const initialLessonState = (
+  language: Language = 'en',
+  runId: number = 0
+): LessonAndUiState => ({
   language,
   showMonitor: false,
   showAnswerSheet: false,
   quizAnswer: null,
   customWeightG: 25,
+  deflectorInstalled: false,
+  runId,
   warningMessage: null,
   notice: null,
 });
@@ -228,8 +250,19 @@ export default function App() {
   };
 
   // --- Deflector ---------------------------------------------------------------
-  const handleSelectDeflector = (id: number) =>
-    act({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
+  /**
+   * Install a deflector on the rod.
+   *
+   * Returns the gate's answer, because the scene needs it: an accepted drop seats the disc
+   * and plays the storyboard's two-second transfer, a refused one sends it back to the
+   * tray. Note the flag is set only on acceptance — the one place that knows whether the
+   * rig took it is the one that asked (`docs/38 §3.3`).
+   */
+  const handleSelectDeflector = (id: number): boolean => {
+    const accepted = act({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
+    if (accepted) setUi((prev) => ({ ...prev, deflectorInstalled: true }));
+    return accepted;
+  };
 
   // --- Power -------------------------------------------------------------------
   const handleTogglePower = () => {
@@ -348,7 +381,7 @@ export default function App() {
   const handleSelectExperiment = (experimentId: ExperimentId) => {
     runtime.dispatch({ type: 'SELECT_EXPERIMENT', experimentId });
     runner.reset();
-    setUi((prev) => initialLessonState(prev.language));
+    setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
 
   const handleSetParams = (params: { pumpFlowLMin?: number; customWeightG?: number }) => {
@@ -363,7 +396,7 @@ export default function App() {
   const handleReset = () => {
     runtime.reset();
     runner.reset();
-    setUi((prev) => initialLessonState(prev.language));
+    setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
 
   // The shell is mounted and interactive from here. See src/lib/readiness.ts.
@@ -383,7 +416,12 @@ export default function App() {
    */
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    (window as unknown as Record<string, unknown>).__bedoTest = {
+    const globals = window as unknown as Record<string, any>;
+    globals.__bedoTest = {
+      // Merged, not replaced: the scene registers its own drag probe under the same
+      // handle (see DeviceModel), and whichever effect runs second must not erase the
+      // other's contribution.
+      ...globals.__bedoTest,
       coverClick: handleCoverClick,
       // The tray is seven meshes inside the canvas with no DOM equivalent, and the panel
       // only ever offers the in-scope ones — so this is how the browser suite reaches
@@ -419,7 +457,12 @@ export default function App() {
       // What the gate will accept, handed to the scene so a blocked hotspot need not
       // re-derive the policy — and so an always-available one is not drawn as dead.
       available: [...availableAffordances(CURRENT_LESSON, currentStep, lessonState.mode)],
-      hasInstalledDeflector: runner.hasReached('install-deflector'),
+      // `hasCompleted`, not `hasReached`: while the learner is standing *on* the step that
+      // says to install a deflector, the rod is empty and the tray is full — which is what
+      // makes the instruction performable. The flag covers the learner who installs one
+      // during that step; the fallback covers the one who just presses OK.
+      hasInstalledDeflector: ui.deflectorInstalled || runner.hasCompleted('install-deflector'),
+      runId: ui.runId,
       activeReadingIndex: simulation.activeReadingIndex,
       isComplete: lessonState.isComplete,
       answerSheetUrl: answerSheetFor(simulation.experimentId),
@@ -432,6 +475,8 @@ export default function App() {
       steps,
       runner,
       context,
+      ui.deflectorInstalled,
+      ui.runId,
       simulation.activeReadingIndex,
       simulation.experimentId,
       lessonState.isComplete,

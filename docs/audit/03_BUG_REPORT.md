@@ -33,10 +33,10 @@ Priority `P0`–`P3`.
 | BUG‑16 | "Total Weight" sums two independent readings — physically meaningless | Data | Medium | P1 |
 | BUG‑17 | Cover‑material leak: a new `MeshPhysicalMaterial` per settings‑slider tick | Memory | High | P1 |
 | BUG‑18 | `document.body.style.cursor` can stick on `pointer` forever | Interaction | Medium | P2 |
-| BUG‑19 | Hidden tray weights remain clickable (invisible click targets) | Interaction | Medium | P2 |
+| BUG‑19 | ~~Hidden tray weights remain clickable (invisible click targets)~~ **Fixed — BEDO‑021** | Interaction | Medium | P2 |
 | BUG‑20 | Screws detach and float above the cover plate | Animation | Medium | P2 |
 | BUG‑21 | Increasing flow (step 8) produces no visible change in the jet | Simulation | High | P1 |
-| BUG‑22 | Step 2 says "Drag … onto the rod" but there is no drag‑and‑drop | UX/Copy | Medium | P1 |
+| BUG‑22 | ~~Step 2 says "Drag … onto the rod" but there is no drag‑and‑drop~~ **Fixed — BEDO‑021** | UX/Copy | Medium | P1 |
 | BUG‑23 | "Capture Camera" is a no‑op that claims success | UX | Medium | P2 |
 | BUG‑24 | `/config.json` 404s on every load and logs a confusing message twice | Loading | Low | P3 |
 | BUG‑25 | Video has no `Range` support → 28 MB, no seeking, autoplays with sound | Media | High | P1 |
@@ -555,6 +555,13 @@ restore the mesh, because `.includes` is a presence test, not a count.
 **Recommended solution.** Model the tray as inventory: each denomination has a count; the mesh and its hotspot
 are both derived from `count > 0`. Rebuild the hotspot list from the same derived state.
 
+> **✅ Fixed — `BEDO‑021`.** One predicate, `hiddenTrayWeightGrams`, is read by **both** the renderer and the
+> hit test, so the two representations cannot drift apart again; a disc that is on the holder, or on its way
+> back to it during the storyboard's two-second return, has no proxy at all. Fixed here rather than later
+> because a drag has to start from something the learner can see and pick up. The general rule — a proxy
+> exists only while its affordance is enabled (`docs/16 §5`) — still belongs with the affordance registry.
+> `docs/38 §12`.
+
 ---
 
 ## BUG‑20 — Screws detach and float above the cover plate
@@ -617,6 +624,12 @@ handler is `onClick`. A student following the instruction literally will conclud
 **Recommended solution.** Either implement pointer‑drag installation (which is the more tactile and more
 faithful option, and is worth doing) or change the copy in both languages to "Select … to install it". Do not
 ship the mismatch.
+
+> **✅ Fixed — `BEDO‑021`,** by implementing the drag rather than by rewriting the copy: all four experiment
+> sheets say *drag*, and the evaluation lists its absence as a defect in its own right (§2b). The click is
+> kept, because the storyboard specifies one (*"When the user clicks on the deflector…"*, sl. 14) and both
+> gestures resolve to the same semantic interaction through the same gate. The storyboard's two-second
+> transfer came with it. `docs/38`.
 
 ---
 

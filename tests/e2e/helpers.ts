@@ -116,9 +116,154 @@ export async function confirmStep(page: Page): Promise<void> {
   await okButton(page).click();
 }
 
+/**
+ * Where a tray deflector is on screen, and where the rod is (BEDO-021 §31).
+ *
+ * A real pointer drag needs two real screen points, and a 3D view that reframes itself
+ * between steps has no fixed ones. Rather than guess at coordinates — which is how a
+ * browser test becomes a flaky test — the application projects its own geometry through
+ * the dev-only probe in `DeviceModel`, and the mouse is driven between the answers. The
+ * drag itself is genuine: capture, threshold, drop test and gate all run.
+ */
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+const probe = async (page: Page): Promise<void> => {
+  await page.waitForFunction(
+    () => typeof window.__bedoTest?.dragProbe?.dropPoint === 'function',
+    undefined,
+    { timeout: 120_000 }
+  );
+};
+
+export async function deflectorPoint(page: Page, id: number): Promise<ScreenPoint> {
+  await probe(page);
+  const point = await page.evaluate((angle) => window.__bedoTest!.dragProbe!.deflectorPoint(angle), id);
+  if (!point) throw new Error(`the ${id}° deflector is not on screen`);
+  return point;
+}
+
+/**
+ * Where to aim a deflector drag.
+ *
+ * The application's own answer, not the test's: the storyboard's destination is *"the tank
+ * … to install it in the rod"*, and while the plate is unscrewed the rod is out of frame,
+ * so the app reports whichever of its two drop regions the camera can see.
+ */
+export async function dropPoint(page: Page): Promise<ScreenPoint> {
+  await probe(page);
+  const point = await page.evaluate(() => window.__bedoTest!.dragProbe!.dropPoint());
+  if (!point) throw new Error('no drop region is on screen');
+  const view = page.viewportSize();
+  if (view && (point.x < 0 || point.y < 0 || point.x > view.width || point.y > view.height)) {
+    throw new Error(
+      `the drop target is off screen at (${Math.round(point.x)}, ${Math.round(point.y)}) — ` +
+        'a learner could not aim at it either'
+    );
+  }
+  return point;
+}
+
+/** A stable projected point for reading the camera off. Always in frame at every step. */
+export async function trayPoint(page: Page): Promise<ScreenPoint> {
+  await probe(page);
+  const point = await page.evaluate(() => window.__bedoTest!.dragProbe!.deflectorPoint(90));
+  if (!point) throw new Error('the tray is not on screen');
+  return point;
+}
+
+/**
+ * A real mouse drag, in steps, so the movement threshold is crossed and every
+ * `pointermove` in between is dispatched exactly as a hand would produce it.
+ */
+export async function dragPointer(
+  page: Page,
+  from: ScreenPoint,
+  to: ScreenPoint,
+  steps = 16
+): Promise<void> {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  for (let i = 1; i <= steps; i++) {
+    await page.mouse.move(
+      from.x + ((to.x - from.x) * i) / steps,
+      from.y + ((to.y - from.y) * i) / steps
+    );
+  }
+  await page.mouse.up();
+}
+
+/**
+ * Waits for the camera to come to rest, and reports where the rod ends up.
+ *
+ * `CameraRig` flies to the part each step is about over 1.25 s, so anything reading a
+ * projected screen position has to let it land first. An assertion on application state
+ * like every other wait here — successive samples of where the rod projects to, until two
+ * agree — never a sleep.
+ *
+ * `CAMERA_REST_PX` is not zero because OrbitControls damps: each frame closes 5 % of the
+ * remaining distance, and under the headless software renderer the real apparatus runs at
+ * ~1.3 fps (`docs/11 §2`), so the last pixel of a large movement can take a very long time
+ * in wall-clock terms. Three pixels is comfortably below anything a caller distinguishes.
+ */
+export const CAMERA_REST_PX = 3;
+
+/**
+ * Four consecutive still samples, not one.
+ *
+ * A single pair can agree *before the flight has begun* — the step badge changes and the
+ * camera starts moving a frame or two later, and at ~1.3 fps that is a long time. Insisting
+ * on a run of them means the camera has genuinely stopped rather than not yet started.
+ */
+const CAMERA_STILL_SAMPLES = 4;
+
+export async function cameraSettled(page: Page): Promise<ScreenPoint> {
+  let previous: ScreenPoint | null = null;
+  let still = 0;
+  await expect
+    .poll(
+      async () => {
+        const next = await trayPoint(page);
+        still =
+          previous && Math.hypot(next.x - previous.x, next.y - previous.y) < CAMERA_REST_PX
+            ? still + 1
+            : 0;
+        previous = next;
+        return still;
+      },
+      { timeout: 120_000, intervals: [500] }
+    )
+    .toBeGreaterThanOrEqual(CAMERA_STILL_SAMPLES);
+  return previous!;
+}
+
+/**
+ * Waits for every physical transfer to land.
+ *
+ * An assertion about application state, like every other wait in this suite: the scene
+ * writes `data-bedo-transfer` when the answer changes and never per frame, so the test
+ * never has to guess how long BEDO's two seconds take on a software renderer
+ * (`BEDO-021 §33`).
+ */
+export async function transfersIdle(page: Page): Promise<void> {
+  await expect(page.locator('html[data-bedo-transfer="idle"]')).toHaveCount(1, {
+    timeout: 60_000,
+  });
+}
+
 declare global {
   interface Window {
-    /** Dev-only; see src/App.tsx. */
-    __bedoTest?: { coverClick: () => void; selectDeflector: (id: number) => boolean };
+    /** Dev-only; see src/App.tsx and src/components/DeviceModel.tsx. */
+    __bedoTest?: {
+      coverClick: () => void;
+      selectDeflector: (id: number) => boolean;
+      dragProbe?: {
+        deflectorPoint: (id: number) => ScreenPoint | null;
+        meshPoint: (name: string) => ScreenPoint | null;
+        dropPoint: () => ScreenPoint | null;
+      };
+    };
   }
 }

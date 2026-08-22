@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGLTF } from '@react-three/drei';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { LessonView, SimulationView } from '../types/index';
 import {
@@ -25,7 +25,19 @@ import {
 } from '../lib/apparatusView';
 import { springDeflectionMm } from '../domain/spring';
 import { jetState } from '../domain/physics';
-import { markReady } from '../lib/readiness';
+import { markReady, markTransfer } from '../lib/readiness';
+import {
+  commits,
+  type DragSession,
+  type DragSource,
+  type DropOutcome,
+} from '../interaction/drag';
+import {
+  createTransferSet,
+  removedWeightIndex,
+  type TransferKind,
+} from '../interaction/transfer';
+import { useObjectDrag } from './useObjectDrag';
 
 type Action =
   | { kind: 'cover' }
@@ -46,6 +58,65 @@ interface Hotspot {
   action: Action;
 }
 
+/**
+ * Somewhere a dragged deflector may be let go, in the apparatus's own space.
+ *
+ * **Two regions, because BEDO names two.** The experiment sheets say *"install it in the
+ * rod"* and the storyboard says *"the deflector moves to **the tank** to install it in the
+ * rod"* (sl. 7, 8, 14, 31) — the tank is the place you carry it to, the rod is the seat it
+ * ends in. Both are accepted, and that is not generosity for its own sake: while the plate
+ * is unscrewed the rod rides up with it, out of frame at the very step that says to drag,
+ * and the tank is what the learner can actually see and aim at (`docs/38 §5`).
+ *
+ * Measured **boxes**, not spheres and not mesh hits. A single triangle on a thin vertical
+ * pin is not something anyone can be asked to hit with an object in hand; a sphere around
+ * a tall glass column is either too small to contain it or wide enough to swallow the
+ * bench beside it. Derived from the real bounds, so a re-exported part takes its region
+ * with it (`BEDO-021 §10`).
+ */
+interface DropRegion {
+  /** Apparatus-local bounds, already padded. */
+  box: THREE.Box3;
+  /** The rod rides up with the tank cover; the tank itself does not. */
+  liftsWithCover: boolean;
+  /** The part to light up while the pointer is over this region. */
+  highlight: string;
+}
+
+/** How far past its own bounds a region reaches. Pure feel; nothing depends on it. */
+const DROP_REGION_PADDING = 0.15;
+
+/**
+ * An object in the learner's hand or in flight.
+ *
+ * The **temporary presentation transform** `BEDO-021 §8` asks for. The GLB's own nodes are
+ * never moved by a drag: the original is hidden, a clone rides the pointer, and the clone
+ * is thrown away when the gesture resolves. So a cancelled drag has nothing to undo, and
+ * `SimulationRuntime` never sees a pointer coordinate.
+ */
+interface Ghost {
+  readonly id: string;
+  readonly wrapper: THREE.Group;
+  /** Deflector angle, when this is a deflector. Drives which tray mesh stays hidden. */
+  readonly deflectorId?: number;
+  /** Disc mass, when this is a weight. Drives which tray mesh stays hidden. */
+  readonly grams?: number;
+  /** Apparatus-local offset applied to the clone's baked transform. */
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  /** True while the pointer owns the position; false once a transfer does. */
+  followsPointer: boolean;
+  /** The destination rides up with the tank cover — only the rod does. */
+  liftsWithCover: boolean;
+  /**
+   * Where the clone's centre sits when the wrapper is at the origin.
+   *
+   * Subtracted from the point under the cursor, so the part is carried by the place the
+   * learner grabbed rather than by the GLB's distant shared origin.
+   */
+  restCentre: THREE.Vector3;
+}
+
 interface DeviceModelProps {
   state: SimulationView;
   lesson: LessonView;
@@ -55,12 +126,18 @@ interface DeviceModelProps {
   anchors: Anchors;
   onAnchors: (anchors: Anchors) => void;
   onCoverClick: () => void;
-  onSelectDeflector: (id: number) => void;
+  /**
+   * Puts `SELECT_DEFLECTOR` to the gate. **Returns whether it was accepted** — the scene
+   * needs the answer to know whether the deflector seats on the rod or comes back to the
+   * tray, and asking the gate is the only way it may find out (`BEDO-021 §6`, `§7`).
+   */
+  onSelectDeflector: (id: number) => boolean;
   onPowerClick: () => void;
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
-  onRemoveWeight: (index: number) => void;
+  /** Puts `REMOVE_WEIGHT` to the gate. Returns whether it was accepted. */
+  onRemoveWeight: (index: number) => boolean;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -142,6 +219,32 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const animTimeRef = useRef(0);
   const coverOffsetRef = useRef(0);
   const screwOffsetRef = useRef(0);
+
+  // --- Drag and physical transfer (BEDO-021) ----------------------------------------
+  /** Objects in hand or in flight. Changes twice per gesture, never per frame. */
+  const [ghosts, setGhosts] = useState<Ghost[]>([]);
+  /** Elapsed time and easing for every flight. Presentation only — see interaction/transfer. */
+  const transfers = useMemo(() => createTransferSet(), []);
+  /** Where a dragged deflector may be let go, measured from the GLB. */
+  const dropRegionsRef = useRef<DropRegion[]>([]);
+  /** The plane the carried object slides on: through where it started, facing the camera. */
+  const dragPlane = useMemo(() => new THREE.Plane(), []);
+  const dragTmp = useMemo(
+    () => ({
+      ray: new THREE.Ray(),
+      inverse: new THREE.Matrix4(),
+      point: new THREE.Vector3(),
+      centre: new THREE.Vector3(),
+      box: new THREE.Box3(),
+      region: new THREE.Box3(),
+      size: new THREE.Vector3(),
+    }),
+    []
+  );
+  /** Spring deflection as of the last frame — the rod, and so the target, ride it. */
+  const deflectionRef = useRef(0);
+  /** The part to light up while the pointer is over a drop region, or null. */
+  const dropHighlightRef = useRef<string | null>(null);
 
   /** Resting Y of each animated part, captured the first time it is touched. */
   const restY = useRef<Record<string, number>>({});
@@ -540,17 +643,49 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
   }, [scene, pick, modelScale]);
 
+  /** Deflectors currently being carried or flown. Their originals stay out of sight. */
+  const ghostDeflectorIds = useMemo(
+    () => new Set(ghosts.map((g) => g.deflectorId).filter((id): id is number => id !== undefined)),
+    [ghosts]
+  );
+  /** Disc denominations currently in flight back to the tray. Same reason. */
+  const ghostWeightGrams = useMemo(
+    () => new Set(ghosts.map((g) => g.grams).filter((g): g is number => g !== undefined)),
+    [ghosts]
+  );
+
+  /**
+   * Tray discs that are not on the tray: on the holder, or on their way back to it.
+   *
+   * **One predicate, read by both the renderer and the hit test** — which is the whole of
+   * `BUG-19`. The tray mesh was hidden the moment its denomination was loaded while its
+   * click proxy carried on firing, so a learner could keep adding discs that visibly were
+   * not there. That was a nuisance with a click and would be worse now: a drag has to
+   * start from something the learner can actually see and pick up, and starting one on an
+   * invisible object is not a gesture anybody can make sense of (`BEDO-021 §13`).
+   */
+  const hiddenTrayWeightGrams = useMemo(() => {
+    const hidden = new Set<number>(state.loadedWeightsG);
+    ghostWeightGrams.forEach((grams) => hidden.add(grams));
+    return hidden;
+  }, [state.loadedWeightsG, ghostWeightGrams]);
+
   // The chosen deflector leaves the tray and appears mounted on the rod.
+  //
+  // While a ghost carries one, *neither* copy is drawn: the shelf is empty because the
+  // learner has it in hand, and the rod is empty because it has not arrived yet. That is
+  // what keeps a duplicate off the destination during the two-second install (§10).
   useEffect(() => {
     if (!scene) return;
     DEFLECTORS.forEach((d) => {
       const shelf = pick(d.shelf);
       const installed = pick(d.installed);
+      const inFlight = ghostDeflectorIds.has(d.id);
       const chosen = lesson.hasInstalledDeflector && state.selectedDeflectorId === d.id;
-      if (shelf) shelf.visible = !chosen;
-      if (installed) installed.visible = chosen;
+      if (shelf) shelf.visible = !chosen && !inFlight;
+      if (installed) installed.visible = chosen && !inFlight;
     });
-  }, [scene, lesson.hasInstalledDeflector, state.selectedDeflectorId]);
+  }, [scene, pick, lesson.hasInstalledDeflector, state.selectedDeflectorId, ghostDeflectorIds]);
 
   /**
    * Read every interactive part's real position and size back off the GLB.
@@ -614,6 +749,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       );
       nextAnchors.pan = [crown.x, crown.y, crown.z];
     }
+
+    // Where a dragged deflector may be let go: the tank you carry it to and the rod it
+    // seats in, both measured, both padded, both in the apparatus's own space so the rod
+    // can be lifted with the plate at test time. See `DropRegion`.
+    const region = (name: string, liftsWithCover: boolean): DropRegion | null => {
+      if (!localBox([name])) return null;
+      const box = tmp.box.clone();
+      box.min.copy(group.worldToLocal(box.min.clone()));
+      box.max.copy(group.worldToLocal(box.max.clone()));
+      // worldToLocal does not preserve which corner is which under a mirrored transform.
+      const lo = box.min.clone().min(box.max);
+      const hi = box.min.clone().max(box.max);
+      box.set(lo, hi);
+      box.getSize(tmp.size);
+      box.expandByVector(tmp.size.multiplyScalar(DROP_REGION_PADDING));
+      return { box, liftsWithCover, highlight: name };
+    };
+    dropRegionsRef.current = [region(MESH.tank, false), region(MESH.rod, true)].filter(
+      (r): r is DropRegion => r !== null
+    );
 
     onAnchors(nextAnchors);
 
@@ -789,7 +944,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         return;
       }
       case 'deflector':
-        return onSelectDeflector(action.id);
+        // Handled by the drag layer, which owns both gestures the sources describe: the
+        // sheets' drag and the storyboard's click. The proxy still exists here because
+        // that is where its position, radius and highlight key come from.
+        return;
       case 'weight':
         return onAddWeight(action.grams);
       case 'power':
@@ -864,6 +1022,469 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     return entries;
   }, [scene, pick, anchors.pan, state.loadedWeightsG]);
 
+  // ==================================================================================
+  // Drag and physical transfer (BEDO-021)
+  // ==================================================================================
+  //
+  // The learner's half of step 2 — *"Drag the 90° flat deflector to install it in the
+  // rod"* — and of the storyboard's state-D transition, *"Click on the weight on holder:
+  // the weight removed from the tank holder in 2 sec"*.
+  //
+  // Everything below is presentation. The gesture becomes a semantic interaction in
+  // `src/interaction/drag.ts`, the interaction is decided by the gate in `App`, and only
+  // an accepted one is animated. Nothing here consults a lesson step, an experiment or a
+  // safety rule; a refusal is simply a `false` coming back from the handler, and the
+  // object goes home.
+
+  const camera = useThree((three) => three.camera);
+  /** The authority on what is in flight; `ghosts` mirrors it so React can draw them. */
+  const ghostsRef = useRef<Ghost[]>([]);
+  /** The stack as it was before the last change — where a removed disc flew from. */
+  const previousStackRef = useRef(stack);
+  const loadedWeightsRef = useRef(state.loadedWeightsG);
+  const selectedDeflectorRef = useRef(state.selectedDeflectorId);
+  /** Set when the scene itself started a removal flight, so the observer below stands down. */
+  const sceneHandledRemovalRef = useRef(false);
+
+  const syncGhosts = useCallback((next: Ghost[]) => {
+    ghostsRef.current = next;
+    setGhosts(next);
+  }, []);
+
+  /** Apparatus-local centre of a part's bounds. */
+  const localCentreOf = useCallback(
+    (name: string): THREE.Vector3 | null => {
+      const group = groupRef.current;
+      const object = pick(name);
+      if (!group || !object) return null;
+      object.updateWorldMatrix(true, true);
+      dragTmp.box.setFromObject(object);
+      if (dragTmp.box.isEmpty()) return null;
+      dragTmp.box.getCenter(dragTmp.point);
+      return group.worldToLocal(dragTmp.point.clone());
+    },
+    [groupRef, pick, dragTmp]
+  );
+
+  /** A drawable copy. The GLB's own node is never moved by a gesture — see `Ghost`. */
+  const cloneFor = useCallback((source: THREE.Object3D): THREE.Object3D => {
+    const clone = source.clone(true);
+    clone.visible = true;
+    clone.traverse((child: any) => {
+      if (!child.isMesh) return;
+      child.visible = true;
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
+    return clone;
+  }, []);
+
+  /**
+   * Puts a part back under the rule that normally governs it.
+   *
+   * Run the instant a flight ends, in the same frame, so there is never a gap in which
+   * neither the ghost nor the real mesh is on screen.
+   */
+  const revealAfterFlight = useCallback(
+    (ghost: Ghost) => {
+      ghost.wrapper.visible = false;
+      if (ghost.deflectorId !== undefined) {
+        const deflector = getDeflector(ghost.deflectorId);
+        const chosen =
+          lesson.hasInstalledDeflector && state.selectedDeflectorId === ghost.deflectorId;
+        const shelf = pick(deflector.shelf);
+        if (shelf) shelf.visible = !chosen;
+        const installed = pick(deflector.installed);
+        if (installed) installed.visible = chosen;
+      } else if (ghost.grams !== undefined) {
+        const definition = WEIGHTS.find((w) => w.grams === ghost.grams);
+        const tray = definition?.mesh ? pick(definition.mesh) : undefined;
+        if (tray) tray.visible = !loadedWeightsRef.current.includes(ghost.grams);
+      }
+    },
+    [pick, lesson.hasInstalledDeflector, state.selectedDeflectorId]
+  );
+
+  /** Hands a ghost over from the pointer to a timed flight. */
+  const startFlight = useCallback(
+    (id: string, kind: TransferKind, to: THREE.Vector3, liftsWithCover: boolean) => {
+      const ghost = ghostsRef.current.find((g) => g.id === id);
+      if (!ghost) return;
+      ghost.from = ghost.wrapper.position.clone();
+      ghost.to = to.clone();
+      ghost.followsPointer = false;
+      ghost.liftsWithCover = liftsWithCover;
+      transfers.start(id, kind);
+      syncGhosts([...ghostsRef.current]);
+    },
+    [transfers, syncGhosts]
+  );
+
+  /**
+   * Raises a ghost and works out where its destination is.
+   *
+   * The install destination is the **installed mesh's own resting transform**, read off
+   * the GLB rather than written down here, so the deflector lands exactly where the
+   * already-shipped installed state puts it (`§10`). Its live lift is added per frame
+   * instead of being baked in, because the rod rides up with the tank cover and the
+   * destination has to ride with it.
+   */
+  const raiseDeflectorGhost = useCallback(
+    (deflectorId: number): Ghost | null => {
+      const group = groupRef.current;
+      const deflector = getDeflector(deflectorId);
+      const shelf = pick(deflector.shelf);
+      const shelfCentre = localCentreOf(deflector.shelf);
+      if (!group || !shelf || !shelfCentre) return null;
+
+      const installedObject = pick(deflector.installed);
+      const installedCentre = localCentreOf(deflector.installed);
+      let seat = new THREE.Vector3();
+      if (installedObject && installedCentre) {
+        // Strip whatever lift the frame loop has already applied, so the offset below is
+        // tray-to-rod at rest and the live lift is not counted twice.
+        const lifted =
+          installedObject.position.y - baseY(installedObject, deflector.installed);
+        seat = installedCentre.clone().setY(installedCentre.y - lifted).sub(shelfCentre);
+      }
+
+      const wrapper = new THREE.Group();
+      wrapper.add(cloneFor(shelf));
+      wrapper.position.set(0, 0, 0);
+
+      const ghost: Ghost = {
+        id: `deflector:${deflectorId}`,
+        wrapper,
+        deflectorId,
+        from: new THREE.Vector3(),
+        to: seat,
+        followsPointer: true,
+        liftsWithCover: true,
+        restCentre: shelfCentre,
+      };
+      syncGhosts([...ghostsRef.current, ghost]);
+
+      // Slide the carried object on a plane through where it started, square to the
+      // camera, so it tracks under the cursor at a constant depth however the learner has
+      // orbited the bench.
+      camera.getWorldDirection(dragTmp.point);
+      dragPlane.setFromNormalAndCoplanarPoint(
+        dragTmp.point.clone().negate(),
+        group.localToWorld(shelfCentre.clone())
+      );
+      return ghost;
+    },
+    [groupRef, pick, localCentreOf, cloneFor, baseY, syncGhosts, camera, dragTmp, dragPlane]
+  );
+
+  /** The same, for a disc already on the holder. Its home is the tray slot it came from. */
+  const raiseWeightGhost = useCallback(
+    (index: number, entries: typeof stack): Ghost | null => {
+      const group = groupRef.current;
+      const entry = entries[index];
+      if (!group || !entry) return null;
+
+      const wrapper = new THREE.Group();
+      wrapper.add(cloneFor(entry.object));
+      const stackLift = weightStackRef.current?.position.y ?? 0;
+      wrapper.position.set(entry.offset[0], entry.offset[1] + stackLift, entry.offset[2]);
+
+      // Where the clone sits when its wrapper is at the origin: its baked tray transform.
+      entry.object.updateWorldMatrix(true, true);
+      const grams = state.loadedWeightsG[index];
+      const ghost: Ghost = {
+        id: `weight:${index}`,
+        wrapper,
+        grams,
+        from: wrapper.position.clone(),
+        to: new THREE.Vector3(),
+        followsPointer: true,
+        liftsWithCover: false,
+        restCentre: new THREE.Vector3(),
+      };
+      syncGhosts([...ghostsRef.current, ghost]);
+
+      dragTmp.point.copy(wrapper.position);
+      camera.getWorldDirection(dragTmp.centre);
+      dragPlane.setFromNormalAndCoplanarPoint(
+        dragTmp.centre.clone().negate(),
+        group.localToWorld(dragTmp.point.clone())
+      );
+      return ghost;
+    },
+    [groupRef, cloneFor, syncGhosts, state.loadedWeightsG, camera, dragTmp, dragPlane]
+  );
+
+  /**
+   * Which drop region the pointer is over, if any.
+   *
+   * A ray-versus-box test in the apparatus's own space, which is where the measured
+   * regions live, and where the plate's lift is a plain addition on Y. Returns the part to
+   * light up, so the feedback names whichever of the two the learner is actually aiming at.
+   */
+  const dropRegionUnder = useCallback(
+    (ray: THREE.Ray): DropRegion | null => {
+      const group = groupRef.current;
+      if (!group || dropRegionsRef.current.length === 0) return null;
+      group.updateWorldMatrix(true, false);
+      dragTmp.inverse.copy(group.matrixWorld).invert();
+      dragTmp.ray.copy(ray).applyMatrix4(dragTmp.inverse);
+      const lift = coverOffsetRef.current + deflectionRef.current;
+      for (const region of dropRegionsRef.current) {
+        dragTmp.region.copy(region.box);
+        if (region.liftsWithCover) dragTmp.region.translate(dragTmp.point.set(0, lift, 0));
+        if (dragTmp.ray.intersectsBox(dragTmp.region)) return region;
+      }
+      return null;
+    },
+    [groupRef, dragTmp]
+  );
+
+  /**
+   * Dev-only: where a draggable part and its target are on screen (`BEDO-021 §31`, §33).
+   *
+   * The browser suite performs a **real** pointer drag, and a real drag needs two screen
+   * points. Hard-coding them would be guessing at a 3D view that reframes itself between
+   * steps — the same problem `BEDO-002` solved for the tank cover — so the application
+   * projects its own geometry and the test drives the mouse between the answers. What is
+   * exercised is then the genuine article: capture, threshold, the drop test, the gate.
+   *
+   * `import.meta.env.DEV` is compiled to `false` by `vite build`, so this is dead code the
+   * bundler drops; `tests/unit/bundle.spec.ts` asserts `__bedoTest` is absent from `dist/`.
+   */
+  const gl = useThree((three) => three.gl);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const project = (local: THREE.Vector3 | null) => {
+      const group = groupRef.current;
+      const canvas = gl?.domElement;
+      if (!group || !canvas || !local) return null;
+      const world = group.localToWorld(local.clone()).project(camera);
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + ((world.x + 1) / 2) * rect.width,
+        y: rect.top + ((1 - world.y) / 2) * rect.height,
+      };
+    };
+    const globals = window as unknown as Record<string, any>;
+    globals.__bedoTest = {
+      ...globals.__bedoTest,
+      dragProbe: {
+        deflectorPoint: (id: number) => project(localCentreOf(getDeflector(id).shelf)),
+        /** Any authored mesh, by GLB name — used to reason about what a step actually frames. */
+        meshPoint: (name: string) => project(localCentreOf(name)),
+        /**
+         * Where to aim a drag: the centre of the first drop region the camera can
+         * actually see, so a browser test aims where a learner would rather than at a
+         * part that is out of frame (the rod is, at the very step that says to drag).
+         */
+        dropPoint: () => {
+          const canvas = gl?.domElement;
+          if (!canvas) return null;
+          const rect = canvas.getBoundingClientRect();
+          const lift = coverOffsetRef.current + deflectionRef.current;
+          let fallback: { x: number; y: number } | null = null;
+          for (const region of dropRegionsRef.current) {
+            const centre = region.box.getCenter(new THREE.Vector3());
+            if (region.liftsWithCover) centre.y += lift;
+            const point = project(centre);
+            if (!point) continue;
+            fallback ??= point;
+            if (
+              point.x >= rect.left &&
+              point.y >= rect.top &&
+              point.x <= rect.left + rect.width &&
+              point.y <= rect.top + rect.height
+            ) {
+              return point;
+            }
+          }
+          return fallback;
+        },
+      },
+    };
+  });
+
+  const drag = useObjectDrag({
+    // Deliberately permissive. Whether an interaction is *allowed* is the gate's question
+    // and asking it here would be a second copy of the policy — the very shape of BUG-04
+    // and BUG-05. A wrong-experiment deflector must be pickable precisely so that the gate
+    // can refuse it and the learner can see why (`§7`).
+    canDrag: (source) => {
+      if (state.showMonitor) return false;
+      if (source.kind === 'weight') return source.index < state.loadedWeightsG.length;
+      const shelf = pick(getDeflector(source.deflectorId).shelf);
+      return shelf?.visible === true;
+    },
+
+    isOverTarget: (source, ray) => {
+      if (source.kind !== 'deflector') return false;
+      const region = dropRegionUnder(ray);
+      // Remembered so the frame loop can light the part the learner is aiming at — the
+      // tank while the plate is up and the rod is out of frame, the rod once it is back.
+      dropHighlightRef.current = region?.highlight ?? null;
+      return region !== null;
+    },
+
+    onGrab: (source) => {
+      if (source.kind === 'deflector') raiseDeflectorGhost(source.deflectorId);
+      else raiseWeightGhost(source.index, stack);
+    },
+
+    onCarry: (_session: DragSession, ray) => {
+      const group = groupRef.current;
+      const ghost = ghostsRef.current.find((g) => g.followsPointer);
+      if (!group || !ghost) return;
+      if (!ray.intersectPlane(dragPlane, dragTmp.point)) return;
+      group.worldToLocal(dragTmp.point);
+      ghost.wrapper.position.copy(dragTmp.point).sub(ghost.restCentre);
+    },
+
+    onRelease: (session: DragSession, outcome: DropOutcome) => {
+      dropHighlightRef.current = null;
+      const ghost = ghostsRef.current.find((g) => g.followsPointer);
+      if (!ghost) return;
+
+      if (session.source.kind === 'deflector') {
+        // `commit` (a drag onto the rod) and `activate` (a plain click, which is what
+        // BEDO's own storyboard describes) are the same request. Only the gate decides.
+        const accepted = commits(outcome) && onSelectDeflector(session.source.deflectorId);
+        if (accepted) startFlight(ghost.id, 'deflector-install', ghost.to, true);
+        else startFlight(ghost.id, 'return-to-source', new THREE.Vector3(), false);
+        return;
+      }
+
+      const accepted = commits(outcome) && onRemoveWeight(session.source.index);
+      if (accepted) {
+        // The ghost the learner was holding becomes the flight, so the disc carries on
+        // from where it was let go instead of snapping back to the pan first. The state
+        // observer below must therefore not raise a second one for the same removal, and
+        // it cannot tell by id: with two discs of the same mass the position it reads back
+        // out of the state need not be the position that was asked for. So it is told.
+        sceneHandledRemovalRef.current = true;
+        startFlight(ghost.id, 'weight-removal', new THREE.Vector3(), false);
+      } else {
+        startFlight(ghost.id, 'return-to-source', ghost.from, false);
+      }
+    },
+  });
+
+  /**
+   * The 2D panel's deflector selections, animated the same way.
+   *
+   * The scene watches `selectedDeflectorId` change rather than being told by whichever
+   * control caused it (`BEDO-021 §22`), so the panel's list produces BEDO's two-second
+   * install exactly as the tray does. The 3D path has already started this flight by the
+   * time the effect runs — starting one that is already in the air is a no-op — so the two
+   * cannot double up.
+   *
+   * Selection needs *both* triggers where removal needs only this one: a removal always
+   * changes state, but installing the disc the rig already carries — which is the whole of
+   * Exp. 1 step 2, since the flat deflector is what the sheet loads with — changes nothing,
+   * so there is no transition here to see.
+   *
+   * A reset or an experiment switch also changes the selected deflector, and neither is a
+   * learner installing anything. Both take the lesson back before the step that says a
+   * deflector is on the rod, so requiring `hasInstalledDeflector` excludes them.
+   */
+  useEffect(() => {
+    const previous = selectedDeflectorRef.current;
+    selectedDeflectorRef.current = state.selectedDeflectorId;
+    // `hasInstalledDeflector` is the scene's "is the rod carrying one" — false while the
+    // learner is still standing on the install step and false again after a reset — so it
+    // is also what tells a learner's swap apart from a restart, which changes the selected
+    // deflector too and must not fly anything.
+    if (previous === state.selectedDeflectorId || !lesson.hasInstalledDeflector) return;
+
+    const id = `deflector:${state.selectedDeflectorId}`;
+    if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) return;
+
+    const ghost = raiseDeflectorGhost(state.selectedDeflectorId);
+    if (!ghost) return;
+    startFlight(id, 'deflector-install', ghost.to, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.selectedDeflectorId, lesson.hasInstalledDeflector]);
+
+  /**
+   * The 2D panel's removals, animated the same way.
+   *
+   * `BEDO-021 §22`: the scene watches the state transition rather than being told by
+   * whichever control caused it, so the panel button and the disc in the tank produce the
+   * same two-second move without either surface knowing about the animation. The 3D path
+   * has already raised its own ghost under this id by the time this runs, so it is left
+   * alone.
+   */
+  useEffect(() => {
+    const previous = loadedWeightsRef.current;
+    loadedWeightsRef.current = state.loadedWeightsG;
+    const entries = previousStackRef.current;
+    previousStackRef.current = stack;
+
+    const index = removedWeightIndex(previous, state.loadedWeightsG);
+    if (index === null) return;
+
+    // The disc in the tank was dragged or clicked, and is already flying.
+    if (sceneHandledRemovalRef.current) {
+      sceneHandledRemovalRef.current = false;
+      return;
+    }
+
+    const id = `weight:${index}`;
+    if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) return;
+
+    const entry = entries[index];
+    const group = groupRef.current;
+    if (!entry || !group) return;
+
+    const wrapper = new THREE.Group();
+    wrapper.add(cloneFor(entry.object));
+    const stackLift = weightStackRef.current?.position.y ?? 0;
+    wrapper.position.set(entry.offset[0], entry.offset[1] + stackLift, entry.offset[2]);
+
+    const ghost: Ghost = {
+      id,
+      wrapper,
+      grams: previous[index],
+      from: wrapper.position.clone(),
+      to: new THREE.Vector3(),
+      followsPointer: false,
+      liftsWithCover: false,
+      restCentre: new THREE.Vector3(),
+    };
+    ghostsRef.current = [...ghostsRef.current, ghost];
+    setGhosts(ghostsRef.current);
+    transfers.start(id, 'weight-removal');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loadedWeightsG]);
+
+  /**
+   * Everything a gesture or a flight is holding, let go of.
+   *
+   * A reset, an experiment switch or a mode change must not leave a deflector floating
+   * between the tray and the rod, or the camera locked because a drag never ended
+   * (`§23`). The originals are restored under their normal rules, so the scene lands in
+   * exactly the state it would have been in had nothing been dragged at all.
+   */
+  useEffect(() => {
+    drag.cancel();
+    for (const ghost of ghostsRef.current) {
+      transfers.cancel(ghost.id);
+      revealAfterFlight(ghost);
+    }
+    if (ghostsRef.current.length) syncGhosts([]);
+    // `runId` is the restart signal, bumped by Reset and by loading another sheet. The
+    // alternative — noticing that the step went back to the first one — would mean this
+    // component following a step number, and a step boundary is not a restart: cancelling
+    // on every one would abort a transfer the learner is still watching.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson.runId, state.experimentId, lesson.isGuided, state.showMonitor]);
+
+  // Inert instrumentation, so a browser test can wait on the transfer instead of sleeping
+  // through it. See src/lib/readiness.ts.
+  useEffect(() => {
+    markTransfer(ghosts.length > 0);
+  }, [ghosts.length]);
+
   /**
    * Glow a clickable part, the way the reference simulator does (it uses HighlightPlus).
    *
@@ -927,6 +1548,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (!state.showMonitor) {
       if (hoveredKey) wanted.add(hoveredKey);
       if (lesson.isGuided && focusTarget) liveKeys.forEach((k) => wanted.add(k));
+      // Drop-target feedback, through the highlight the rest of the scene already uses
+      // rather than a new overlay (`BEDO-021 §32`). Whichever region the pointer is over
+      // is the part that lights, so it is always one the learner can see. A wrong target
+      // simply never lights.
+      if (dropHighlightRef.current) wanted.add(dropHighlightRef.current);
     }
 
     highlighted.current.forEach((key) => {
@@ -1025,6 +1651,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const deflection = mmToModelUnits(
       springDeflectionMm(jetForceN, weightForceN, springTravelLimitMm(restH))
     );
+    // The rod rides this, and so does the drop region measured from it.
+    deflectionRef.current = deflection;
 
     // The pointer rides the moving assembly and swings about the rod axis it is clamped
     // to. Rotating the mesh itself would orbit the GLB's distant shared origin, so the
@@ -1148,15 +1776,45 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       weightStackRef.current.position.set(0, coverOffsetRef.current + deflection, 0);
     }
 
-    // Update original table weights visibility based on loaded state
+    // A tray disc is out of sight while it is on the holder, and stays out of sight for
+    // the two seconds it spends flying back — otherwise it would be in two places at once
+    // for the whole of the return.
     WEIGHTS.forEach((w) => {
       if (w.mesh) {
         const meshObj = pick(w.mesh);
         if (meshObj) {
-          meshObj.visible = !state.loadedWeightsG.includes(w.grams);
+          meshObj.visible = !hiddenTrayWeightGrams.has(w.grams);
         }
       }
     });
+
+    // --- Ghosts: carried objects and physical transfers ---------------------------
+    //
+    // The stopwatch runs on real time, like the unscrew sequence: BEDO's two seconds are
+    // two seconds, not two seconds' worth of clamped frames.
+    if (ghosts.length) {
+      const settled = transfers.advance(rawDelta);
+      for (const ghost of ghosts) {
+        if (ghost.followsPointer) continue;
+        const progress = transfers.progressOf(ghost.id);
+        if (progress === null) continue;
+        ghost.wrapper.position.lerpVectors(ghost.from, ghost.to, progress);
+        if (ghost.liftsWithCover) {
+          ghost.wrapper.position.y += (coverOffsetRef.current + deflection) * progress;
+        }
+      }
+      if (settled.length) {
+        // Hide the ghost and reveal the real part in the *same* frame, so the swap at the
+        // end of an install is never a blink (`§10`).
+        for (const id of settled) {
+          const ghost = ghosts.find((g) => g.id === id);
+          if (ghost) revealAfterFlight(ghost);
+        }
+        const remaining = ghostsRef.current.filter((g) => !settled.includes(g.id));
+        ghostsRef.current = remaining;
+        setGhosts(remaining);
+      }
+    }
 
     // --- Cover's click target rides with the plate --------------------------------
     // It used to sit at the plate's resting height for good, so once the plate lifted you
@@ -1187,22 +1845,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           <group key={key} position={offset}>
             <primitive object={object} />
             {/*
-              "Click on the weight on holder — the weight removed from the tank holder"
-              (Jetforce_Storyboard.pptx sl. 32, state D). An invisible proxy exactly like
-              every other hotspot; the disc's own transform, geometry, scale and materials
-              are untouched, and nothing is added to the scene while the pan is empty.
+              "Click on the weight on holder — the weight removed from the tank holder in
+              2 sec" (Jetforce_Storyboard.pptx sl. 32, state D). An invisible proxy exactly
+              like every other hotspot; the disc's own transform, geometry, scale and
+              materials are untouched, and nothing is added to the scene while the pan is
+              empty.
+
+              The storyboard's gesture is a click, so a click is what this is: a press and
+              release under the movement threshold resolves to `activate`. Pulling the disc
+              off works too and means exactly the same thing — one intent, two ways to
+              express it, and no second policy anywhere (`docs/38 §5`).
             */}
             <mesh
+              {...drag.handlersFor({ kind: 'weight', index })}
               onPointerOver={(e) => {
                 e.stopPropagation();
-                if (weightsAreActionable) document.body.style.cursor = 'pointer';
+                if (weightsAreActionable) document.body.style.cursor = 'grab';
               }}
               onPointerOut={() => {
-                document.body.style.cursor = 'default';
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemoveWeight(index);
+                if (!drag.current()) document.body.style.cursor = 'default';
               }}
             >
               <sphereGeometry args={[hitRadius, 10, 8]} />
@@ -1255,33 +1916,63 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         </group>
       )}
 
-      {hotspots.map((h) => (
-        <mesh
-          key={h.key}
-          ref={h.key === MESH.tankCover ? coverHotspotRef : undefined}
-          position={h.position}
-          onPointerOver={(e) => {
-            e.stopPropagation();
-            // Actionability, not focus: a hotspot the gate would refuse must not offer
-            // the same pointer as one it would accept (BEDO-020 §24).
-            if (actionableKeys.has(h.key)) {
-              document.body.style.cursor = 'pointer';
-              setHoveredKey(h.key);
-            }
-          }}
-          onPointerOut={() => {
-            document.body.style.cursor = 'default';
-            setHoveredKey((k) => (k === h.key ? null : k));
-          }}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleHotspot(h.action);
-          }}
-        >
-          <sphereGeometry args={[h.radius, 12, 10]} />
-          <meshBasicMaterial visible={false} />
-        </mesh>
+      {/*
+        Objects in the learner's hand, or in flight.
+
+        Outside `weightStackRef` on purpose: the stack is rebuilt the moment the runtime's
+        loaded-weight list changes, and a disc on its way back to the tray has to outlive
+        exactly that change. Nothing is mounted here while the scene is at rest, so the
+        idle draw-call count is the one BEDO-002 measured.
+      */}
+      {ghosts.map((ghost) => (
+        <primitive key={ghost.id} object={ghost.wrapper} />
       ))}
+
+      {hotspots.map((h) => {
+        // A tray disc that is not on the tray has no hit proxy either. See
+        // `hiddenTrayWeightGrams` — this is BUG-19's other half.
+        if (h.action.kind === 'weight' && hiddenTrayWeightGrams.has(h.action.grams)) return null;
+
+        // Deflectors are dragged; everything else is pressed. Note the click path is not
+        // lost — a press and release without movement resolves to `activate`, which puts
+        // the identical interaction to the gate (`docs/38 §5`).
+        const source: DragSource | null =
+          h.action.kind === 'deflector' ? { kind: 'deflector', deflectorId: h.action.id } : null;
+        const draggable = source !== null;
+
+        return (
+          <mesh
+            key={h.key}
+            ref={h.key === MESH.tankCover ? coverHotspotRef : undefined}
+            position={h.position}
+            {...(source ? drag.handlersFor(source) : {})}
+            onPointerOver={(e) => {
+              e.stopPropagation();
+              // Actionability, not focus: a hotspot the gate would refuse must not offer
+              // the same pointer as one it would accept (BEDO-020 §24).
+              if (actionableKeys.has(h.key)) {
+                document.body.style.cursor = draggable ? 'grab' : 'pointer';
+                setHoveredKey(h.key);
+              }
+            }}
+            onPointerOut={() => {
+              if (!drag.current()) document.body.style.cursor = 'default';
+              setHoveredKey((k) => (k === h.key ? null : k));
+            }}
+            {...(draggable
+              ? {}
+              : {
+                  onClick: (e: { stopPropagation: () => void }) => {
+                    e.stopPropagation();
+                    handleHotspot(h.action);
+                  },
+                })}
+          >
+            <sphereGeometry args={[h.radius, 12, 10]} />
+            <meshBasicMaterial visible={false} />
+          </mesh>
+        );
+      })}
     </group>
   );
 };

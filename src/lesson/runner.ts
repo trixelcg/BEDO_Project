@@ -68,6 +68,15 @@ export interface LessonRunner {
 
   /** True once the lesson has reached or passed a step — semantic, not a number. */
   hasReached(id: StepId): boolean;
+  /**
+   * True once the lesson has moved **past** a step — semantic, not a number.
+   *
+   * The distinction `hasReached` cannot draw, and it matters: standing *on* the step that
+   * asks a learner to install a deflector is precisely when the deflector must still be on
+   * the tray for them to install (`BEDO-021`, `docs/38 §3.1`). Free mode, which idles on
+   * the first step, has completed nothing.
+   */
+  hasCompleted(id: StepId): boolean;
 
   reset(): void;
   subscribe(listener: (state: LessonState) => void): () => void;
@@ -159,6 +168,11 @@ export function createLessonRunner(
     hasReached(id) {
       const target = indexOf(id);
       return target !== -1 && indexOf(state.currentStepId) >= target;
+    },
+
+    hasCompleted(id) {
+      const target = indexOf(id);
+      return target !== -1 && indexOf(state.currentStepId) > target;
     },
 
     reset() {

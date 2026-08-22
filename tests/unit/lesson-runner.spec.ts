@@ -163,6 +163,48 @@ describe('hasReached', () => {
   });
 });
 
+describe('hasCompleted', () => {
+  /**
+   * The distinction `hasReached` cannot draw (BEDO-021).
+   *
+   * Standing *on* the step that says to install a deflector is exactly when the deflector
+   * must still be on the tray to be installed — a scene that reads `hasReached` draws it
+   * on the rod the moment the step opens, and then step 2's own instruction cannot be
+   * carried out. `docs/38 §3.1`.
+   */
+  it('is false while the step is current, and true once it is behind', () => {
+    const { runner, run, context } = harness();
+    expect(runner.hasCompleted('install-deflector')).toBe(false);
+
+    run([{ type: 'OPEN_COVER' }]);
+    runner.notify('OPEN_COVER', context());
+    expect(runner.getCurrentStep().id).toBe('install-deflector');
+
+    expect(runner.hasReached('install-deflector'), 'reached it').toBe(true);
+    expect(runner.hasCompleted('install-deflector'), 'but is standing on it').toBe(false);
+    expect(runner.hasCompleted('unscrew-cover'), 'the step before is behind us').toBe(true);
+
+    run([{ type: 'SELECT_DEFLECTOR', deflectorId: 90 }]);
+    runner.confirm(context());
+    expect(runner.hasCompleted('install-deflector')).toBe(true);
+  });
+
+  it('is false for a step that does not exist, and for a lesson that has not started', () => {
+    const { runner } = harness();
+    expect(runner.hasCompleted('unscrew-cover')).toBe(false);
+    expect(runner.hasCompleted('no-such-step' as never)).toBe(false);
+  });
+
+  it('says nothing is complete in free mode, which idles on the first step', () => {
+    const { runner, run, context } = harness();
+    runner.setMode('free');
+    run([{ type: 'OPEN_COVER' }]);
+    runner.notify('OPEN_COVER', context());
+    expect(runner.hasCompleted('unscrew-cover')).toBe(false);
+    expect(runner.hasCompleted('install-deflector')).toBe(false);
+  });
+});
+
 describe('subscriptions', () => {
   it('notifies on progression, and not otherwise', () => {
     const { runner, run, context } = harness();

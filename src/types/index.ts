@@ -73,8 +73,25 @@ export interface LessonView {
    * seven whatever experiment is loaded, and `BUG-05` was every one of them dispatching.
    */
   selectableDeflectorIds: readonly number[];
-  /** The lesson has passed the step that installs the deflector. */
+  /**
+   * A deflector is on the rod.
+   *
+   * Not "the lesson has reached step 2". BEDO's own state machine has the rig start with
+   * the *"weights and deflectors on the table"* (storyboard sl. 29) and puts one in the rod
+   * only when the learner installs it (sl. 31) — which is also what makes step 2's
+   * instruction performable, since a deflector already drawn on the rod is not on the tray
+   * to be dragged. True once the learner installs one, or once the lesson is past the step
+   * that asks them to. `docs/38 §3.1`.
+   */
   hasInstalledDeflector: boolean;
+  /**
+   * Bumped whenever the run starts over — Reset, or loading another experiment sheet.
+   *
+   * Presentation coordination, not lesson state: the scene has animations in flight that a
+   * restart must abandon, and "the step went back to the first one" is not a signal it can
+   * read without following a step number (`BEDO-021 §23`).
+   */
+  runId: number;
   /** Which results row is being balanced, if any. */
   activeReadingIndex: number | null;
   /** The numbered procedure is finished. Not a step — there is no step 12. */

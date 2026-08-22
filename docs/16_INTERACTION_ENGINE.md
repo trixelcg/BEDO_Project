@@ -4,8 +4,9 @@
 every interactable; no per-mesh bespoke handlers.
 
 > **Partly implemented.** `BEDO-020` built the **gate** at the bottom of this pipeline — the single policy
-> every 2D control and every 3D hotspot now asks — and closed `BUG-04`. See `docs/36`. What remains is the
-> input half: the affordance registry, gesture recognition, hit geometry, drag-and-drop and keyboard parity.
+> every 2D control and every 3D hotspot now asks — and closed `BUG-04`. See `docs/36`. `BEDO-021` then built
+> the **gesture layer and the 2 s transfer** at the top of it, closing `BUG-22` and `BUG-19`; see `docs/38`.
+> What remains is the affordance registry, general hit geometry, the canvas cursor and keyboard parity.
 > Section 9 below records the split precisely.
 
 ---
@@ -20,9 +21,15 @@ every interactable; no per-mesh bespoke handlers.
   passes `evaluateInteraction()` before anything is committed, and the cursor now reads the gate's answer
   rather than the step's highlight, so an always-available part is no longer drawn as dead. `docs/36 §8`.
 - `document.body.style.cursor` is mutated globally and can stick on `pointer` forever (`BUG‑18`).
-- Hidden tray weights keep firing, so the student can add discs that visibly do not exist (`BUG‑19`). Still open — `BEDO-022` added removal but did not touch the tray's hit proxies.
-- The only interaction verb is *click*. The evaluation document's second complaint is precisely
-  *"relies solely on basic clicks, lacking essential features like drag-and-drop"*.
+- ~~Hidden tray weights keep firing, so the student can add discs that visibly do not exist (`BUG‑19`).~~
+  **Fixed by `BEDO-021` for the weights:** one predicate, `hiddenTrayWeightGrams`, is read by both the
+  renderer and the hit test, so a disc that is on the holder — or on its way back to the tray — has no proxy
+  at all. The general rule (§5: a proxy exists only while its affordance is enabled) still awaits the
+  registry. `docs/38 §12`.
+- ~~The only interaction verb is *click*. The evaluation document's second complaint is precisely
+  *"relies solely on basic clicks, lacking essential features like drag-and-drop"*.~~ **Fixed by
+  `BEDO-021`:** a deflector is dragged onto the rod, a disc is pulled off the holder, and both gestures
+  resolve to the same intents the click always sent. `BUG‑22` is closed. `docs/38`.
 - No keyboard path at all, and two of the eleven steps have no DOM equivalent (`UX‑04`).
 
 ---
@@ -109,8 +116,8 @@ event — which is what lets the gesture layer below be added without the policy
 | `button` | click, `Enter`/`Space` | power switch, cover, monitor, OK | Power switch rotates 90° (storyboard sl. 29) |
 | `rotary` | click-to-toggle, drag-around-axis, arrow keys | flow valve, volumetric valve | *"rotates 90° counterclockwise … for opening"* (sl. 16) |
 | `lever` | drag along an axis, arrow keys | — reserved | |
-| `transferable` | click → **2 s animated move** | deflectors, weights | *"moves to the tank holder in 2 sec"* (sl. 14–16); the **reverse** is sl. 32's *"click on the weight on holder — the weight removed … in 2 sec"*, whose semantics `BEDO-022` implemented and whose animation `BEDO-021` still owes |
-| `draggable` + `dropTarget` | pointer drag, or keyboard pick-up/put-down | deflector → rod, weight → pan | **Explicitly required** by the evaluation PDF §2b and the Exp. sheets |
+| `transferable` | click → **2 s animated move** | deflectors, weights | *"moves to the tank holder in 2 sec"* (sl. 14–16); the **reverse** is sl. 32's *"click on the weight on holder — the weight removed … in 2 sec"*. `BEDO-022` implemented the semantics and **`BEDO-021` the animation** — `src/interaction/transfer.ts`, `docs/38 §1.2-1.3` |
+| `draggable` + `dropTarget` | pointer drag, or keyboard pick-up/put-down | deflector → rod, weight → pan | **Explicitly required** by the evaluation PDF §2b and the Exp. sheets. **Pointer drag done** (`BEDO-021`); keyboard pick-up/put-down on the canvas is still `UX‑04`'s, and the 2D panel is the keyboard route meanwhile — `docs/38 §8` |
 
 ### 4.1 Resolving click vs drag
 
@@ -123,6 +130,13 @@ The two authoritative sources disagree, and both are satisfiable:
 press-and-move begins a drag with a live ghost and a highlighted drop target. Keyboard `Enter` on the source
 then `Enter` on the target performs the same transfer accessibly. One affordance, three input paths, one
 intent. This closes `BUG‑22` without contradicting either document.
+
+**Implemented in `BEDO-021`**, exactly as designed above for the two pointer paths. `resolveDrop` returns
+`activate` for a press-and-release under the threshold and `commit` for a drag onto the target, and
+`interactionFor` — which is given the *source* and never the outcome — maps both to the same `Interaction`.
+`tests/unit/drag-parity.spec.ts` walks every deflector × step × experiment × mode × cover state and asserts
+the gate's decision is deep-equal for the dragged and the clicked interaction. The keyboard leg is served by
+the 2D panel today; a canvas-native pick-up/put-down waits on the focus and announcement layer (`docs/38 §8`).
 
 ---
 
@@ -203,12 +217,21 @@ Every affordance is mirrored by a DOM control in `ui/controls/`, so the canvas i
 | Coaching feedback on a blocked intent | **minimal** — one typed reason, one sentence, bilingual. The toast/audio/animation system is still a separate task. |
 | Weight removal as an affordance | **done** — `REMOVE_WEIGHT` by stack position, gated on the same `weights` affordance as adding one, from panel and scene alike (`BEDO-022`, `docs/37 §8-10`) |
 | Deflector scope as a *value* rule | **done** — the one place the gate looks past the affordance group, because a tray of seven discs is one group with seven meanings (`BUG-05`) |
+| **Pointer drag-and-drop (§4)** | **done** — `src/interaction/drag.ts` + `src/components/useObjectDrag.ts`, `BEDO-021`, `docs/38` |
+| **Click and drag produce one intent (§4.1)** | **done** — `interactionFor(source)`; proved exhaustively against the gate |
+| **2 s physical transfers (§4)** | **done** — `src/interaction/transfer.ts`; the duration is BEDO's, quoted in `docs/38 §1` |
+| **Drop target resolved from measured bounds (§5)** | **done, for the rod** — a bounding sphere off `deflector_rod`, tested in apparatus space so it rides the cover |
+| **Disabled affordances unregister their proxy (§5, `BUG‑19`)** | **done, for the weights** — one predicate for the renderer and the hit test |
+| **OrbitControls coordination** | **done** — suspended for the gesture, restored on every exit including cancel and unmount |
 | `Affordance` registry (§2) | not started |
-| `GestureRecogniser`, drag-and-drop (§4) | not started — every input is a discrete setpoint today |
-| Hit geometry (§5) | not started — still the clamped-sphere heuristic |
-| Cursor on the canvas rather than `document.body` (§6, `BUG‑18`) | not started |
-| Keyboard parity (§7) | not started |
+| `GestureRecogniser` as a general recogniser (§4) | partial — drag is a session model, but rotary/lever gestures are still discrete setpoints |
+| Hit geometry (§5) | not started for the hit proxies — still the clamped-sphere heuristic |
+| Cursor on the canvas rather than `document.body` (§6, `BUG‑18`) | not started — drag follows the existing convention rather than half-changing it |
+| Keyboard parity (§7) | not started on the canvas; every action has a DOM control today (`docs/38 §8`) |
 
 The gating tests in §8's table now exist as `tests/unit/interaction-gate.spec.ts` and
-`tests/integration/interaction-gate.spec.tsx`, including the `BUG‑04` regression described there. The
-`affordance`, `intent`, `parity` and `hitshape` suites await the input layer.
+`tests/integration/interaction-gate.spec.tsx`, including the `BUG‑04` regression described there. §8's
+`intent.spec.ts` exists as `tests/unit/drag.spec.ts` (gesture → intent) and `tests/unit/drag-parity.spec.ts`
+(drag and click produce the *same* intent, and the same gate decision), joined by
+`tests/unit/transfer.spec.ts`, `tests/unit/object-drag.spec.tsx` and `tests/e2e/drag.e2e.ts`. The
+`affordance`, `parity` and `hitshape` suites await the registry.
