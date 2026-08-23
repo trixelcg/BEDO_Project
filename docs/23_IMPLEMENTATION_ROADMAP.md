@@ -349,6 +349,40 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Tests** `tests/unit/water-jet.spec.ts` + `scripts/water-jet.mjs` before/after capture.
 - **Perf** idle neutral; +9 draws while flowing.
 
+### ✅ BEDO‑043 — Water shader UV sampling / banding `P1`
+- **Objective** Remove the striping on the water surface, caused by sampling the ripple texture in world space.
+- **Status** ✅ Complete. The four ripple lookups sampled `vWPos`, a world-space planar
+  projection. Converted to repeats over the jet, the old multipliers gave 2.98 and 4.14 tiles
+  *along* the flow but **0.11 and 0.09 across** it — a tenth of a repeat cannot vary, so a 2-D
+  fetch collapsed into a function of height and drew horizontal bands. **`BEDO‑017` sharpened
+  it seventeenfold**: correcting the jet from 172 mm to its true 10 mm bore removed what
+  little cross-flow variation there was. Latent before, obvious after.
+
+  The expected fix — "the assets carry UVs, use them" — does not work, and the inventory says
+  why: all eight declare **zero textures and zero images**, so `TEXCOORD_0` is leftover 3ds Max
+  mapping no texture ever sampled; it is a per-primitive atlas with disjoint V bands; it
+  **reverses** within a single asset (`Water_low` correlates +0.973 on one primitive and −0.996
+  on another); U spans 28 % on two assets; and `Water45_Oblique#1` correlates ~0.00 on both.
+  Re-reading the accessors also corrected `docs/41`: **three** assets carry `TEXCOORD_1`, not two.
+
+  So the coordinate is derived instead — a cylindrical parameterisation of each mesh's own
+  vertices, baked into an `aWaterUv` attribute once at load. Object space, so it cannot swim by
+  construction; two-dimensional, so it cannot stripe; one rule for all eight shapes with no
+  filename conditionals. The flow axis is measured per mesh, since three are authored lying down.
+
+  Tile counts were **derived from the old effective density** (3 and 4 along, matching 2.98 and
+  4.14) rather than chosen. A first attempt at 7 and 11 read as a stack of rings — denser is not
+  less banded — and that is recorded. A latent vertex bug surfaced too: the height ramp
+  `clamp(position.y * 0.05 + 0.5, …)` was pinned at 1 for every shape authored above y = 10,
+  which is most of them.
+
+  `BEDO‑017` re-verified after the change: **10.00 mm, −0.00 %** at every flow state and every
+  deflector family. **Zero added draw calls, triangles or programs** — idle and flowing costs are
+  byte-identical. Fingerprint identical bar the chunk hash. 903 tests green (883 + 20).
+  `TRAVEL_HEIGHT_M` deliberately untouched. Detail: `docs/43`.
+- **Tests** `tests/unit/water-uv.spec.ts` + `scripts/water-shader.mjs` before/after capture.
+- **Perf** neutral.
+
 ### ✅ BEDO‑042 — Power switch direction + loaded-weight visibility `P1`
 - **Objective** Two reported presentation defects: the power switch turning the wrong way, and loaded weights vanishing when the camera moves.
 - **Status** ✅ Complete. **One defect was real, the other was not**, and the measurement is

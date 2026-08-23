@@ -59,6 +59,7 @@ import {
   jetScale,
   plumeScale,
 } from '../lib/waterJet';
+import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
 import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
 
@@ -471,6 +472,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     canvas.width = canvas.height = N;
     canvas.getContext('2d')!.putImageData(new ImageData(img, N, N), 0, 0);
     const tex = new THREE.CanvasTexture(canvas);
+    // Data, not colour. The channels are a height/gradient field the shader does arithmetic
+    // on, so they must reach it as authored — decoding them as sRGB would bend the ripple's
+    // response. three.js already defaults a CanvasTexture to NoColorSpace; saying so makes
+    // it survive a change of default and records the decision (`docs/43 §12`).
+    tex.colorSpace = THREE.NoColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.minFilter = THREE.LinearMipmapLinearFilter;
     tex.magFilter = THREE.LinearFilter;
@@ -518,35 +524,47 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       shader.uniforms.uWaterTex = { value: waterTex };
 
       shader.vertexShader =
-        'uniform float uTime;\nvarying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        'uniform float uTime;\nattribute vec2 aWaterUv;\n' +
+        'varying float vRise;\nvarying vec2 vWaterUv;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           // The meshes are authored ~20 units tall and centred, so normalise height to
-           // 0..1 from the bottom and let a gentle ripple build toward the surface.
-           float rise = clamp(position.y * 0.05 + 0.5, 0.0, 1.0);
+           // aWaterUv.y is distance along this mesh's own flow axis, already 0 at the
+           // nozzle end and 1 at the far end, so the ripple can build toward the surface
+           // without guessing at the authored scale. The old code used
+           // clamp(position.y * 0.05 + 0.5, ...), which assumed every shape was ~20 units
+           // tall and centred on the origin; most are not (Water90_Flat sits at y 106.9 to
+           // 128.9) and it sat pinned at 1 for them.
+           float rise = aWaterUv.y;
            float amp = 0.16 * rise;
-           transformed.x += sin(position.y * 0.9 + uTime * 5.0) * amp;
-           transformed.z += cos(position.y * 0.7 + uTime * 3.9) * amp;
+           transformed.x += sin(aWaterUv.y * 18.0 + uTime * 5.0) * amp;
+           transformed.z += cos(aWaterUv.y * 14.0 + uTime * 3.9) * amp;
            vRise = rise;
+           vWaterUv = aWaterUv;
+           // World position is still handed to the fragment stage, but only for the view
+           // vector the rim term needs — never again as a texture coordinate.
            vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vWNorm = normalize(mat3(modelMatrix) * objectNormal);`
         );
 
       shader.fragmentShader =
         'uniform float uTime;\nuniform sampler2D uWaterTex;\n' +
-        'varying float vRise;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        'varying float vRise;\nvarying vec2 vWaterUv;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.fragmentShader
           .replace(
             '#include <normal_fragment_maps>',
             `#include <normal_fragment_maps>
              {
-               // Rapidly scrolling ripple layers along the flow direction (V-axis)
-               vec2 uvTop = vWPos.xz * 6.0 + vec2(uTime * 1.2, uTime * 0.9);
-               vec2 uvSide = vec2(vWPos.x + vWPos.z, vWPos.y * 2.0) * 4.5
-                           - vec2(0.0, uTime * 7.5);
-               vec2 grad = (texture2D(uWaterTex, uvTop).rg - 0.5) * 1.8
-                         + (texture2D(uWaterTex, uvSide).rg - 0.5) * 2.2;
+               // Two ripple layers on the water's own surface. x wraps around the column,
+               // y runs along the flow, and both vary — which is the whole correction: the
+               // world-space projection this replaces barely changed across the jet's 10 mm
+               // width, so its lookup collapsed to a function of height and drew stripes.
+               vec2 uvA = vWaterUv * vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})
+                        + vec2(uTime * 0.10, -uTime * 0.55);
+               vec2 uvB = vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
+                        + vec2(-uTime * 0.07, -uTime * 0.85);
+               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 1.8
+                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 2.2;
                vec3 bump = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
                normal = normalize(normal + bump * 1.5);
              }`
@@ -559,9 +577,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                vec3 N = normalize(vWNorm);
 
                float hTop = texture2D(uWaterTex,
-                 vWPos.xz * 5.0 + vec2(uTime * 1.5, -uTime * 1.0)).b;
+                 vWaterUv * vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})
+                 + vec2(uTime * 0.13, -uTime * 0.70)).b;
                float hSide = texture2D(uWaterTex,
-                 vec2(vWPos.x - vWPos.z, vWPos.y * 2.5) * 5.0 - vec2(0.0, uTime * 8.5)).b;
+                 vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
+                 + vec2(-uTime * 0.09, -uTime * 0.95)).b;
 
                // Fast-moving specular glints reflecting off turbulent wave crests
                float glint = smoothstep(0.55, 0.90, hTop * 0.5 + hSide * 0.5) * 0.65;
@@ -584,10 +604,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   useEffect(() => {
     waterGltfs.forEach((gltf: any) => {
       gltf?.scene?.traverse((child: any) => {
-        if (child.isMesh) {
-          child.material = waterMaterial;
-          child.castShadow = false;
-          child.receiveShadow = false;
+        if (!child.isMesh) return;
+        child.material = waterMaterial;
+        child.castShadow = false;
+        child.receiveShadow = false;
+
+        // Give the mesh the surface coordinate its shader needs, computed from its own
+        // vertices. Once, at load — the geometry never changes, only the group it hangs
+        // under does, so there is nothing to recompute per frame. See `src/lib/waterUv.ts`
+        // for why the authored TEXCOORD channels cannot serve.
+        const geometry = child.geometry as THREE.BufferGeometry;
+        if (geometry && !geometry.getAttribute(WATER_UV_ATTRIBUTE)) {
+          const position = geometry.getAttribute('position');
+          if (position) {
+            const { uv } = buildWaterUv(position.array as ArrayLike<number>);
+            geometry.setAttribute(WATER_UV_ATTRIBUTE, new THREE.BufferAttribute(uv, 2));
+          }
         }
       });
     });

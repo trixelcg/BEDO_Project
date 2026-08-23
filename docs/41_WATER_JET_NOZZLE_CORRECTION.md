@@ -178,11 +178,17 @@ The assets are structurally sound; the fault was entirely in how they were scale
 
 | | |
 |---|---|
-| **Asset data** | every shape carries `TEXCOORD_0`; `Water90_Flat` and `Water180_HemiSphere` also carry `TEXCOORD_1` |
+| **Asset data** | every shape carries `TEXCOORD_0`; **three** also carry `TEXCOORD_1` — `Water90_Flat`, `Water180_HemiSphere` and `Water45_Oblique` (this entry originally said two; corrected by the re-inspection in `docs/43 §2`) |
 | **Shader assumption** | the ripple layers are sampled by **world position** — `vWPos.xz * 6.0`, `vec2(vWPos.x - vWPos.z, vWPos.y * 2.5) * 5.0` — not by `vUv` |
 | **Consequence** | a world‑space planar projection on a group that is scaled non‑uniformly and moved every frame, which is the banding the audit saw |
 
-The correct fix is to sample the authored UVs. It is **not** applied here: swapping the
+**Resolved by `docs/43`** — though not as expected: the authored UVs turned out to be unusable
+(they address no texture, are laid out as a per-primitive atlas, and reverse direction between
+primitives), so the ripple is now sampled from a surface coordinate derived from each mesh's
+own geometry. The original assessment below stands as the reason it was deferred rather than
+attempted here.
+
+The apparent fix is to sample the authored UVs. It is **not** applied here: swapping the
 projection changes the look of all eight shapes and needs its own visual pass across every
 deflector, which is a shader task rather than a mapping task, and this brief says to fix it
 only if it can be done cleanly. Recorded as water debt in §13, with a test that pins the
@@ -240,7 +246,7 @@ apparatus root.
 
 ## 13. Known remaining water debt
 
-1. **The shader ignores the assets' UVs** (§9). Diagnosed, tested, not fixed.
+1. ~~**The shader ignores the assets' UVs** (§9).~~ **Fixed** — see `docs/43`.
 2. **`TRAVEL_HEIGHT_M` disagrees with the model.** The constant says the jet climbs
    **35 mm**; the measured nozzle‑lip‑to‑deflector gap in the shipped GLB is **184 mm**, a
    factor of 5.3. The visual necessarily uses the measured gap — a jet scaled to 35 mm
