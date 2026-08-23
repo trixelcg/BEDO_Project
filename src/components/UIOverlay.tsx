@@ -40,6 +40,15 @@ interface UIOverlayProps {
   onClearWeights: () => void;
   /** Take one disc off the holder, by its position in the stack. */
   onRemoveWeight: (index: number) => void;
+  /**
+   * False while a disc is in flight, when taking one off is not yet a thing that can
+   * happen (`BEDO-021b §14`, §18).
+   *
+   * Not a lesson refusal — the gate is not involved and no message is shown. A control
+   * that cannot act must not look as though it can, which is `BUG-19`'s lesson applied to
+   * the panel rather than to the tank.
+   */
+  canRemoveWeights: boolean;
   onTogglePower: () => void;
   onToggleVolumetricValve: () => void;
   onToggleMonitor: () => void;
@@ -66,6 +75,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onAddWeight,
   onClearWeights,
   onRemoveWeight,
+  canRemoveWeights,
   onTogglePower,
   onToggleVolumetricValve,
   onToggleMonitor,
@@ -561,6 +571,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                         <button
                           key={`${index}-${g}`}
                           className="weight-add-btn"
+                          disabled={!canRemoveWeights}
                           onClick={() => onRemoveWeight(index)}
                           title={isAr ? `إزالة ${g} غ` : `Remove ${g} g`}
                           aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
@@ -574,6 +585,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 
                   <button
                     className="btn-secondary"
+                    disabled={!canRemoveWeights}
                     onClick={onClearWeights}
                     style={{ color: 'var(--danger-red)' }}
                   >

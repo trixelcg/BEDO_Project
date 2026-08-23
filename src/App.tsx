@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Scene3D } from './components/Scene3D';
+import type { WeightAvailability } from './components/DeviceModel';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
 import { AnswerSheet } from './components/AnswerSheet';
@@ -311,8 +312,30 @@ export default function App() {
   const handleFlowValveClick = () => handleSetValve(currentSetpoint() ?? FIRST_READING_VALVE);
 
   // --- Weights -----------------------------------------------------------------
-  const handleAddWeight = (weight: number) =>
+  /**
+   * What the learner may do to the weights while discs are in flight (`BEDO-021b §14`, §15).
+   *
+   * Adding is refused while one is on its way *off* the holder; taking one off is refused
+   * while anything is moving at all. The reason is bookkeeping made physical — a removal
+   * renumbers the stack, and a disc still travelling to seat *n* would find that seat is
+   * now somebody else's. Adding while discs *arrive* stays open, because the runtime gave
+   * each one its own seat the moment it was clicked and balancing a reading means three or
+   * four discs in a row.
+   *
+   * A scene fact, not a lesson rule: it never reaches the gate and produces no refusal
+   * message, because nothing is being disallowed — it simply has not finished happening.
+   *
+   * `handleClearWeights` is deliberately **not** guarded. `REMOVE_ALL_WEIGHTS` is also what
+   * a reading step dispatches when it completes, and the lesson must never be held up by an
+   * animation; the scene reconciles any flight the clear invalidates. The learner's button
+   * is disabled instead, which is the half of it that is a learner's choice.
+   */
+  const [weights, setWeights] = useState<WeightAvailability>({ canAdd: true, canRemove: true });
+
+  const handleAddWeight = (weight: number) => {
+    if (!weights.canAdd) return;
     act({ type: 'ADD_WEIGHT', massG: weight }, 'ADD_WEIGHT');
+  };
 
   const handleClearWeights = () => act({ type: 'REMOVE_ALL_WEIGHTS' });
 
@@ -323,7 +346,10 @@ export default function App() {
    * means when two discs of the same denomination are on the pan. Same gate, same runtime,
    * same state machine as adding one.
    */
-  const handleRemoveWeight = (index: number) => act({ type: 'REMOVE_WEIGHT', index });
+  const handleRemoveWeight = (index: number) => {
+    if (!weights.canRemove) return false;
+    return act({ type: 'REMOVE_WEIGHT', index });
+  };
 
   // --- Guided progression ------------------------------------------------------
   const handleStepOkClick = () => applyAdvance(runner.confirm(context));
@@ -527,6 +553,7 @@ export default function App() {
         onVolumetricValveClick={handleToggleVolumetricValve}
         onAddWeight={handleAddWeight}
         onRemoveWeight={handleRemoveWeight}
+        onWeightAvailability={setWeights}
       />
 
       <UIOverlay
@@ -540,6 +567,7 @@ export default function App() {
         onSetParams={handleSetParams}
         onSelectDeflector={handleSelectDeflector}
         onSetValve={handleSetValve}
+        canRemoveWeights={weights.canRemove}
         onAddWeight={handleAddWeight}
         onClearWeights={handleClearWeights}
         onRemoveWeight={handleRemoveWeight}

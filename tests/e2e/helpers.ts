@@ -264,6 +264,94 @@ declare global {
         meshPoint: (name: string) => ScreenPoint | null;
         dropPoint: () => ScreenPoint | null;
       };
+      /** Dev-only; see BEDO-021b. World coordinates for the weights and their flights. */
+      weightProbe?: {
+        seats: () => { index: number; landed: boolean; world: Vec3 | null }[];
+        tray: (mesh: string) => Vec3 | null;
+        flying: () => {
+          grams: number | undefined;
+          toHolder: boolean;
+          at: Vec3 | null;
+          to: Vec3 | null;
+        }[];
+      };
     };
   }
+}
+
+/** A point in world units, as the dev probe reports it. */
+export type Vec3 = [number, number, number];
+
+export const distance = (a: Vec3 | null, b: Vec3 | null): number =>
+  a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : Number.POSITIVE_INFINITY;
+
+/** One frame of the weights, captured inside the page. */
+export interface WeightSnapshot {
+  marker: string | null;
+  flying: { grams: number | undefined; toHolder: boolean; at: Vec3 | null; to: Vec3 | null }[];
+  seats: { index: number; landed: boolean; world: Vec3 | null }[];
+  /** Whether the panel is currently offering to take a disc off. */
+  removeEnabled: boolean;
+}
+
+/** The weights probe, or a failure that says which dev-only hook is missing. */
+export async function weightProbe(page: Page) {
+  await expect
+    .poll(() => page.evaluate(() => Boolean(window.__bedoTest?.weightProbe)), {
+      timeout: 30_000,
+    })
+    .toBe(true);
+  return {
+    seats: () => page.evaluate(() => window.__bedoTest!.weightProbe!.seats()),
+    tray: (mesh: string) =>
+      page.evaluate((m) => window.__bedoTest!.weightProbe!.tray(m), mesh),
+    flying: () => page.evaluate(() => window.__bedoTest!.weightProbe!.flying()),
+
+    /**
+     * Record **every rendered frame** of the flight a gesture starts.
+     *
+     * A recorder is installed in the page first, on `requestAnimationFrame`, and reads the
+     * probe from inside the page; the result is collected once the scene reports itself
+     * idle. Nothing is polled across the wire and nothing sleeps.
+     *
+     * Polling from Node instead is a race the test loses about as often as it wins. The
+     * browser suite renders a 26 MB apparatus in software at roughly one frame a second, so
+     * BEDO's two seconds are only one or two frames — fewer than a round trip — and a poll
+     * that misses them cannot tell "it never happened" from "I blinked". A frame-by-frame
+     * recorder cannot miss a flight that spans a frame at all.
+     */
+    async record(launch: () => Promise<unknown>): Promise<WeightSnapshot[]> {
+      await page.evaluate(() => {
+        const w = window as unknown as { __wtLog?: unknown[]; __wtOn?: boolean };
+        w.__wtLog = [];
+        w.__wtOn = true;
+        const tick = () => {
+          const probe = window.__bedoTest?.weightProbe;
+          const flying = probe?.flying() ?? [];
+          if (flying.length > 0) {
+            const remove = [...document.querySelectorAll('button')].find((b) =>
+              /^Remove /.test(b.getAttribute('aria-label') ?? '')
+            ) as HTMLButtonElement | undefined;
+            w.__wtLog!.push({
+              marker: document.documentElement.dataset.bedoTransfer ?? null,
+              flying,
+              seats: probe!.seats(),
+              removeEnabled: remove ? !remove.disabled : false,
+            });
+          }
+          if (w.__wtOn) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+
+      await launch();
+      await transfersIdle(page);
+
+      return page.evaluate(() => {
+        const w = window as unknown as { __wtLog: WeightSnapshot[]; __wtOn: boolean };
+        w.__wtOn = false;
+        return w.__wtLog;
+      }) as Promise<WeightSnapshot[]>;
+    },
+  };
 }

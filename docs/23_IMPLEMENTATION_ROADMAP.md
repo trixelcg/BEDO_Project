@@ -449,6 +449,49 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
   Still open from `docs/16`: the affordance registry, general hit geometry, the canvas cursor (`BUG‑18`)
   and keyboard parity (`UX‑04`).
 
+### ✅ BEDO‑021b — Tray → holder weight transfer `P1`
+- **Objective** Complete the pair BEDO‑021 left half-built: a weight clicked on to the holder must *move* there over BEDO's two seconds instead of appearing.
+- **Reason** `Jetforce_Storyboard.pptx` specifies the forward transfer four times — sl. 15 (once per denomination), sl. 16 (*"in 2 seconds"*), and the state machine on sl. 29, 30 and 32 — and only the return leg had been built.
+- **Acceptance** the disc flies tray → holder in 2 s to the seat `BEDO‑016` measured; removal still flies holder → tray; both use one pair of anchors; no disc is ever drawn twice.
+- **Status** ✅ Complete. Read from the **original 69 MB storyboard** rather than from prior
+  summaries — the copy in `docs/reference/` is a 165-byte stub — and extracted from the OOXML so
+  that the *column* each sentence sits in is known. That turned out to settle the design: on
+  sl. 15/16 the sentence sits under **Animation**, and the state tables put *"Click on the
+  weight"* under **Transition** while *"The weight moved to the tank holder in 2 sec"* sits
+  under **Event**. The click changes the state; the two seconds are what the learner watches —
+  exactly how `SELECT_DEFLECTOR` already behaves. So the runtime still commits on the click and
+  **`src/domain`, `src/simulation` and `src/lesson` were not edited at all**; all 825
+  pre-existing tests pass unedited.
+
+  The Unity original has nothing to say: both trees carry the device's FBX and textures and no
+  weight behaviour whatever — no clip, no PlayMaker FSM, no script. The storyboard is the sole
+  behavioural source, and that is now written down.
+
+  One thing did have to move. Sl. 19 says the spring reacts when weights are *"placed on the
+  holder"*, so under a commit-first design it would compress while the disc was still visibly on
+  the bench. The **visual** spring is therefore driven by the mass physically on the pan, with
+  `loadedWeightsG` untouched — measured force, balance window, readings and CSV are byte-identical.
+
+  Both directions resolve through `BEDO‑016`: `to` for an arrival is `from` for the removal that
+  undoes it, and vice versa. **A defect was found while measuring the route** — a weight may only
+  be added with the cover *shut*, and the pan is above that shut cover, so the straight line
+  between bench and pan is inside the tank for the middle third of the flight. `BEDO‑021`'s
+  removal had been passing a disc through the glass since it shipped. `src/lib/transferPath.ts`
+  now carries both directions over the lid on the smallest arc that clears it by a measured
+  10 mm, zero at both ends so no route offset survives the landing.
+
+  **Two one-frame duplicates were found and fixed**: the arrival and removal observers were
+  passive effects, so a frame was painted before the ghost existed, and the frame loop read tray
+  visibility from a memo that lagged `loadedWeightsG` by a render. Sampled from the running app,
+  no frame now shows a disc in two places. Removal is held while anything is in flight — it
+  renumbers the stack under a travelling disc — while adding stays open, because each disc owns
+  its seat from the moment it was clicked and balancing a reading means several in a row.
+
+  **855 tests green** (825 + 30), the four new browser tests pass against the 26 MB apparatus, and
+  the six BEDO‑021 drag tests are unchanged. Detail: `docs/40`.
+- **Tests** `tests/unit/weight-transfer.spec.ts`, `tests/e2e/weight-transfer.e2e.ts`, extended `transfer.spec.ts`.
+- **Perf** neutral — see `docs/40`.
+
 ### ✅ BEDO‑022 — Deflector scope + weight removal `P1`
 - **Objective** Reject deflectors outside the loaded experiment; make loaded weights individually removable.
 - **Reason** `BUG‑05` (Exp.1 silently runs with `k = 2.0` while every label says `F = ρAV²`), `UX‑24`; storyboard sl. 32 `D →(weight on holder)→ B`.

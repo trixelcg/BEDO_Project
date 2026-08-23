@@ -61,6 +61,13 @@ tank must be open, and installing does not change which state the rig is in (C �
 **Not in any source:** where the disc goes afterwards. The document says only *removed from the tank
 holder*.
 
+> **BEDO‑021b — the forward transfer is now complete.** This task built the *return* leg only:
+> clicking a weight added it to the holder instantly, and only the disc coming **off** was
+> animated. The three rows above describing *"the weight moves to the tank holder"* were
+> therefore unimplemented, and are recorded in §13 below as such. `BEDO‑021b` closed that —
+> a disc now flies **tray → holder** over the same two seconds, to the seat `BEDO‑016`
+> measured, and both directions share one pair of anchors. See **`docs/40`**.
+
 ### 1.4 Where a source is silent, this is what was chosen
 
 | Question | No source says | Implementation behaviour | Why |
@@ -284,6 +291,12 @@ So: the runtime is authoritative the instant the gate accepts; the transfer is p
 
 ## 5. The weight: click, drag, and the two-second return
 
+> **Superseded in part by BEDO‑021b (`docs/40`).** Everything below still holds for the
+> removal. What changed is that the *arrival* is now a transfer too, so the flow is
+> symmetric: `ADD_WEIGHT` → gate → runtime → `'weight-install'` flight, 2 s, tray slot →
+> holder seat. Both directions use `entry.measured` for the tray and `stackSeats` for the
+> seat, and both are carried over the shut tank cover rather than through it.
+
 The storyboard's gesture is a **click** and that is what the disc on the holder is: a press and release
 under the threshold resolves to `activate`. Pulling it off works too, and means the same thing — one
 intent, two ways to express it, no second policy. There is no drop target because there is no destination
@@ -490,7 +503,9 @@ weights are what BEDO‑021 touches.
 
 | Issue | Why not here |
 |---|---|
-| `BUG‑02` — the pan sits ~2.18 m from where the weights are placed | A coordinate-system correction. This task animates between the existing source and destination anchors and moves neither (`BEDO‑021 §25`) |
+| `BUG‑02` — the pan sits ~2.18 m from where the weights are placed | A coordinate-system correction. This task animates between the existing source and destination anchors and moves neither (`BEDO‑021 §25`). **Closed by `BEDO‑016` — `docs/39`** |
+| The **tray → holder** transfer the storyboard specifies four times | Not built here; adding a weight was instantaneous. **Closed by `BEDO‑021b` — `docs/40`** |
+| The removal's path passes through the closed glass tank | Not noticed here. The pan is above the shut cover and the discs are beside the tank, so a straight line clips it. **Closed by `BEDO‑021b`**, which carries both directions over the lid |
 | `BUG‑18` — the cursor is written to `document.body` | The canvas-cursor fix is `docs/16 §6`. This follows the existing convention rather than half-changing it; every path that sets it also clears it |
 | `docs/16 §5` hit geometry — one clamped sphere per part | Unchanged. The rod's **drop** region is a measured sphere, but the hit proxies are as `BEDO‑020` left them |
 | Keyboard pick-up / put-down on the canvas | `UX‑04` / `BEDO‑036` — see §8 |

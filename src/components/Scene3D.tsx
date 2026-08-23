@@ -2,7 +2,7 @@ import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } fr
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
-import { DeviceModel } from './DeviceModel';
+import { DeviceModel, type WeightAvailability } from './DeviceModel';
 import type { LessonView, SimulationView } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
 import type { AnchorKey } from '../domain/apparatus';
@@ -20,6 +20,8 @@ interface Scene3DProps {
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
   onRemoveWeight: (index: number) => boolean;
+  /** What the weights will accept while discs are in flight. See `WeightAvailability`. */
+  onWeightAvailability: (availability: WeightAvailability) => void;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
@@ -168,6 +170,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onVolumetricValveClick,
   onAddWeight,
   onRemoveWeight,
+  onWeightAvailability,
 }) => {
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
@@ -235,6 +238,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onVolumetricValveClick={onVolumetricValveClick}
             onAddWeight={onAddWeight}
             onRemoveWeight={onRemoveWeight}
+            onWeightAvailability={onWeightAvailability}
             position={sceneConfig.characterPosition}
             rotation={[
               (sceneConfig.characterRotation[0] * Math.PI) / 180,

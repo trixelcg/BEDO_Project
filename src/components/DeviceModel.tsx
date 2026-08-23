@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -39,10 +46,13 @@ import {
   type DropOutcome,
 } from '../interaction/drag';
 import {
+  addedWeightIndex,
   createTransferSet,
   removedWeightIndex,
   type TransferKind,
 } from '../interaction/transfer';
+import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
+import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
 
 type Action =
@@ -115,12 +125,48 @@ interface Ghost {
   /** The destination rides up with the tank cover — only the rod does. */
   liftsWithCover: boolean;
   /**
+   * How high this flight arcs over the tank, in apparatus-local units (`docs/40 §9`).
+   *
+   * Zero for a straight move. A disc is added and taken off while the tank cover is shut
+   * and the pan is above it, so the direct line between the bench and the pan goes through
+   * the glass; this carries it over instead. Measured from the tank, not chosen.
+   */
+  arc: number;
+  /** The disc's own radius, so the arc clears the tank with all of it and not just its centre. */
+  radius: number;
+  /**
+   * The stack seat this disc is flying *into*, while it is still on its way.
+   *
+   * The runtime commits the disc the moment the click is accepted, so it is already in the
+   * stack and would be drawn sitting on the pan. This is what tells the renderer to leave
+   * that seat empty until the disc actually lands (`docs/40 §10`).
+   */
+  seatIndex?: number;
+  /**
    * Where the clone's centre sits when the wrapper is at the origin.
    *
    * Subtracted from the point under the cursor, so the part is carried by the place the
    * learner grabbed rather than by the GLB's distant shared origin.
    */
   restCentre: THREE.Vector3;
+}
+
+/**
+ * What the learner may do to the weights right now, given what is mid-flight.
+ *
+ * Adding again while discs are arriving is fine and stays fine: the runtime committed each
+ * one on its click, so every disc already owns a distinct seat and two arrivals can never
+ * claim the same slot. Balancing a reading means three or four discs in quick succession
+ * and making the learner wait two seconds between each would be its own defect.
+ *
+ * Taking one *off* while anything is in flight is the case that cannot be allowed: removal
+ * renumbers the stack under a disc that is still travelling to a seat identified by number.
+ * So a removal waits for the pan to be settled, and while a removal is travelling nothing
+ * else may touch the weights at all.
+ */
+export interface WeightAvailability {
+  readonly canAdd: boolean;
+  readonly canRemove: boolean;
 }
 
 interface DeviceModelProps {
@@ -144,6 +190,14 @@ interface DeviceModelProps {
   onAddWeight: (grams: number) => void;
   /** Puts `REMOVE_WEIGHT` to the gate. Returns whether it was accepted. */
   onRemoveWeight: (index: number) => boolean;
+  /**
+   * Which weight interactions are physically available while discs are in flight.
+   *
+   * Presentation policy, reported upwards so the 2D panel obeys the same rule the tank
+   * does (`BEDO-021b §14`, §15, §19). It is *not* a lesson refusal and never reaches the
+   * gate: nothing is being disallowed, it simply has not finished happening yet.
+   */
+  onWeightAvailability: (availability: WeightAvailability) => void;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -167,6 +221,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onVolumetricValveClick,
   onAddWeight,
   onRemoveWeight,
+  onWeightAvailability,
   position,
   rotation,
   scale,
@@ -205,6 +260,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * frame loop, not baked in (see `weightStackRef`).
    */
   const [holderAnchor, setHolderAnchor] = useState<HolderAnchor | null>(null);
+  /**
+   * What a disc has to be carried over on its way to or from the pan (BEDO-021b).
+   *
+   * The tank's footprint at the shut cover's height, apparatus-local and measured at rest.
+   * Weights are only ever added with the cover shut, so this is the envelope that matters.
+   */
+  const [transferObstacle, setTransferObstacle] = useState<Obstacle | null>(null);
   /** The glass tank the water fills, in the apparatus's local space. */
   const [tankBounds, setTankBounds] = useState<{
     cx: number;
@@ -668,6 +730,43 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     () => new Set(ghosts.map((g) => g.grams).filter((g): g is number => g !== undefined)),
     [ghosts]
   );
+  /**
+   * Weight discs in flight, split by which way they are going.
+   *
+   * An arrival carries the seat it is heading for; a departure has already left the stack
+   * and has none. That is the whole distinction the availability rule needs.
+   */
+  const weightsInFlight = useMemo(() => {
+    const weights = ghosts.filter((g) => g.grams !== undefined);
+    return {
+      arriving: weights.some((g) => g.seatIndex !== undefined),
+      departing: weights.some((g) => g.seatIndex === undefined),
+    };
+  }, [ghosts]);
+
+  const weightAvailability = useMemo<WeightAvailability>(
+    () => ({
+      canAdd: !weightsInFlight.departing,
+      canRemove: !weightsInFlight.arriving && !weightsInFlight.departing,
+    }),
+    [weightsInFlight]
+  );
+
+  useEffect(() => {
+    onWeightAvailability(weightAvailability);
+  }, [onWeightAvailability, weightAvailability]);
+
+  /**
+   * Stack seats whose disc has not arrived yet (BEDO-021b §17).
+   *
+   * The runtime commits a disc on the click, so it joins the stack two seconds before the
+   * learner sees it get there. Without this the disc would be drawn on its seat *and*
+   * flying towards it — the duplicate `BEDO-021 §10` keeps off the rod during an install.
+   */
+  const inFlightSeats = useMemo(
+    () => new Set(ghosts.map((g) => g.seatIndex).filter((i): i is number => i !== undefined)),
+    [ghosts]
+  );
 
   /**
    * Tray discs that are not on the tray: on the holder, or on their way back to it.
@@ -779,6 +878,30 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // The camera's idea of "the pan" is the same point the discs sit on. No step frames
     // this anchor today, so nothing moves; when one does, it will frame the real plate.
     if (anchor) nextAnchors.pan = [...anchor.surface];
+
+    // What a flying disc has to clear (BEDO-021b §24). The tank gives the footprint — it
+    // is the wider of the two — and the shut cover gives the height, so a disc carried
+    // between the bench and the pan goes over the lid rather than through the glass.
+    const localAabb = (names: string[]) => {
+      if (!localBox(names)) return null;
+      const lo = group.worldToLocal(tmp.box.min.clone());
+      const hi = group.worldToLocal(tmp.box.max.clone());
+      // worldToLocal does not preserve which corner is which under a mirrored transform.
+      return { min: lo.clone().min(hi), max: lo.clone().max(hi) };
+    };
+    const tankAabb = localAabb([MESH.tank]);
+    const coverAabb = localAabb([MESH.tankCover]);
+    setTransferObstacle(
+      tankAabb
+        ? {
+            minX: tankAabb.min.x,
+            maxX: tankAabb.max.x,
+            minZ: tankAabb.min.z,
+            maxZ: tankAabb.max.z,
+            topY: Math.max(tankAabb.max.y, coverAabb?.max.y ?? -Infinity),
+          }
+        : null
+    );
 
     // Where a dragged deflector may be let go: the tank you carry it to and the rod it
     // seats in, both measured, both padded, both in the apparatus's own space so the rod
@@ -1090,6 +1213,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   /** The stack as it was before the last change — where a removed disc flew from. */
   const previousStackRef = useRef(stack);
   const loadedWeightsRef = useRef(state.loadedWeightsG);
+  /**
+   * The same list again, for the arrival observer.
+   *
+   * Two mirrors rather than one, because the two effects both consume the transition and
+   * whichever ran second would see no change at all if they shared it.
+   */
+  const addedFromRef = useRef(state.loadedWeightsG);
   const selectedDeflectorRef = useRef(state.selectedDeflectorId);
   /** Set when the scene itself started a removal flight, so the observer below stands down. */
   const sceneHandledRemovalRef = useRef(false);
@@ -1126,6 +1256,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
     return clone;
   }, []);
+
+  /**
+   * How high this flight has to arc, from the measured tank (BEDO-021b §24).
+   *
+   * One place, so the disc going on and the disc coming off are carried over the same lid
+   * by the same arithmetic. Only weights: a deflector is installed through the *open*
+   * cover and goes straight to the rod, exactly as `BEDO-021` shipped it, so it is left
+   * alone.
+   */
+  const arcBetween = useCallback(
+    (kind: TransferKind, from: THREE.Vector3, to: THREE.Vector3, radius: number): number =>
+      transferObstacle && directionOf(kind)
+        ? arcHeightOver([from.x, from.y, from.z], [to.x, to.y, to.z], transferObstacle, radius)
+        : 0,
+    [transferObstacle]
+  );
 
   /**
    * A flying disc, wrapped so that the wrapper's origin is the disc itself (BEDO-016).
@@ -1183,10 +1329,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ghost.to = to.clone();
       ghost.followsPointer = false;
       ghost.liftsWithCover = liftsWithCover;
+      // Sized from where the flight actually starts, which for a disc the learner dragged
+      // is wherever they let go — so a disc already clear of the tank flies straight home.
+      ghost.arc = arcBetween(kind, ghost.from, ghost.to, ghost.radius);
       transfers.start(id, kind);
       syncGhosts([...ghostsRef.current]);
     },
-    [transfers, syncGhosts]
+    [transfers, syncGhosts, arcBetween]
   );
 
   /**
@@ -1229,6 +1378,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         to: seat,
         followsPointer: true,
         liftsWithCover: true,
+        // The cover is open while a deflector is installed, so it drops straight in.
+        arc: 0,
+        radius: 0,
         restCentre: shelfCentre,
       };
       syncGhosts([...ghostsRef.current, ghost]);
@@ -1268,6 +1420,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         to: entry.measured.clone(),
         followsPointer: true,
         liftsWithCover: false,
+        // Sized again by `startFlight` once it is known where the disc was let go.
+        arc: 0,
+        radius: entry.radius,
         restCentre: new THREE.Vector3(),
       };
       syncGhosts([...ghostsRef.current, ghost]);
@@ -1342,9 +1497,49 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         y: rect.top + ((1 - world.y) / 2) * rect.height,
       };
     };
+    /** The same point, but in world units — what a coordinate assertion actually needs. */
+    const world = (local: THREE.Vector3 | readonly [number, number, number] | null) => {
+      const group = groupRef.current;
+      if (!group || !local) return null;
+      const v = Array.isArray(local)
+        ? new THREE.Vector3(local[0], local[1], local[2])
+        : (local as THREE.Vector3).clone();
+      const w = group.localToWorld(v);
+      return [w.x, w.y, w.z] as [number, number, number];
+    };
     const globals = window as unknown as Record<string, any>;
     globals.__bedoTest = {
       ...globals.__bedoTest,
+      /**
+       * Dev-only: where the weights are, so a browser test can assert BEDO-021b's two
+       * transfers land on the anchors `BEDO-016` measured rather than merely on something.
+       *
+       * Reports world coordinates, and reports each flight's **destination** as well as its
+       * current position — which is the assertion that matters: `§33` asks that a disc
+       * flying to the holder is aimed at the stack seat and a disc flying home is aimed at
+       * its own tray slot, with no third formula anywhere.
+       */
+      weightProbe: {
+        /** Every loaded disc's seat, and whether it has actually arrived on it. */
+        seats: () =>
+          stack.map(({ index, seat }) => ({
+            index,
+            landed: !inFlightSeats.has(index),
+            world: world(seat),
+          })),
+        /** Where a denomination rests on the tray — the anchor a removal flies home to. */
+        tray: (mesh: string) => world(localCentreOf(mesh)),
+        /** Discs currently in the air: where each one is, and where it is going. */
+        flying: () =>
+          ghostsRef.current
+            .filter((g) => g.grams !== undefined)
+            .map((g) => ({
+              grams: g.grams,
+              toHolder: g.seatIndex !== undefined,
+              at: world(g.wrapper.position),
+              to: world(g.to),
+            })),
+      },
       dragProbe: {
         deflectorPoint: (id: number) => project(localCentreOf(getDeflector(id).shelf)),
         /** Any authored mesh, by GLB name — used to reason about what a step actually frames. */
@@ -1485,6 +1680,102 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [state.selectedDeflectorId, lesson.hasInstalledDeflector]);
 
   /**
+   * A disc going *on* to the holder — the other half of BEDO's weight transfer.
+   *
+   * `Jetforce_Storyboard.pptx` sl. 15, once per denomination: *"When the user clicks on the
+   * weight, the weight moves to the tank holder."*; sl. 16 gives the duration, *"in 2
+   * seconds"*; and the state machine repeats it as the event on every `Click on the weight`
+   * transition (sl. 29, 30, 32). `BEDO-021` built the return leg and left this one out, so
+   * a disc simply appeared on the pan. This is the move it should always have made.
+   *
+   * Watched as a state transition rather than triggered by a handler, exactly as removal
+   * is: the tray disc, the panel's `+50g` button and a keyboard activation of that button
+   * all change the same runtime state, so all three produce this one transfer and none of
+   * them knows an animation exists (`BEDO-021 §22`).
+   *
+   * The runtime has already committed the disc by the time this runs — the click is what
+   * changes the state, and the two seconds are what the learner watches (`docs/40 §4`). So
+   * the disc is in `stack` and would be drawn sitting on its seat; `seatIndex` is what
+   * keeps that seat empty until it lands.
+   *
+   * A **layout** effect, so the ghost exists and the seat is emptied in the same commit the
+   * runtime's change arrives in. As a passive effect this would run after the browser had
+   * already painted one frame of the disc sitting on the pan — the duplicate `§17` forbids,
+   * and a very visible one at the frame rates a 26 MB model reaches on a software renderer.
+   */
+  useLayoutEffect(() => {
+    const previous = addedFromRef.current;
+    addedFromRef.current = state.loadedWeightsG;
+
+    const index = addedWeightIndex(previous, state.loadedWeightsG);
+    if (index === null) return;
+
+    const entry = stack[index];
+    const group = groupRef.current;
+    if (!entry || !group) return;
+
+    const id = `weight:${index}`;
+    if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) return;
+
+    const wrapper = weightGhostWrapper(entry);
+    // Straight out of the tray slot the disc is cloned from, so it leaves exactly where the
+    // learner saw it, and on to the seat BEDO-016 measured. Two anchors, no third opinion.
+    const from = entry.measured.clone();
+    const to = new THREE.Vector3(entry.seat[0], entry.seat[1], entry.seat[2]);
+    wrapper.position.copy(from);
+
+    const ghost: Ghost = {
+      id,
+      wrapper,
+      grams: state.loadedWeightsG[index],
+      from,
+      to,
+      followsPointer: false,
+      // The pan rides the cover and the spring, so the destination has to ride with it —
+      // added per frame rather than baked in, the way an install already does.
+      liftsWithCover: true,
+      arc: arcBetween('weight-install', from, to, entry.radius),
+      radius: entry.radius,
+      seatIndex: index,
+      restCentre: new THREE.Vector3(),
+    };
+    ghostsRef.current = [...ghostsRef.current, ghost];
+    setGhosts(ghostsRef.current);
+    transfers.start(id, 'weight-install');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loadedWeightsG]);
+
+  /**
+   * A disc whose seat stopped existing while it was still flying to it.
+   *
+   * A reading step ends with `REMOVE_ALL_WEIGHTS` — the lesson tidying the pan between
+   * readings — and that can land in the middle of an arrival. The disc would otherwise
+   * finish its two seconds and settle onto a pan that has just been emptied.
+   *
+   * So the flight is abandoned and the disc is put back under the rule that normally
+   * governs it, which for a disc that is no longer loaded means back on the tray, at once.
+   * `revealAfterFlight` is the same reconciliation a reset uses; nothing here decides where
+   * anything goes (`BEDO-021b §15`, §16).
+   *
+   * A layout effect, and declared between the two observers on purpose: an arrival whose
+   * seat has just been taken away is cancelled before anything else looks at the stack, and
+   * before the browser paints a frame of a disc still travelling towards a pan that has
+   * been emptied.
+   */
+  useLayoutEffect(() => {
+    const stale = ghostsRef.current.filter(
+      (g) => g.seatIndex !== undefined && g.seatIndex >= state.loadedWeightsG.length
+    );
+    if (!stale.length) return;
+    for (const ghost of stale) {
+      transfers.cancel(ghost.id);
+      revealAfterFlight(ghost);
+    }
+    syncGhosts(ghostsRef.current.filter((g) => !stale.includes(g)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.loadedWeightsG]);
+
+  /**
    * The 2D panel's removals, animated the same way.
    *
    * `BEDO-021 §22`: the scene watches the state transition rather than being told by
@@ -1492,8 +1783,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * same two-second move without either surface knowing about the animation. The 3D path
    * has already raised its own ghost under this id by the time this runs, so it is left
    * alone.
+   *
+   * A layout effect for the same reason the arrival is: the disc leaves `loadedWeightsG` at
+   * once, and the ghost that carries it has to be on screen in that same commit or the pan
+   * is briefly, visibly empty while the disc has not started moving yet.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = loadedWeightsRef.current;
     loadedWeightsRef.current = state.loadedWeightsG;
     const entries = previousStackRef.current;
@@ -1529,6 +1824,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       to: entry.measured.clone(),
       followsPointer: false,
       liftsWithCover: false,
+      arc: arcBetween('weight-removal', wrapper.position, entry.measured, entry.radius),
+      radius: entry.radius,
       restCentre: new THREE.Vector3(),
     };
     ghostsRef.current = [...ghostsRef.current, ghost];
@@ -1719,8 +2016,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // --- Jet force, spring deflection, pointer ---------------------------------
     const { theoreticalForceN } = jetState(state.valveOpening, state.selectedDeflectorId);
     const jetForceN = state.isPowerOn && !state.isCoverOpen ? theoreticalForceN : 0;
-    const loadedMassG = state.loadedWeightsG.reduce((a, b) => a + b, 0);
-    const weightForceN = (loadedMassG * 9.81) / 1000;
+    // The mass actually **on the holder**, which during a transfer is not the whole of what
+    // the runtime is carrying: a disc still in the air is not yet pressing on anything.
+    //
+    // Storyboard sl. 19, on the deflector spring: *"According to the equation of X = hF −
+    // hw, the deflector spring moves downward when the weights are **placed on the holder**
+    // and moves upward when the weights are **removed from it**."* Placed on, not clicked.
+    // So the spring waits for the disc to land, and rises the moment one is lifted off.
+    //
+    // Presentation only, and deliberately so: `loadedWeightsG` is untouched, so the
+    // measured force, the balance window, the readings and the CSV are exactly what they
+    // were. This is where the disc is, not what it weighs (`docs/40 §6`).
+    const seatedMassG = state.loadedWeightsG.reduce(
+      (total, massG, index) => (inFlightSeats.has(index) ? total : total + massG),
+      0
+    );
+    const weightForceN = (seatedMassG * 9.81) / 1000;
 
     // X = h_F - h_w, floored at rest and capped by the geometry above the spring.
     // The equation and the floor are BEDO's (storyboard sl. 8/19, see domain/spring.ts);
@@ -1871,15 +2182,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // A tray disc is out of sight while it is on the holder, and stays out of sight for
-    // the two seconds it spends flying back — otherwise it would be in two places at once
-    // for the whole of the return.
+    // the two seconds it spends flying either way — otherwise it would be in two places at
+    // once for the whole of the trip.
+    //
+    // Read from `ghostsRef` rather than from the memo the hit test uses, because they are
+    // not on the same clock: `loadedWeightsG` drops the moment a removal is accepted, while
+    // the ghost that is carrying the disc away only reaches React state on the next render.
+    // For one frame the memo would say "not loaded, not carried" and put the tray disc back
+    // under a disc that is still on the pan (`BEDO-021b §17`).
     WEIGHTS.forEach((w) => {
-      if (w.mesh) {
-        const meshObj = pick(w.mesh);
-        if (meshObj) {
-          meshObj.visible = !hiddenTrayWeightGrams.has(w.grams);
-        }
-      }
+      if (!w.mesh) return;
+      const meshObj = pick(w.mesh);
+      if (!meshObj) return;
+      const carried = ghostsRef.current.some((g) => g.grams === w.grams);
+      meshObj.visible = !carried && !state.loadedWeightsG.includes(w.grams);
     });
 
     // --- Ghosts: carried objects and physical transfers ---------------------------
@@ -1896,6 +2212,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         if (ghost.liftsWithCover) {
           ghost.wrapper.position.y += holderLift * progress;
         }
+        // Over the shut tank rather than through it. Zero at both ends, so the disc still
+        // leaves its tray slot and lands on its seat at exactly the measured anchors.
+        ghost.wrapper.position.y += arcLift(ghost.arc, progress);
       }
       if (settled.length) {
         // Hide the ghost and reveal the real part in the *same* frame, so the swap at the
@@ -1939,7 +2258,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           // The slot's origin *is* the disc's seat on the pan, so the disc and the target
           // the pointer hits cannot drift apart: one is recentred onto this origin, the
           // other simply sits at it (`docs/39 §7`).
-          <group key={key} position={seat}>
+          <group key={key} position={seat} visible={!inFlightSeats.has(index)}>
             <group position={recentre}>
               <primitive object={object} />
             </group>
@@ -1963,19 +2282,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               off works too and means exactly the same thing — one intent, two ways to
               express it, and no second policy anywhere (`docs/38 §5`).
             */}
-            <mesh
-              {...drag.handlersFor({ kind: 'weight', index })}
-              onPointerOver={(e) => {
-                e.stopPropagation();
-                if (weightsAreActionable) document.body.style.cursor = 'grab';
-              }}
-              onPointerOut={() => {
-                if (!drag.current()) document.body.style.cursor = 'default';
-              }}
-            >
-              <cylinderGeometry args={[radius, radius, thickness, 24, 1]} />
-              <meshBasicMaterial visible={false} />
-            </mesh>
+            {/*
+              Gone from the tree entirely while the disc is still on its way, rather than
+              merely hidden: three.js raycasts invisible objects like any other, so a
+              hidden proxy is precisely the invisible-but-clickable target `BUG-19` was.
+              An empty seat is not something a learner can take a weight off (§18).
+            */}
+            {!inFlightSeats.has(index) && (
+              <mesh
+                {...drag.handlersFor({ kind: 'weight', index })}
+                onPointerOver={(e) => {
+                  e.stopPropagation();
+                  if (weightsAreActionable) document.body.style.cursor = 'grab';
+                }}
+                onPointerOut={() => {
+                  if (!drag.current()) document.body.style.cursor = 'default';
+                }}
+              >
+                <cylinderGeometry args={[radius, radius, thickness, 24, 1]} />
+                <meshBasicMaterial visible={false} />
+              </mesh>
+            )}
           </group>
         ))}
       </group>
