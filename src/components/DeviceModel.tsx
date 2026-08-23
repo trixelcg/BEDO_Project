@@ -52,6 +52,12 @@ import {
   type TransferKind,
 } from '../interaction/transfer';
 import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
+import {
+  JET_ASSET,
+  STARTUP_VALVE_OPENING,
+  jetScale,
+  plumeScale,
+} from '../lib/waterJet';
 import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
 
@@ -267,14 +273,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * Weights are only ever added with the cover shut, so this is the envelope that matters.
    */
   const [transferObstacle, setTransferObstacle] = useState<Obstacle | null>(null);
-  /** The glass tank the water fills, in the apparatus's local space. */
-  const [tankBounds, setTankBounds] = useState<{
-    cx: number;
-    cz: number;
-    baseY: number;
-    width: number;
-    height: number;
-  } | null>(null);
   /** Groups that let a part spin about its own centre — see makePivot. */
   const pivots = useRef<Record<string, THREE.Group>>({});
   /** 0 = pointer parked over the rod, 1 = swung 90° clear of the plate. */
@@ -285,7 +283,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     morph: { mesh: THREE.Mesh; index: number } | null;
   } | null>(null);
 
-  const waterGroupRef = useRef<THREE.Group>(null);
+  /**
+   * The water leaving the nozzle — BEDO's "water shape before impact" (sl. 18).
+   *
+   * Sized from `NOZZLE_AREA_M2`, never from the scene. See `src/lib/waterJet.ts`.
+   */
+  const jetGroupRef = useRef<THREE.Group>(null);
+  /** The water leaving the deflector — BEDO's "water shape after impact". */
+  const plumeGroupRef = useRef<THREE.Group>(null);
   const arrowGroupRef = useRef<THREE.Group>(null);
   const weightStackRef = useRef<THREE.Group>(null);
   /** The cover's click target has to ride up with the plate — see below. */
@@ -932,21 +937,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       setNozzleLip([lip.x, lip.y, lip.z]);
     }
 
-    // The tank the water fills.
-    if (localBox([MESH.tank])) {
-      tmp.box.getCenter(tmp.center);
-      tmp.box.getSize(tmp.size);
-      const floor = group.worldToLocal(
-        new THREE.Vector3(tmp.center.x, tmp.box.min.y, tmp.center.z)
-      );
-      setTankBounds({
-        cx: floor.x,
-        cz: floor.z,
-        baseY: floor.y,
-        width: Math.max(tmp.size.x, tmp.size.z) / modelScale,
-        height: tmp.size.y / modelScale,
-      });
-    }
 
     const spot = (name: string, action: Action, minRadius: number): Hotspot | null => {
       if (!localBox([name])) return null;
@@ -2116,62 +2106,66 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     // --- Water ------------------------------------------------------------------
+    //
+    // Two shapes, because BEDO specifies two (`Jetforce_Storyboard.pptx` sl. 18): the
+    // column leaving the nozzle, and the spray leaving the deflector. They had been one
+    // object, sized at 95% of the *tank's* diameter — seventeen times the nozzle's bore.
+    // See `src/lib/waterJet.ts` and `docs/41`.
     const group = groupRef.current;
     const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
+    const jetFit = waterFit[JET_ASSET];
 
-    if (flowing && group && activeDef && nozzleLip && tankBounds && waterGroupRef.current) {
-      const shape: WaterShapeKey = state.valveOpening > 0.22 ? deflector.water : 'low';
-      const fit = waterFit[shape];
+    if (flowing && group && activeDef && nozzleLip && jetFit && jetGroupRef.current) {
+      // Where the water starts and where it lands, both measured: the nozzle's own lip
+      // (`setNozzleLip`, the top of the nozzle mesh) and the deflector's underside.
+      tmp.box.setFromObject(activeDef);
+      tmp.box.getSize(tmp.size);
+      tmp.box.getCenter(tmp.defPos);
+      tmp.defPos.setY(tmp.box.min.y);
+      group.worldToLocal(tmp.defPos);
+      const deflectorDiameter = Math.max(tmp.size.x, tmp.size.z) / modelScale;
 
-      if (fit) {
-        waterGroupRef.current.visible = true;
+      tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
+      const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
 
-        // The impact point — the deflector's underside — anchors the startup stream.
-        tmp.box.setFromObject(activeDef);
-        tmp.box.getCenter(tmp.defPos);
-        tmp.defPos.setY(tmp.box.min.y);
-        group.worldToLocal(tmp.defPos);
+      // The jet climbs out of the nozzle as the valve opens, and reaches the deflector at
+      // the same setpoint the plume starts at. Implementation behaviour: no BEDO source
+      // describes the startup, only that the water "forms" when the valve is opened.
+      const reach = Math.min(1, state.valveOpening / STARTUP_VALVE_OPENING);
+      const jet = jetScale(jetFit.width, jetFit.height, gap * reach);
 
-        if (shape === 'low') {
-          // A stream from the nozzle lip up to the plate it strikes.
-          tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
+      // On the nozzle axis, not the tank's: X and Z come from the lip, and only Y spans
+      // the gap. A jet that started anywhere else would be a magic offset.
+      jetGroupRef.current.visible = true;
+      jetGroupRef.current.position.set(
+        tmp.nozzlePos.x,
+        tmp.nozzlePos.y + (gap * reach) / 2,
+        tmp.nozzlePos.z
+      );
+      jetGroupRef.current.scale.set(jet.crossFlow, jet.alongFlow, jet.crossFlow);
 
-          const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
-          const startup = Math.min(1, state.valveOpening * 4.5);
-          const scaleY = (gap * startup) / fit.height;
-          const scaleXZ = (tankBounds.width * 0.10) / fit.width;
-
-          tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
-          tmp.mid.y -= gap * (1 - startup) * 0.5; // keep the rising stream on the nozzle
-          waterGroupRef.current.position.copy(tmp.mid);
-          waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
-        } else {
-          // Dynamic spray shape stretching from nozzle to deflector, with thickness responsive to flow rate
-          tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
-          const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
-
-          const scaleY = gap / fit.height;
-          const flowIntensity = 0.7 + 0.3 * Math.min(1, (state.valveOpening - 0.22) / 0.48);
-          const scaleXZ = ((tankBounds.width * 0.95) / fit.width) * flowIntensity;
-
-          tmp.mid.addVectors(tmp.nozzlePos, tmp.defPos).multiplyScalar(0.5);
-          waterGroupRef.current.position.copy(tmp.mid);
-          waterGroupRef.current.scale.set(scaleXZ, scaleY, scaleXZ);
-        }
-
-        // Ripple faster the harder the jet runs.
-        waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
-
-        (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
-          const gltf = (water as any)[key];
-          if (gltf?.scene) gltf.scene.visible = key === shape;
-        });
-
-      } else {
-        waterGroupRef.current.visible = false;
+      // The plume forms once the jet actually arrives.
+      const impacting = state.valveOpening > STARTUP_VALVE_OPENING;
+      const plumeFit = waterFit[deflector.water];
+      if (impacting && plumeFit && plumeGroupRef.current) {
+        const spread = plumeScale(deflectorDiameter, plumeFit.width);
+        plumeGroupRef.current.visible = true;
+        plumeGroupRef.current.position.set(tmp.defPos.x, tmp.defPos.y, tmp.defPos.z);
+        plumeGroupRef.current.scale.setScalar(spread);
+      } else if (plumeGroupRef.current) {
+        plumeGroupRef.current.visible = false;
       }
-    } else if (waterGroupRef.current) {
-      waterGroupRef.current.visible = false;
+
+      // Ripple faster the harder the jet runs.
+      waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
+
+      (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
+        const gltf = (water as any)[key];
+        if (gltf?.scene) gltf.scene.visible = key === JET_ASSET || key === deflector.water;
+      });
+    } else {
+      if (jetGroupRef.current) jetGroupRef.current.visible = false;
+      if (plumeGroupRef.current) plumeGroupRef.current.visible = false;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
@@ -2307,10 +2301,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         ))}
       </group>
 
-      {/* Each plume is stood upright, then re-centred on its own origin, so the outer group
-          can simply be parked at the midpoint of the nozzle/deflector gap. */}
-      <group ref={waterGroupRef} visible={false}>
-        {(Object.keys(WATER_SHAPES) as WaterShapeKey[]).map((key) => {
+      {/*
+        BEDO's two water objects, drawn separately because the storyboard specifies them
+        separately (sl. 18): the column leaving the nozzle, and the spray leaving the
+        deflector. They were one group sized at 95% of the tank's diameter — see
+        `src/lib/waterJet.ts`.
+
+        Each shape is stood upright if it was authored lying down, then re-centred on its
+        own origin, so the group that holds it can simply be parked where the water starts.
+      */}
+      {(() => {
+        const shape = (key: WaterShapeKey) => {
           const fit = waterFit[key];
           const source = (water as any)[key]?.scene;
           if (!source) return null;
@@ -2324,8 +2325,23 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               </group>
             </group>
           );
-        })}
-      </group>
+        };
+        const plumes = (Object.keys(WATER_SHAPES) as WaterShapeKey[]).filter(
+          (k) => k !== JET_ASSET
+        );
+        return (
+          <>
+            {/* Before impact — parked on the nozzle lip, scaled to the bore. */}
+            <group ref={jetGroupRef} visible={false}>
+              {shape(JET_ASSET)}
+            </group>
+            {/* After impact — parked on the deflector, scaled from the deflector. */}
+            <group ref={plumeGroupRef} visible={false}>
+              {plumes.map(shape)}
+            </group>
+          </>
+        );
+      })()}
 
       {arrowPos && (
         <group ref={arrowGroupRef} position={arrowPos}>

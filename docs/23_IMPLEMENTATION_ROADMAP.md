@@ -26,7 +26,7 @@ Week  1  ✅ BEDO-001 security  │ ▶ BEDO-002..004 baseline + tests + hygiene
 Week  2  ░ BEDO-005..007 domain core        ║ ASSET TRACK  BEDO-030..033
 Week  3  ░ BEDO-008..010 simulation runtime ║ (parallel, DCC + gltf-transform)
 Week  4  ░ BEDO-011..013 loading + scene foundations
-Week  5  ░ BEDO-014, 015, 017 draw calls + water  │ ✅ BEDO-016 coordinate correctness
+Week  5  ░ BEDO-014, 015 draw calls  │ ✅ BEDO-016 coordinates, BEDO-017 water
 Week  6  ✅ BEDO-018..020, 022 lesson engine + gate  │ ░ BEDO-021, 023 interaction
 Week  7  ░ BEDO-024..027 camera + UI shell
 Week  8  ░ BEDO-028..031 rendering quality + audio/feedback
@@ -308,21 +308,46 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Tests** `tests/unit/holder-anchor.spec.ts` + `scripts/weight-anchor.mjs` before/after capture.
 - **Perf** neutral — see above.
 
-### ☐ BEDO‑017 — ★ Water jet physical-to-visual mapping `P1`
-- **Objective** Derive jet diameter from `NOZZLE_AREA_M2` (`d = 2√(A/π) = 0.010 m`), not from tank width; switch plume by `theoreticalV > 0`; make flow rate visibly legible.
-- **Reason** **`BUG‑03` — the jet is ~18× too wide and hides the deflector**, defeating the two observations the lesson asks for (`UX‑02`). Plus `BUG‑21` (no visible change with flow), `BUG‑27` (nozzle mesh is the base flange). Full analysis in `docs/17 §5.3`.
-- **Affected** `src/scene/water/**`, `src/simulation/selectors/flow.ts`.
-- **Dependencies** BEDO‑014. **Not blocked by the DCC pass** — the plumes already carry flow‑aligned
-  `TEXCOORD_0` (verified against all eight binaries), so replacing the world‑space planar fallback with UV
-  sampling is a code change. Only physical re‑sizing needs Blender (`docs/19` D‑5).
-- **Risks** medium — non‑uniform scale still distorts the vertex ripple until D‑5 lands.
-- **Acceptance** plume XZ extent within **±15 %** of `2√(A/π)·scale`; deflector face unobstructed; n = 0.4 vs 0.5 obviously different side by side.
-- **Tests** `waterJet.spec.ts` + visual regression at 5 flow rates × 7 deflectors.
-- **Perf** slightly fewer fragments.
+### ✅ BEDO‑017 — ★ Water jet physical-to-visual mapping `P1`
+- **Objective** Derive the jet's diameter from the nozzle rather than the tank.
+- **Reason** **`BUG‑03`** — the jet rendered ~18× too wide, hiding the rod, spring and deflector behind a pipe of water.
+- **Acceptance** rendered jet exit diameter within a stated tolerance of the physical bore; no tank-derived width logic remains.
+- **Status** ✅ Complete. Reproduced at HEAD first, in **model units** rather than pixels:
+  **139.7 mm at reading 1, 172.0 mm at full flow, against a 9.9975 mm bore — 13.98× and
+  17.20×.** Every deflector family rendered the identical width, so all four were equally
+  wrong.
 
----
+  Three faults compounding, not one. BEDO's storyboard sl. 18 specifies **two** water objects
+  — *"water shape before impact"* and *"water shape after impact"* — and the code had
+  collapsed them into one; the survivor was sized at 95 % of the **tank's** 181 mm diameter;
+  and a `flowIntensity` ramp scaled the bore with the valve, which no source supports and
+  physics contradicts. The seven deflector-named GLBs are the *after-impact* shapes (aspect
+  ≈1.3, sprays) and were being used as the jet.
 
-## Phase F — Lesson engine & interaction
+  `Water_low` turned out to be the authored before-impact jet: aspect **3.44** against the
+  physical jet's **3.50** (a 10 mm bore over the 35 mm `TRAVEL_HEIGHT_M`), 1.7 % apart, while
+  every other shape is near 1.3. It had been used only as a startup trickle. A test now
+  identifies it by aspect rather than filename.
+
+  `src/lib/waterJet.ts` is the single physical→scene mapping: `d = 2√(A/π)` from the verified
+  `NOZZLE_AREA_M2`, and `jetScale` takes no parameter that could carry a tank, a viewport or
+  a flow rate. `tankBounds` is gone from `DeviceModel` entirely and a test asserts it has not
+  returned. **Result: 10.00 mm, error −0.00 %**, identical at every flow state and every
+  deflector family — 17.20× → 1.00×. Jet origin sits on the nozzle lip with **0.000000**
+  radial offset and no gap.
+
+  **No physics changed.** All 855 pre-existing tests pass unedited; 871 green in total.
+  Idle performance identical (769 draws / 217 055 tris / 22 binds / 42 programs); flowing
+  costs +9 draws and +3 042 triangles, which is BEDO's second water shape being drawn.
+  Empty fingerprint differs only by the chunk hash and `objectCount` 290 → 291.
+
+  Two water issues found and deliberately left: the shader samples its ripple texture by
+  **world position** rather than the `TEXCOORD_0` every asset carries (the banding), and
+  **`TRAVEL_HEIGHT_M` says 35 mm where the model measures 184 mm** — a factor of 5.3 that
+  feeds `impactVelocitySquared` and needs BEDO source evidence, not a judgement call.
+  Detail: `docs/41`.
+- **Tests** `tests/unit/water-jet.spec.ts` + `scripts/water-jet.mjs` before/after capture.
+- **Perf** idle neutral; +9 draws while flowing.
 
 ### ✅ BEDO‑018 — Lesson schema + runner `P1`
 - **Objective** `LessonStep` as data with declarative `Condition`s; `LessonRunner` owning progression and gating; one condition evaluator for arrow, OK, highlight and rail.
@@ -702,7 +727,7 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 | `ARCH‑09` security | ✅ BEDO‑001 |
 | `BUG‑01`/`UX‑01` black screen | BEDO‑011 + 032/033 |
 | `BUG‑02` weights 2.18 m off | ✅ BEDO‑016 — one authoritative pan anchor in one space (`docs/39`) |
-| `BUG‑03` jet 18× too wide | **BEDO‑017** |
+| `BUG‑03` jet 18× too wide | ✅ BEDO‑017 — jet sized from the nozzle bore (`docs/41`) |
 | `BUG‑04` gating bypass | ✅ BEDO‑020 — one gate for both surfaces (`docs/36`) |
 | `BUG‑05` cross-experiment deflector | ✅ BEDO‑022 — one scope rule for both surfaces (`docs/37`) |
 | `BUG‑06` Free mode records nothing | BEDO‑023 |

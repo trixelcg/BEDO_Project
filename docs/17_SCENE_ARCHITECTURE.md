@@ -199,67 +199,37 @@ per disc. **2.1965 → 0.0018 world units.**
 one moves a node's translation without moving a vertex and asserts the anchor does not budge — rule 2, as an
 executable statement.
 
-### 5.3 Defect 2 — the water jet is ~18× too wide (`BUG‑03`)
+### 5.3 Defect 2 — the water jet was ~18× too wide (`BUG‑03`) — **RESOLVED**
 
-**Current root cause.** `DeviceModel.tsx:1055`:
+Fixed. Full account, primary sources and measurements: **`docs/41`**.
+
+**Root cause.** Three faults compounding. BEDO's storyboard (sl. 18) specifies **two** water
+objects — "water shape before impact" and "water shape after impact" — and the code had
+collapsed them into one; the survivor was sized at 95% of the **tank's** diameter; and its
+width was additionally scaled by the valve opening, so the bore grew with the flow.
 
 ```ts
 const scaleXZ = ((tankBounds.width * 0.95) / fit.width) * flowIntensity;
 ```
 
-The jet's diameter is derived from the **tank's** width. This is the brief's *"visual geometry defining
-simulation truth"* anti-pattern in its purest form.
+The tank is 181 mm across and the nozzle bore is 10 mm. Measured at HEAD: **139.7 mm at the
+first reading's setpoint, 172.0 mm at full flow — 13.98× and 17.20×.**
 
-**Coordinate spaces involved.** Plume object space (authored ~20 units tall, arbitrary origin, some lying
-down), apparatus-local (tank measurement), and the physical domain (metres).
+**Authoritative source of truth.** `NOZZLE_AREA_M2`, via `d = 2√(A/π)` = **9.9975 mm**.
+`src/lib/waterJet.ts` is the only place physical size becomes scene size; `jetScale` takes
+no parameter that could carry a tank, a viewport or a flow rate. `tankBounds` no longer
+exists in `DeviceModel`.
 
-**The numbers.** Tank `JET Force 2_205` measures `0.181 × 0.317 × 0.179`, so the jet renders **0.181 m** wide.
-The physical nozzle is a **10 mm bore** — the app's own `NOZZLE_AREA_M2 = 0.0000785 m²` says so, and both the
-spreadsheet (*"A = 0.0000785 m"*) and the storyboard (sl. 6) confirm it. **0.181 / 0.010 ≈ 18×.**
+**Result.** Jet width **10.00 mm, error −0.00%**, identical at every flow state and for
+every deflector family. The plume is sized from the deflector it forms on, never the tank.
 
-Compounding: `MESH.nozzle` points at `JET Force 2_214`, whose bbox is `0.227 × 0.048 × 0.227` — *wider than
-the tank*. It is the tank's base flange, not a nozzle (`BUG‑27`), so there was no correct reference to scale
-from.
+**Regression tests.** `tests/unit/water-jet.spec.ts` — 16 tests, including one that asserts
+`tankBounds` has not returned and one that identifies the jet asset by its aspect ratio
+rather than its filename.
 
-**Authoritative source of truth.** **`NOZZLE_AREA_M2` in the domain.**
-`d = 2√(A/π) = 2√(0.0000785/π) = 0.00999 m`.
-
-**Intended fix.**
-
-```ts
-// scene/water/jetGeometry.ts — presentation reads the domain, never the reverse
-const nozzleDiameter = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI);   // 0.010 m, exact
-const spread        = 1 + SPREAD_RATE * (travel / nozzleDiameter); // slight widening to impact
-const scaleXZ       = (nozzleDiameter * spread) / plumeFit.width;
-const scaleY        = travel / plumeFit.height;                    // nozzle lip → deflector underside
-```
-
-with, per storyboard sl. 6, the plume choice driven by `theoreticalV > 0` rather than a valve threshold
-(`docs/15 §4.1`), and flow rate expressed through cues the student can actually see — impact spray density,
-turbulence, opacity, pointer deflection and pump pitch — rather than a 7 % width change that is invisible
-(`BUG‑21`).
-
-Also required: sample the plumes **by UV** instead of world‑space planar projection, and author them at
-**physical size**.
-
-> **Correction to the Phase 1 audit.** The shader comment claims the plumes *"carry no usable UVs"*. Verified
-> against the binaries: **all eight carry `TEXCOORD_0`**, and `Water90_Flat`, `Water180_HemiSphere` and
-> `Water45_Oblique` carry `TEXCOORD_1` too. V runs **along the flow** — `Water_low`'s three primitives occupy
-> `v[-0.02..0.20]`, `v[0.20..0.24]`, `v[0.24..0.74]` consecutively down the stream. The flow‑aligned scroll the
-> shader wants is therefore already authored, and the world‑space fallback — the source of the banding — can
-> simply be deleted. **This makes the shader fix a code change, not a DCC change.**
-
-Physical size remains a DCC concern: the current non‑uniform scale (`~0.9 × 0.05 × 0.9`) squashes the shader's
-own vertex ripple to ~8 mm in Y and invalidates `mat3(modelMatrix) * objectNormal`, which needs the
-inverse‑transpose (`RND‑09`).
-
-**Regression test.** `waterJet.spec.ts` — assert the rendered plume's world XZ extent at the nozzle is within
-**±15 %** of `2√(A/π) × groupScale`, for all seven deflectors and at n ∈ {0.2, 0.4, 0.6, 0.8, 1.0}. A test
-that fails loudly if anyone reintroduces a tank-derived scale.
-
-**Visual acceptance.** At the `tank` view, 1920×1080: a slender column leaves the nozzle, the deflector face
-and the impact point are **unobstructed**, the plume's after-impact shape is identifiable per deflector, and
-the difference between n = 0.4 and n = 0.5 is obvious in a side-by-side screenshot.
+**Still open:** the shader samples its ripple texture by world position rather than the UVs
+the assets carry (`docs/41 §9`), and `TRAVEL_HEIGHT_M` disagrees with the model geometry by
+a factor of 5.3 (`docs/41 §13`).
 
 ### 5.4 Related mapping corrections
 
