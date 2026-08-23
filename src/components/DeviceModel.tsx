@@ -27,6 +27,7 @@ import {
   SCREW_LIFT,
   SPRING_REST_HEIGHT_MODEL_UNITS,
   mmToModelUnits,
+  powerSwitchTurn,
   springTravelLimitMm,
   type Anchors,
 } from '../lib/apparatusView';
@@ -1988,12 +1989,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       volPivot.rotation.x = damp(volPivot.rotation.x, target, 6);
     }
 
-    // The switch is a rotary knob on the panel, rotating about its local Z axis.
+    // The switch is a rotary knob, and it turns about the axis it faces along.
+    //
+    // It used to turn about **Z**, which is the operator's left-to-right axis: that tipped
+    // the knob out of the panel instead of spinning it, so ON rendered the disc as a flat
+    // ellipse lying down. The knob's own geometry settles the axis — its bounding box is
+    // 29.8 x 43.8 x 45.0 mm, thinnest across **X**, so X is the face normal, and the
+    // operator stands at -X looking along +X (`apparatusView.FRONT`). A disc spins about
+    // its face normal.
+    //
+    // Direction is BEDO's: storyboard sl. 29, state A, *"The red power switch is off.
+    // (Rotate it smoothly 90 degrees **clockwise** to turn it on.)"* Sl. 30 says
+    // "anticlockwise to turn it on" of a switch that is *already on*, which is not a
+    // transition that exists — it is the same sentence copied and half-edited, and the two
+    // slides agree once it is read as "to turn it off". See `docs/42 §2`.
+    //
+    // Clockwise, for an eye at -X looking along +X, is a **positive** turn about X: the
+    // right-hand rule carries +Y to +Z, and for that observer +Y is up and +Z is right, so
+    // up-to-right — clockwise.
     const powerPivot = pivots.current[MESH.powerSwitch];
     if (powerPivot) {
-      const target = state.isPowerOn ? -QUARTER_TURN : 0;
-      powerPivot.rotation.x = 0;
-      powerPivot.rotation.z = damp(powerPivot.rotation.z, target, 12);
+      powerPivot.rotation.z = 0;
+      powerPivot.rotation.x = damp(powerPivot.rotation.x, powerSwitchTurn(state.isPowerOn), 12);
     }
 
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)

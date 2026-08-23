@@ -349,6 +349,43 @@ Week 10  ░ BEDO-036..040 optimisation, QA, deployment
 - **Tests** `tests/unit/water-jet.spec.ts` + `scripts/water-jet.mjs` before/after capture.
 - **Perf** idle neutral; +9 draws while flowing.
 
+### ✅ BEDO‑042 — Power switch direction + loaded-weight visibility `P1`
+- **Objective** Two reported presentation defects: the power switch turning the wrong way, and loaded weights vanishing when the camera moves.
+- **Status** ✅ Complete. **One defect was real, the other was not**, and the measurement is
+  the substance of the task.
+
+  **Switch — real, and worse than reported.** The *axis* was wrong, not the sign. The knob
+  turned about **Z**, the operator's left-to-right axis, which tipped it out of the panel:
+  ON rendered the disc as a flat ellipse lying down. The geometry settles the axis — the
+  knob is 44 mm across and 30 mm deep, thinnest across **X**, so X is the face it looks out
+  of, and the operator stands at −X. A disc spins about its face normal. A sign flip would
+  only have tipped it the other way.
+
+  The storyboard's two slides appear to contradict each other (sl. 29 "clockwise to turn it
+  on", sl. 30 "anticlockwise to turn it on"). Sl. 30 describes turning **on** a switch it
+  has just said is already on — not a transition that exists — so it is sl. 29's sentence
+  copied and half-edited. Read as "to turn it off", the two agree. Direction resolved from
+  the text, not by choosing. New mapping: **+90° about X**, in
+  `apparatusView.powerSwitchTurn`. Verified live: marker X constant at 0.000000, motion
+  entirely in YZ, round trip returns to rest.
+
+  **Weights — not reproducible.** Across camera dolly, orbit, return, flow change, monitor
+  toggle and guided-step camera flights, with single, multiple and duplicate discs, the
+  loaded discs never vanished and **never changed UUID** — ruling out remounting, visibility
+  predicates, culling and transforms alike. The one disappearance is the canonical lesson's
+  own `REMOVE_ALL_WEIGHTS` at the end of each reading step, where the runtime clears too;
+  the camera flies at the same instant, which is why it reads as camera-caused. No code
+  change was warranted and none was made — tests were added so it stays that way.
+
+  This leaves a conflict for a decision: the brief says lesson progression must never remove
+  a weight, while the canonical lesson explicitly does. Not changed unilaterally; see
+  `docs/42 §7`.
+
+  883 tests green (871 + 12). Fingerprint identical bar the chunk hash; 769 draws /
+  217 055 tris / 22 binds / 42 programs unchanged. Detail: `docs/42`.
+- **Tests** `tests/unit/switch-weight-visibility.spec.ts`, plus a camera/orbit/flow persistence browser test.
+- **Perf** neutral.
+
 ### ✅ BEDO‑018 — Lesson schema + runner `P1`
 - **Objective** `LessonStep` as data with declarative `Condition`s; `LessonRunner` owning progression and gating; one condition evaluator for arrow, OK, highlight and rail.
 - **Reason** Rules are spread over three files with **two disagreeing "done" predicates** (`CQ‑06 #5`).

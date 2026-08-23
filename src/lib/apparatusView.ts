@@ -107,3 +107,41 @@ export const SPRING_TRAVEL_FRACTION_OF_REST = 0.45;
 
 export const springTravelLimitMm = (restHeightModelUnits: number): number =>
   (restHeightModelUnits * SPRING_TRAVEL_FRACTION_OF_REST) / MODEL_UNITS_PER_METRE * 1000;
+
+// --- The power switch's visible travel ------------------------------------------------
+//
+// Presentation only. The rig's power is `isPowerOn` in the domain and nothing here can
+// change it; this decides which way the knob *looks* like it turned.
+
+/** A quarter turn, in radians. The travel BEDO gives every rotary control. */
+export const QUARTER_TURN = Math.PI / 2;
+
+/**
+ * Which local axis the power switch turns about: its own face normal.
+ *
+ * The knob's bounding box is 29.8 x 43.8 x 45.0 mm — thinnest across **X** — so X is the
+ * axis it faces along, and the operator stands at -X looking down +X (`FRONT`). A disc
+ * spins about the axis it faces along; turning it about anything else tips it out of the
+ * panel, which is exactly what the scene used to do (it turned the knob about Z, the
+ * operator's left-to-right axis, and ON rendered as a flat ellipse lying down).
+ */
+export const POWER_SWITCH_AXIS = 'x' as const;
+
+/**
+ * Where the knob sits for a given power state, in radians about `POWER_SWITCH_AXIS`.
+ *
+ * **Source.** `Jetforce_Storyboard.pptx` sl. 29, state A: *"The red power switch is off.
+ * (Rotate it smoothly 90 degrees **clockwise** to turn it on.)"*
+ *
+ * Sl. 30 appears to contradict it — *"The red power switch is on. (Rotate it smoothly 90
+ * degrees anticlockwise to turn it on.)"* — but that sentence describes turning **on** a
+ * switch it has just said is already on, which is not a transition that exists. It is sl.
+ * 29's sentence copied and half-edited, and the two agree the moment it is read as "to turn
+ * it off". Sl. 29 is the only one describing a transition from the state it is documenting,
+ * so it wins. `docs/42 §2` sets out the evidence.
+ *
+ * **Sign.** Clockwise for an eye at -X looking along +X is a *positive* turn about X: the
+ * right-hand rule carries +Y to +Z, and for that observer +Y is up and +Z is to the right,
+ * so up-to-right — clockwise.
+ */
+export const powerSwitchTurn = (isPowerOn: boolean): number => (isPowerOn ? QUARTER_TURN : 0);

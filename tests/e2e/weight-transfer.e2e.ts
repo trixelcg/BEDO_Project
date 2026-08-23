@@ -168,6 +168,82 @@ test.describe('carrying a weight to the holder', () => {
     expect(seats.every((s) => s.landed)).toBe(true);
   });
 
+  test('keeps every disc through camera movement, orbit and a flow change', async ({
+    page,
+  }) => {
+    // The reported defect: loaded weights "disappear when the camera moves". Measured, they
+    // do not — what disappears is the pan at the end of a reading step, which is the
+    // canonical lesson's own REMOVE_ALL_WEIGHTS. This is the guard that keeps the first
+    // half true (`docs/42 §7`).
+    const probe = await openFreeMode(page);
+    await button(page, /Turn On Pump/).click();
+
+    // One disc, two of the same denomination, and a third of another: single, duplicate and
+    // multiple all in one stack.
+    for (const w of ['+50g', '+50g', '+100g']) {
+      await button(page, w).click();
+      await transfersIdle(page);
+    }
+    const seated = await probe.seats();
+    expect(seated).toHaveLength(3);
+    expect(seated.every((s) => s.landed)).toBe(true);
+    const before = seated.map((s) => s.world as Vec3);
+
+    const canvas = (await page.locator('canvas').boundingBox())!;
+    const cx = canvas.x + canvas.width / 2;
+    const cy = canvas.y + canvas.height / 2;
+
+    const stillThere = async (what: string) => {
+      const now = await probe.seats();
+      expect(now, `${what} changed how many discs there are`).toHaveLength(3);
+      expect(now.every((s) => s.landed), `${what} un-landed a disc`).toBe(true);
+      now.forEach((s, i) => {
+        expect(distance(s.world, before[i]), `${what} moved disc ${i}`).toBeLessThan(1e-6);
+      });
+    };
+
+    // Dolly out.
+    for (let i = 0; i < 10; i++) {
+      await page.mouse.move(cx, cy);
+      await page.mouse.wheel(0, 240);
+    }
+    await stillThere('moving the camera back');
+
+    // Orbit right round.
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    for (let i = 1; i <= 12; i++) await page.mouse.move(cx + i * 24, cy + i * 4);
+    await page.mouse.up();
+    await stillThere('orbiting');
+
+    // And back in.
+    for (let i = 0; i < 10; i++) {
+      await page.mouse.move(cx, cy);
+      await page.mouse.wheel(0, -240);
+    }
+    await stillThere('returning the camera');
+
+    // A flow change moves the holder — the discs must ride it, not vanish.
+    await page.locator('.valve-slider-container input[type="range"]').fill('0.8');
+    await expect(page.getByText('80%')).toBeVisible();
+    const lifted = await probe.seats();
+    expect(lifted).toHaveLength(3);
+    expect(lifted.every((s) => s.landed)).toBe(true);
+    // Every disc rose by the same amount, keeping the stack intact.
+    const rise = lifted.map((s, i) => (s.world as Vec3)[1] - before[i][1]);
+    expect(Math.max(...rise) - Math.min(...rise)).toBeLessThan(1e-6);
+    // Still on the pan's axis.
+    lifted.forEach((s, i) => {
+      const w = s.world as Vec3;
+      expect(Math.hypot(w[0] - before[i][0], w[2] - before[i][2])).toBeLessThan(1e-6);
+    });
+
+    // And they go only when asked to.
+    await button(page, 'Remove 100 g').click();
+    await transfersIdle(page);
+    expect(await probe.seats()).toHaveLength(2);
+  });
+
   test('a reset mid-flight strands nothing and delivers nothing late', async ({ page }) => {
     // §16. No cancelled flight may arrive after the rig has been put back.
     const probe = await openFreeMode(page);
