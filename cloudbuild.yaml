@@ -1,39 +1,109 @@
 # GCP Cloud Build Configuration for BEDO Project R3F
+#
+# ## Usage
+#
+#   gcloud builds submit --config cloudbuild.yaml \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD),_SERVICE_NAME=bedo-project-r3f-app
+#
+# `_TAG` and `_SERVICE_NAME` have **no defaults on purpose**. Cloud Build refuses to create
+# a build whose config references a substitution that was neither defined here nor passed
+# on the command line, so a build that does not say *what* it is shipping and *where* fails
+# before a single step runs. That is the safe direction, and it is not hypothetical: the
+# defaults used to be `latest` and `bedo-project-r3f-app`, which meant a bare
+# `gcloud builds submit` rebuilt a mutable tag and released it straight to production.
+#
+# Fail closed. Say both, every time.
+#
+# ## Why the deploy uses a digest and not the tag
+#
+# A tag is a moving pointer; a digest is the image. Production ran for five weeks on an
+# image whose tag said `latest` and whose contents were 37 days stale, and nothing in the
+# deployment recorded which commit it came from. Step 3 resolves the digest that step 2
+# actually pushed and step 4 deploys *that*, so the revision Cloud Run creates names the
+# exact bytes it is serving and can be traced back without trusting a tag anyone can move.
+#
+# The tag is still pushed, for humans reading the registry. Nothing deploys from it.
+#
+# ## Public access is NOT granted here
+#
+# This pipeline deploys the service and its revision. It does not touch IAM.
+#
+# `--allow-unauthenticated` used to be on the deploy step and was doing nothing: the Cloud
+# Build service account does not hold `run.services.setIamPolicy`, so the flag was accepted
+# and silently ignored. A service created by this config came up **private** while the
+# build log implied otherwise — which is exactly how a deploy looks healthy and returns 403
+# to every visitor.
+#
+# So a NEW service will be private until somebody grants access explicitly:
+#
+#   gcloud run services add-iam-policy-binding <SERVICE> \
+#     --region us-central1 \
+#     --project neon-radius-644 \
+#     --member=allUsers \
+#     --role=roles/run.invoker
+#
+# Existing services keep whatever IAM they already have — deploying a revision does not
+# alter a service's IAM policy, so re-deploying production does not change its public
+# binding one way or the other.
+
 steps:
   # 1. Build the container image using Dockerfile
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG', '.']
+    id: 'build'
+    args:
+      - 'build'
+      - '-t'
+      - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
+      - '.'
 
   # 2. Push the container image to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG']
-
-  # 3. Deploy container image to Cloud Run
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    id: 'push'
     args:
-      - 'run'
-      - 'deploy'
-      - '$_SERVICE_NAME'
-      - '--image'
+      - 'push'
       - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
-      - '--region'
-      - '$_RUN_REGION'
-      - '--platform'
-      - 'managed'
-      - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'GCS_BUCKET_NAME=bedo-project-assets-2026,NODE_ENV=production'
+
+  # 3. Resolve what was actually pushed, by digest.
+  #
+  # `RepoDigests` is filled in by the push in step 2, so this is the registry's own answer
+  # rather than anything recomputed here.
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'resolve-digest'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        IMAGE="$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f"
+        docker image inspect "$${IMAGE}:$_TAG" \
+          --format '{{index .RepoDigests 0}}' > /workspace/image-digest.txt
+        echo "deploying by digest: $$(cat /workspace/image-digest.txt)"
+
+  # 4. Deploy that digest to Cloud Run.
+  #
+  # Service and revision only. IAM is deliberately not touched here — see the header.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        gcloud run deploy "$_SERVICE_NAME" \
+          --image "$$(cat /workspace/image-digest.txt)" \
+          --region "$_RUN_REGION" \
+          --platform managed \
+          --set-env-vars 'GCS_BUCKET_NAME=bedo-project-assets-2026,NODE_ENV=production'
 
 images:
   - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
 
+# Only the values that are the same for every deployment have defaults. `_TAG` and
+# `_SERVICE_NAME` are deliberately absent; see the header.
 substitutions:
   _AR_REGION: 'us-central1'
   _AR_REPO: 'bedo-project-r3f-repo'
-  _SERVICE_NAME: 'bedo-project-r3f-app'
   _RUN_REGION: 'us-central1'
-  _TAG: 'latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
