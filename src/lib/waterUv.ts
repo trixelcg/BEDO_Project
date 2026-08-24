@@ -2,10 +2,9 @@
 //
 // ## Why not the authored UVs
 //
-// The eight shipped water GLBs all carry `TEXCOORD_0`, and three of them
-// (`Water90_Flat`, `Water180_HemiSphere`, `Water45_Oblique`) also carry `TEXCOORD_1`. It is
-// tempting to read that as "the assets are UV-mapped, use their UVs". They are not, and it
-// does not work:
+// The eight Alembic caches all carry `TEXCOORD_0`, and three of them (`Water90_Flat`,
+// `Water180_HemiSphere`, `Water45_Oblique`) also carry `TEXCOORD_1`. It is tempting to read
+// that as "the assets are UV-mapped, use their UVs". They are not, and it does not work:
 //
 //  - **Nothing addresses them.** Every one of the eight declares `textures: 0, images: 0`,
 //    and its materials are bare `Max_MaterialID_*`. The UVs are leftover 3ds Max mapping
@@ -20,9 +19,11 @@
 //  - **One primitive has no flow correlation at all.** `Water45_Oblique#1` correlates 0.003
 //    on U and -0.003 on V.
 //
-// So the authored channels are inventoried and rejected on evidence, not ignored. If the
-// assets are ever re-authored with real tiling UVs, this module is the one place that has
-// to change.
+// So the authored channels are inventoried and rejected on evidence, not ignored. Since
+// BEDO-044 the conversion does not even ship them (`scripts/water/abc_to_morph_glb.py`):
+// they address nothing, and a UV seam splits a vertex that would then be paid for again in
+// each of the 80 morph targets. If the caches are ever re-authored with real tiling UVs,
+// this module and that converter flag are the two places that have to change.
 //
 // ## What is used instead
 //

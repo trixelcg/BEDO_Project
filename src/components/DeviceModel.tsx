@@ -24,6 +24,7 @@ import {
   ANCHOR_VIEW,
   COVER_LIFT,
   DEFAULT_ARROW_OFFSET,
+  FRONT,
   SCREW_LIFT,
   SPRING_REST_HEIGHT_MODEL_UNITS,
   mmToModelUnits,
@@ -49,6 +50,7 @@ import {
 import {
   addedWeightIndex,
   createTransferSet,
+  durationOf,
   removedWeightIndex,
   type TransferKind,
 } from '../interaction/transfer';
@@ -60,6 +62,13 @@ import {
   plumeScale,
 } from '../lib/waterJet';
 import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
+import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
+import {
+  applyCacheFrame,
+  basePoseBox,
+  createCacheClock,
+  prepareCacheMesh,
+} from '../lib/waterCache';
 import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
 
@@ -172,6 +181,34 @@ interface Ghost {
  * So a removal waits for the pan to be settled, and while a removal is travelling nothing
  * else may touch the weights at all.
  */
+/**
+ * The head of the apparatus, as bounds rather than a point.
+ *
+ * A point is enough to aim at; fitting a group of parts into a viewport needs its size
+ * too. In model space, so the camera rig can convert it with the apparatus group's own
+ * matrix rather than assuming a scale.
+ */
+export interface InstallFraming {
+  center: [number, number, number];
+  radius: number;
+}
+
+/**
+ * One deflector transfer, as the camera needs to see it.
+ *
+ * Plain numbers in apparatus/model space — no three.js objects cross this boundary, so the
+ * camera cannot reach into the scene graph and nothing here can be mutated from outside.
+ * `from` and `to` are absolute positions, not the displacements the ghost stores
+ * internally, and `to` carries the live cover lift because that is where the disc actually
+ * lands while the plate is up.
+ */
+export interface DeflectorFlight {
+  from: [number, number, number];
+  to: [number, number, number];
+  /** How long the move takes. BEDO's two seconds. */
+  seconds: number;
+}
+
 export interface WeightAvailability {
   readonly canAdd: boolean;
   readonly canRemove: boolean;
@@ -192,6 +229,16 @@ interface DeviceModelProps {
    * tray, and asking the gate is the only way it may find out (`BEDO-021 §6`, `§7`).
    */
   onSelectDeflector: (id: number) => boolean;
+  /**
+   * The bounds the camera should settle on once a deflector is installed, in model space.
+   * Null while the model has not been measured. See `src/lib/cameraFraming.ts`.
+   */
+  onInstallFraming: (framing: InstallFraming | null) => void;
+  /**
+   * Fired the instant a tray-to-rod deflector transfer begins, from whichever surface
+   * started it. The camera travels with the disc rather than waiting for it (`docs/44 §D3`).
+   */
+  onDeflectorInstallStart: (flight: DeflectorFlight) => void;
   onPowerClick: () => void;
   onFlowValveClick: () => void;
   onVolumetricValveClick: () => void;
@@ -224,6 +271,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onAnchors,
   onCoverClick,
   onSelectDeflector,
+  onInstallFraming,
+  onDeflectorInstallStart,
   onPowerClick,
   onFlowValveClick,
   onVolumetricValveClick,
@@ -293,6 +342,24 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const jetGroupRef = useRef<THREE.Group>(null);
   /** The water leaving the deflector — BEDO's "water shape after impact". */
   const plumeGroupRef = useRef<THREE.Group>(null);
+  /**
+   * One clock per water object, because BEDO specifies the two shapes separately and they
+   * start at different moments: the column forms when the water starts flowing, the spray
+   * forms when that column reaches the deflector. See `src/lib/waterCache.ts`.
+   */
+  const jetClock = useRef(createCacheClock());
+  const plumeClock = useRef(createCacheClock());
+  /**
+   * The power switch's spindle, in the space its pivot lives in, derived from the asset
+   * once at install. Null until then. See `src/lib/powerSwitch.ts`.
+   */
+  const powerSpindle = useRef<THREE.Vector3 | null>(null);
+  /** Dev-only: the last deflector flight handed to the camera, for the camera probe. */
+  const lastFlightRef = useRef<DeflectorFlight | null>(null);
+  /** Dev-only: the bounds the install framing was derived from, for the camera probe. */
+  const headFramingRef = useRef<{ min: THREE.Vector3; max: THREE.Vector3 } | null>(null);
+  /** The single animated scalar the knob's whole orientation is rebuilt from. */
+  const powerTurn = useRef(0);
   const arrowGroupRef = useRef<THREE.Group>(null);
   const weightStackRef = useRef<THREE.Group>(null);
   /** The cover's click target has to ride up with the plate — see below. */
@@ -540,9 +607,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
            transformed.x += sin(aWaterUv.y * 18.0 + uTime * 5.0) * amp;
            transformed.z += cos(aWaterUv.y * 14.0 + uTime * 3.9) * amp;
            vRise = rise;
-           vWaterUv = aWaterUv;
-           // World position is still handed to the fragment stage, but only for the view
-           // vector the rim term needs — never again as a texture coordinate.
+           vWaterUv = aWaterUv;`
+        )
+        // The world position the rim term needs has to be read *after* the morph cache has
+        // moved the vertex, or the view vector would describe the settled pose throughout
+        // the 3.3 s the water is still growing. `<begin_vertex>` runs before
+        // `<morphtarget_vertex>`, so it cannot be computed alongside the ripple above.
+        // `objectNormal` needs no such care: `<morphnormal_vertex>` has already run by then.
+        .replace(
+          '#include <morphtarget_vertex>',
+          `#include <morphtarget_vertex>
            vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vWNorm = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -621,6 +695,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             geometry.setAttribute(WATER_UV_ATTRIBUTE, new THREE.BufferAttribute(uv, 2));
           }
         }
+
+        // Which morph target carries which authored frame, read from the asset's own
+        // names. Once, at load — see `src/lib/waterCache.ts`.
+        prepareCacheMesh(child as THREE.Mesh);
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -648,7 +726,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       inner.add(source.clone(true));
       holder.add(inner);
       holder.updateWorldMatrix(true, true);
-      const box = new THREE.Box3().setFromObject(holder);
+      // Base pose only. `Box3.setFromObject` would expand the box over all 80 morph
+      // targets — and for relative targets it adds the most negative delta found anywhere
+      // to the overall minimum, which is a wildly loose bound. That inflated width divided
+      // into the nozzle bore would shrink the jet and undo BEDO-017. See `waterCache.ts`.
+      const box = basePoseBox(holder);
       if (box.isEmpty()) return null;
       return { box, size: box.getSize(new THREE.Vector3()) };
     };
@@ -720,7 +802,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     install(MESH.flowValve);
     install(MESH.volumetricValve);
-    install(MESH.powerSwitch);
+
+    // The power switch gets its hinge from its own geometry, not from a world-aligned box.
+    // Its panel is an angled console, so the spindle is 29.45 degrees off every world axis;
+    // `Box3.setFromObject` measures the world AABB and its thinnest side misses the face
+    // normal by that tilt. Turning the knob about world X tips it 40.69 degrees out of the
+    // panel — the defect the deployed build shows. See `src/lib/powerSwitch.ts`.
+    const knob = pick(MESH.powerSwitch);
+    if (knob) {
+      powerSpindle.current = spindleAxis(knob, new THREE.Vector3(...FRONT));
+      install(MESH.powerSwitch, spindleCentre(knob));
+    }
 
     // The pointer is an arm clamped to the thin vertical pin (JET Force 2_212), so it
     // swings about THAT pin's axis and turns in place. The first cut hinged it on the
@@ -961,6 +1053,33 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       (r): r is DropRegion => r !== null
     );
 
+    // What the camera has to show once a deflector is installed: the disc, the rod it
+    // seats on, and the top plate the learner reaches for next (`docs/44 §D5`). Reported
+    // as bounds rather than a point, because the destination view is fitted to them rather
+    // than authored as an offset — see `src/lib/cameraFraming.ts`.
+    //
+    // Every deflector's installed mesh is included, not just the selected one, so the
+    // framing does not jump between experiments; they all seat in the same place, so the
+    // union is barely larger than any one of them.
+    const headAabb = localAabb([
+      MESH.rod,
+      MESH.tankCover,
+      ...DEFLECTORS.map((d) => d.installed),
+    ]);
+    if (headAabb) {
+      headFramingRef.current = headAabb;
+      // The plate is necessarily up during an install — the tank has to be open — so the
+      // framing has to reach where it actually is, not where it rests.
+      const max = headAabb.max.clone().setY(headAabb.max.y + COVER_LIFT);
+      const centre = headAabb.min.clone().add(max).multiplyScalar(0.5);
+      onInstallFraming({
+        center: [centre.x, centre.y, centre.z],
+        radius: max.distanceTo(headAabb.min) / 2,
+      });
+    } else {
+      onInstallFraming(null);
+    }
+
     onAnchors(nextAnchors);
 
     // The jet leaves the nozzle's lip, not its centre.
@@ -993,7 +1112,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     ];
 
     setHotspots(list.filter((h): h is Hotspot => h !== null));
-  }, [scene, groupRef, onAnchors, tmp, modelScale, baseY]);
+  }, [scene, groupRef, onAnchors, onInstallFraming, tmp, modelScale, baseY]);
 
   /**
    * Parts the student is invited to touch right now.
@@ -1357,8 +1476,35 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ghost.arc = arcBetween(kind, ghost.from, ghost.to, ghost.radius);
       transfers.start(id, kind);
       syncGhosts([...ghostsRef.current]);
+      // Both surfaces that can install a deflector — the drag and the 2D panel's state
+      // change — funnel through here, so this is the one place the camera has to be told.
+      //
+      // The ghost stores its endpoints as displacements from `restCentre`; the camera is
+      // given absolute model-space points, and the destination includes the live cover
+      // lift the frame loop adds each tick (`liftsWithCover`).
+      if (kind === 'deflector-install') {
+        const base = ghost.restCentre;
+        lastFlightRef.current = {
+          from: [base.x + ghost.from.x, base.y + ghost.from.y, base.z + ghost.from.z],
+          to: [
+            base.x + ghost.to.x,
+            base.y + ghost.to.y + coverOffsetRef.current,
+            base.z + ghost.to.z,
+          ],
+          seconds: durationOf(kind),
+        };
+        onDeflectorInstallStart({
+          from: [base.x + ghost.from.x, base.y + ghost.from.y, base.z + ghost.from.z],
+          to: [
+            base.x + ghost.to.x,
+            base.y + ghost.to.y + coverOffsetRef.current,
+            base.z + ghost.to.z,
+          ],
+          seconds: durationOf(kind),
+        });
+      }
     },
-    [transfers, syncGhosts, arcBetween]
+    [transfers, syncGhosts, arcBetween, onDeflectorInstallStart]
   );
 
   /**
@@ -1594,6 +1740,88 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             }
           }
           return fallback;
+        },
+      },
+
+      /**
+       * Dev-only: where the parts the install step hands over to actually are on screen.
+       *
+       * `docs/44 §D10` asks that the camera follow be validated from **projected
+       * visibility**, not from camera coordinates — a camera can be at a perfectly
+       * plausible position and still have the rod behind the instructional panel or off
+       * the canvas entirely, which is exactly the defect being fixed. So this reports
+       * screen points for the three things Step 3 needs, and the region the 2D panel
+       * leaves free to judge them against.
+       */
+      cameraProbe: {
+        /**
+         * The moving disc, while one is in the air.
+         *
+         * `wrapper.position` is a **displacement from `restCentre`**, not a position:
+         * `onCarry` writes `point.sub(ghost.restCentre)`, and the flight lerps between
+         * `from` and `to` in that same space (`to` is `installedCentre.sub(shelfCentre)`),
+         * with the cover lift and the arc added on top of it. The disc's apparatus-local
+         * position is therefore `restCentre + wrapper.position`, and the wrapper renders
+         * correctly because the clone inside it still carries the shelf mesh's own offset.
+         *
+         * Projecting `wrapper.position` alone reports the apparatus **origin** at the start
+         * of a flight — metres from the tray. `weightProbe` gets away with exactly that
+         * expression only because weight ghosts are built with `restCentre` at zero.
+         */
+        flyingDeflector: () => {
+          const ghost = ghostsRef.current.find((g) => g.deflectorId !== undefined);
+          return ghost ? project(ghost.restCentre.clone().add(ghost.wrapper.position)) : null;
+        },
+        head: () => ({
+          rod: project(localCentreOf(MESH.rod)),
+          // No lift is added here. `localCentreOf` measures the object *as it currently
+          // stands* (`Box3.setFromObject`), and the frame loop has already put the plate at
+          // its lifted height — `lift(MESH.tankCover, coverOffsetRef.current)` writes
+          // `position.y` directly. Adding `coverOffsetRef.current` on top counted the lift
+          // twice and reported the plate a whole `COVER_LIFT` above where it is.
+          cover: project(localCentreOf(MESH.tankCover)),
+          deflector: project(localCentreOf(getDeflector(state.selectedDeflectorId).installed)),
+        }),
+        /** The canvas, and the part of it no panel covers. */
+        region: () => {
+          const canvas = gl?.domElement;
+          if (!canvas) return null;
+          const rect = canvas.getBoundingClientRect();
+          const panels = Array.from(document.querySelectorAll('.sidebar-panel')).map((el) =>
+            el.getBoundingClientRect()
+          );
+          return {
+            canvas: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            panels: panels.map((p) => ({
+              left: p.left,
+              top: p.top,
+              width: p.width,
+              height: p.height,
+            })),
+          };
+        },
+        /** Dev-only: the flight most recently reported to the camera. */
+        lastFlight: () => lastFlightRef.current,
+        /** Where the camera stands, for measuring that it moved at all. */
+        camera: () =>
+          [camera.position.x, camera.position.y, camera.position.z] as [number, number, number],
+        /**
+         * Dev-only diagnostics for the destination framing: where the head bounds are, and
+         * where the camera is actually pointing. A framing bug and an aiming bug produce
+         * the same symptom — a part off screen — and only these two together tell them
+         * apart.
+         */
+        framing: () => {
+          const b = headFramingRef.current;
+          if (!b) return null;
+          const lifted = b.max.clone().setY(b.max.y + COVER_LIFT);
+          const centre = b.min.clone().add(lifted).multiplyScalar(0.5);
+          return {
+            centre: project(centre.clone()),
+            radius: lifted.distanceTo(b.min) / 2,
+            // The lifted plate, from the same bounds the framing used.
+            plateTop: project(new THREE.Vector3(centre.x, lifted.y, centre.z)),
+          };
         },
       },
     };
@@ -2040,9 +2268,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // right-hand rule carries +Y to +Z, and for that observer +Y is up and +Z is right, so
     // up-to-right — clockwise.
     const powerPivot = pivots.current[MESH.powerSwitch];
-    if (powerPivot) {
-      powerPivot.rotation.z = 0;
-      powerPivot.rotation.x = damp(powerPivot.rotation.x, powerSwitchTurn(state.isPowerOn), 12);
+    if (powerPivot && powerSpindle.current) {
+      // One scalar is animated, and the whole orientation is rebuilt from it every frame.
+      // Easing a Euler component instead would compound orientation drift and, on a
+      // spindle that lies along no world axis, could not describe the arc at all.
+      powerTurn.current = damp(powerTurn.current, powerSwitchTurn(state.isPowerOn), 12);
+      powerPivot.quaternion.setFromAxisAngle(powerSpindle.current, powerTurn.current);
     }
 
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
@@ -2212,9 +2443,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         const gltf = (water as any)[key];
         if (gltf?.scene) gltf.scene.visible = key === JET_ASSET || key === deflector.water;
       });
+
+      // --- Authored geometry playback -----------------------------------------
+      //
+      // The two shapes each run their own one-shot cache: 81 frames at 24 fps, played
+      // once and held at the settled pose. Valve movement deliberately does **not**
+      // restart them — only the flow starting does — so nudging the setpoint cannot make
+      // the water re-emerge from nothing. See `src/lib/waterCache.ts` and `docs/44 §F3`.
+      const jetSource = (water as any)[JET_ASSET]?.scene;
+      if (jetSource) applyCacheFrame(jetSource, jetClock.current.advance(true, delta));
+
+      const plumeSource = (water as any)[deflector.water]?.scene;
+      if (plumeSource) {
+        applyCacheFrame(plumeSource, plumeClock.current.advance(impacting, delta));
+      }
     } else {
       if (jetGroupRef.current) jetGroupRef.current.visible = false;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = false;
+      // Parked, not reversed. No authored shutdown cache exists, so the next start plays
+      // the emergence again from frame 0 rather than inventing a drain (`docs/44 §F2`).
+      jetClock.current.advance(false, delta);
+      plumeClock.current.advance(false, delta);
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
