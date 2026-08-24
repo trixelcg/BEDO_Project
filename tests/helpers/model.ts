@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { assetPath } from './glb';
 
 /**
@@ -89,4 +90,42 @@ export const mountApparatus = (
   group.add(model);
   group.updateWorldMatrix(true, true);
   return group;
+};
+
+
+/**
+ * Load one of the water assets the way the app does.
+ *
+ * The caches ship as `EXT_meshopt_compression` + `KHR_mesh_quantization` (see
+ * `scripts/water/build-water.mjs`), so the decoder has to be wired up here exactly as
+ * drei's `useGLTF` wires it up at runtime — without it `GLTFLoader` refuses the file. This
+ * lives in the shared helper rather than in each spec so there is one loader that matches
+ * production, not several that might drift from it.
+ */
+export const loadWater = async (url: string): Promise<THREE.Group> => {
+  ensureBrowserGlobals();
+  await MeshoptDecoder.ready;
+  const bytes = readFileSync(assetPath(url.replace(/^\//, 'public/')));
+  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return new Promise<THREE.Group>((resolve, reject) => {
+    const error = console.error;
+    console.error = (...args: unknown[]) => {
+      if (typeof args[0] === 'string' && args[0].includes("Couldn't load texture")) return;
+      error(...args);
+    };
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.parse(
+      buffer as ArrayBuffer,
+      '',
+      (gltf) => {
+        console.error = error;
+        resolve(gltf.scene);
+      },
+      (cause) => {
+        console.error = error;
+        reject(cause instanceof Error ? cause : new Error(String(cause)));
+      }
+    );
+  });
 };

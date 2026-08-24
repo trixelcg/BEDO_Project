@@ -2,7 +2,6 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   JET_ASSET,
   JET_WIDTH_TOLERANCE,
@@ -17,7 +16,9 @@ import {
 import { NOZZLE_AREA_M2, TRAVEL_HEIGHT_M } from '../../src/domain/physics';
 import { MODEL_UNITS_PER_METRE } from '../../src/lib/apparatusView';
 import { WATER_SHAPES, type WaterShapeKey } from '../../src/domain/apparatus';
-import { REPO_ROOT, assetPath } from '../helpers/glb';
+import { REPO_ROOT } from '../helpers/glb';
+import { loadWater } from '../helpers/model';
+import { basePoseBox } from '../../src/lib/waterCache';
 
 /**
  * The water's size, against the nozzle it comes out of (BUG-03).
@@ -37,41 +38,19 @@ import { REPO_ROOT, assetPath } from '../helpers/glb';
 
 const shapes = {} as Record<WaterShapeKey, { width: number; height: number; uvSets: string[] }>;
 
-/** GLTFLoader reaches for `self`, which a Node test environment does not have. */
-const ensureGlobals = () => {
-  const g = globalThis as unknown as { self?: unknown };
-  g.self ??= globalThis;
-};
 
-const loadWater = (url: string): Promise<THREE.Group> =>
-  new Promise((resolve, reject) => {
-    ensureGlobals();
-    const bytes = readFileSync(assetPath(path.join('public', url)));
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const error = console.error;
-    console.error = (...a: unknown[]) => {
-      if (typeof a[0] === 'string' && a[0].includes("Couldn't load texture")) return;
-      error(...a);
-    };
-    new GLTFLoader().parse(
-      buffer as ArrayBuffer,
-      '',
-      (gltf) => {
-        console.error = error;
-        resolve(gltf.scene);
-      },
-      (c) => {
-        console.error = error;
-        reject(c instanceof Error ? c : new Error(String(c)));
-      }
-    );
-  });
+// `loadWater` lives in tests/helpers/model.ts: the assets are meshopt-compressed, so the
+// loader has to be wired the way drei wires it at runtime, in exactly one place.
 
 beforeAll(async () => {
   for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
     const scene = await loadWater(WATER_SHAPES[key].url);
     scene.updateWorldMatrix(true, true);
-    const size = new THREE.Box3().setFromObject(scene).getSize(new THREE.Vector3());
+    // Base pose, exactly as `waterFit` measures it. `Box3.setFromObject` would expand the
+    // box over all 80 morph targets — and for relative targets by a bound so loose that
+    // the jet's aspect comes out at 5.6 instead of 3.44 — which is precisely the mistake
+    // this file exists to catch. See `src/lib/waterCache.ts`.
+    const size = basePoseBox(scene).getSize(new THREE.Vector3());
 
     // Some shapes are authored lying down — their long axis is Z with no rotation node —
     // so the scene stands those up. Measure the same way, or a jet's "width" is its length.
@@ -215,15 +194,15 @@ describe('the shipped water assets', () => {
     }
   });
 
-  it('carries the UV data the shader does not currently use', () => {
-    // `docs/41 §UV`: every shape has TEXCOORD_0 and two have TEXCOORD_1, but the water
-    // shader samples by world position instead. Recorded here so the finding is a fact in
-    // the suite rather than a claim in a document; the shader itself is untouched.
+  it('no longer carries the authored UV data nothing ever sampled', () => {
+    // `docs/41 §UV` recorded that every shape had TEXCOORD_0 and some a TEXCOORD_1, while
+    // the shader sampled by world position; BEDO-043 replaced that projection with a
+    // coordinate derived from the vertices, leaving the authored channels addressing
+    // nothing at all. BEDO-044's conversion drops them, which also stops a UV seam
+    // splitting vertices that would then be paid for in each of the 80 morph targets.
     for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
-      expect(shapes[key].uvSets, `${key} has no UVs at all`).toContain('uv');
+      expect(shapes[key].uvSets, `${key} still ships authoring UVs`).toEqual([]);
     }
-    expect(shapes.d90.uvSets).toContain('uv1');
-    expect(shapes.d180.uvSets).toContain('uv1');
   });
 });
 

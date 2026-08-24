@@ -2,11 +2,15 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { FRONT } from '../../src/lib/apparatusView';
 import {
-  POWER_SWITCH_AXIS,
   QUARTER_TURN,
+  faceNormalAxis,
+  localBounds,
   powerSwitchTurn,
-} from '../../src/lib/apparatusView';
+  spindleAxis,
+  spindleCentre,
+} from '../../src/lib/powerSwitch';
 import { MESH } from '../../src/domain/apparatus';
 import { gltfName } from '../../src/lib/gltfNames';
 import { loadApparatus } from '../helpers/model';
@@ -38,74 +42,204 @@ beforeAll(async () => {
   model = await loadApparatus();
 });
 
-describe('the power switch turns about the face it looks out of', () => {
-  it('is thinnest across the axis it turns about', () => {
-    // The measurement the axis is chosen from, taken from the shipped model rather than
-    // written down: 29.8 x 43.8 x 45.0 mm.
+describe('the power switch turns about its real spindle', () => {
+  /**
+   * The scene's own rig, rebuilt: a pivot at the spindle centre with the knob re-parented
+   * under it, then one scalar driving a quaternion about the derived axis. Testing the
+   * transform this produces is the point — an assertion about a Euler component or a named
+   * constant is what let a visibly broken build pass twice.
+   */
+  const rig = () => {
     const node = model.getObjectByName(gltfName(MESH.powerSwitch));
     expect(node, 'Power_Switch is not in the model').toBeTruthy();
-    const clone = node!.clone(true);
+    const parent = new THREE.Group();
+    const knob = node!.clone(true);
+    parent.add(knob);
+    parent.updateWorldMatrix(true, true);
+
+    const axis = spindleAxis(knob, new THREE.Vector3(...FRONT));
+    const centre = spindleCentre(knob);
+    const pivot = new THREE.Group();
+    pivot.position.copy(centre);
+    parent.add(pivot);
+    knob.position.sub(centre);
+    pivot.add(knob);
+    parent.updateWorldMatrix(true, true);
+
+    /** The point furthest off the spindle: the indicator tip, and the best tracer there is. */
+    const mesh = knob as THREE.Mesh;
+    const position = (mesh.geometry as THREE.BufferGeometry).getAttribute('position');
+    let marker = new THREE.Vector3();
+    let best = -1;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < position.count; i++) {
+      v.fromBufferAttribute(position as THREE.BufferAttribute, i).applyMatrix4(mesh.matrixWorld);
+      const radial = v.clone().sub(centre);
+      radial.addScaledVector(axis, -radial.dot(axis));
+      if (radial.length() > best) {
+        best = radial.length();
+        marker = v.clone();
+      }
+    }
+    const at = (turn: number) => {
+      pivot.quaternion.setFromAxisAngle(axis, turn);
+      pivot.updateWorldMatrix(true, true);
+      return {
+        marker: marker.clone().applyMatrix4(pivot.matrixWorld).applyMatrix4(
+          new THREE.Matrix4().copy(pivot.matrixWorld).invert()
+        ),
+      };
+    };
+    void at;
+    return { parent, pivot, knob, axis, centre, marker, markerRadius: best };
+  };
+
+  /** Where the marker ends up after turning the pivot by `turn`. */
+  const markerAt = (r: ReturnType<typeof rig>, turn: number) => {
+    const local = r.marker.clone().sub(r.centre);
+    return local.applyAxisAngle(r.axis, turn).add(r.centre);
+  };
+
+  it('is thinnest across its spindle in its own space — and is not axis-aligned', () => {
+    const node = model.getObjectByName(gltfName(MESH.powerSwitch))!;
+    const local = localBounds(node).getSize(new THREE.Vector3());
+
+    // A lamina in its own space: two comparable in-plane extents and one much smaller.
+    const s = [local.x, local.y, local.z].sort((a, b) => a - b);
+    expect(s[0]).toBeLessThan(s[1] * 0.3);
+    expect(Math.abs(s[1] - s[2]) / s[2]).toBeLessThan(0.05);
+    expect(faceNormalAxis(local)).toBe(2);
+
+    // The trap that produced the deployed defect: the *world* box is thinnest across X, so
+    // reading the axis off it gives world X — which is not the spindle.
+    const clone = node.clone(true);
     clone.updateWorldMatrix(true, true);
-    const size = new THREE.Box3().setFromObject(clone).getSize(new THREE.Vector3());
+    const world = new THREE.Box3().setFromObject(clone).getSize(new THREE.Vector3());
+    expect(world.x).toBeLessThan(world.y);
+    expect(world.x).toBeLessThan(world.z);
 
-    expect(size.x).toBeLessThan(size.y);
-    expect(size.x).toBeLessThan(size.z);
-    // Round in the panel plane — a knob, not a lever.
-    expect(Math.abs(size.y - size.z) / Math.max(size.y, size.z)).toBeLessThan(0.1);
-    expect(POWER_SWITCH_AXIS).toBe('x');
+    const axis = spindleAxis(clone, new THREE.Vector3(...FRONT));
+    const tilt = (axis.angleTo(new THREE.Vector3(1, 0, 0)) * 180) / Math.PI;
+    expect(Math.min(tilt, 180 - tilt)).toBeGreaterThan(20);
   });
 
-  it('sits at rest when the rig is off', () => {
-    expect(powerSwitchTurn(false)).toBe(0);
+  it('is the face normal carried through the node own rotation, component by component', () => {
+    // Pinned as an actual direction, not merely as "not axis-aligned". An earlier cut
+    // derived the axis by extracting a quaternion from `object.matrix`, which is invalid
+    // while the node carries its exporter scale of 0.0215; it returned very nearly world Z
+    // and every other assertion here still passed, because a wrong axis through the right
+    // centre keeps the marker's radius and plane offset perfectly constant.
+    const node = model.getObjectByName(gltfName(MESH.powerSwitch))!;
+    const expected = new THREE.Vector3(0, 0, 1).applyQuaternion(node.quaternion).normalize();
+    if (expected.dot(new THREE.Vector3(...FRONT)) > 0) expected.negate();
+
+    const axis = spindleAxis(node, new THREE.Vector3(...FRONT));
+    expect(axis.x).toBeCloseTo(expected.x, 6);
+    expect(axis.y).toBeCloseTo(expected.y, 6);
+    expect(axis.z).toBeCloseTo(expected.z, 6);
+    // The measured console tilt: 29.45 degrees up from horizontal, in the XY plane.
+    expect(axis.z).toBeCloseTo(0, 6);
+    expect(Math.abs(axis.x)).toBeCloseTo(0.87075, 4);
+    expect(Math.abs(axis.y)).toBeCloseTo(0.49173, 4);
   });
 
-  it('turns a quarter of a turn when the rig is on', () => {
-    expect(powerSwitchTurn(true)).toBe(QUARTER_TURN);
-    expect(QUARTER_TURN).toBeCloseTo(Math.PI / 2, 12);
+  it('points away from the operator, which is what fixes the sign of the turn', () => {
+    const node = model.getObjectByName(gltfName(MESH.powerSwitch))!;
+    const axis = spindleAxis(node, new THREE.Vector3(...FRONT));
+    // `FRONT` points from the rig toward the operator; the spindle points the other way.
+    expect(axis.dot(new THREE.Vector3(...FRONT))).toBeLessThan(0);
   });
 
-  it('turns clockwise as the operator sees it, which is a positive turn about X', () => {
-    // BEDO sl. 29: "Rotate it smoothly 90 degrees clockwise to turn it on."
+  it('keeps the spindle centre exactly still through the whole travel', () => {
+    const r = rig();
+    for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+      r.pivot.quaternion.setFromAxisAngle(r.axis, powerSwitchTurn(true) * f);
+      r.pivot.updateWorldMatrix(true, true);
+      const moved = new THREE.Vector3().setFromMatrixPosition(r.pivot.matrixWorld);
+      expect(moved.distanceTo(r.centre)).toBeLessThan(1e-9);
+    }
+  });
+
+  it('keeps the marker on one circle about the spindle — no wobble, no tipping', () => {
+    const r = rig();
+    const radii: number[] = [];
+    const alongAxis: number[] = [];
+    for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+      const p = markerAt(r, powerSwitchTurn(true) * f).sub(r.centre);
+      alongAxis.push(p.dot(r.axis));
+      radii.push(p.addScaledVector(r.axis, -p.dot(r.axis)).length());
+    }
+    // Constant radius: it orbits the spindle rather than drifting off it.
+    expect(Math.max(...radii) - Math.min(...radii)).toBeLessThan(1e-6);
+    // Constant offset along the spindle: it stays in the panel plane, so it cannot sink
+    // through the backplate the way the world-X rotation does.
+    expect(Math.max(...alongAxis) - Math.min(...alongAxis)).toBeLessThan(1e-6);
+  });
+
+  it('advances monotonically to exactly a quarter turn', () => {
+    const r = rig();
+    // The angle *about the spindle*, so the axial component of the marker is projected out
+    // first. Measuring between the raw 3D vectors instead under-reads the turn, because the
+    // indicator tip does not sit exactly in the plane through the spindle centre.
+    const radial = (turn: number) => {
+      const p = markerAt(r, turn).sub(r.centre);
+      return p.addScaledVector(r.axis, -p.dot(r.axis));
+    };
+    const ref = radial(0);
+    const angles = [0, 0.25, 0.5, 0.75, 1].map((f) =>
+      ref.angleTo(radial(powerSwitchTurn(true) * f))
+    );
+    for (let i = 1; i < angles.length; i++) expect(angles[i]).toBeGreaterThan(angles[i - 1]);
+    expect(angles.at(-1)!).toBeCloseTo(QUARTER_TURN, 6);
+  });
+
+  it('turns clockwise as the operator sees it', () => {
+    // BEDO sl. 29, state A (off): "Rotate it smoothly 90 degrees clockwise to turn it on."
     //
-    // The operator stands at -X looking along +X, so their screen-up is +Y and their
-    // screen-right is +Z. A positive turn about X carries +Y to +Z — up to right — which is
-    // clockwise. This asserts that geometry rather than the word.
-    expect(powerSwitchTurn(true)).toBeGreaterThan(0);
-
-    const up = new THREE.Vector3(0, 1, 0);
-    const turned = up
-      .clone()
-      .applyAxisAngle(new THREE.Vector3(1, 0, 0), powerSwitchTurn(true));
-    // Screen coordinates for that observer: right = +Z, up = +Y.
-    const before = { right: up.z, up: up.y };
-    const after = { right: turned.z, up: turned.y };
-    const angle = (p: { right: number; up: number }) => Math.atan2(p.up, p.right);
-    // Angles measured anticlockwise, so a clockwise turn *decreases* the angle.
-    expect(angle(after)).toBeLessThan(angle(before));
-    expect(angle(before) - angle(after)).toBeCloseTo(Math.PI / 2, 6);
+    // `spindleAxis` points away from the operator, so their view direction is +axis. In a
+    // right-handed frame, a positive turn about an axis pointing away from the viewer is
+    // clockwise to them. Measured here in the operator's own screen basis rather than
+    // asserted: screen-right is axis x up, screen-up is right x axis.
+    const r = rig();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const right = new THREE.Vector3().crossVectors(r.axis, worldUp).normalize();
+    const up = new THREE.Vector3().crossVectors(right, r.axis).normalize();
+    const screen = (turn: number) => {
+      const p = markerAt(r, turn).sub(r.centre);
+      return Math.atan2(p.dot(up), p.dot(right));
+    };
+    const before = screen(0);
+    let after = screen(powerSwitchTurn(true));
+    // Unwrap onto the same branch so the comparison is about direction, not the cut.
+    while (after > before) after -= Math.PI * 2;
+    // Angles increase anticlockwise, so clockwise decreases them.
+    expect(before - after).toBeCloseTo(QUARTER_TURN, 6);
   });
 
-  it('returns to rest on the way back, so ON → OFF is a true round trip', () => {
-    expect(powerSwitchTurn(true)).toBe(QUARTER_TURN);
+  it('starts at rest and returns to it, so ON → OFF retraces the same arc', () => {
+    const r = rig();
     expect(powerSwitchTurn(false)).toBe(0);
-    expect(powerSwitchTurn(!!0)).toBe(powerSwitchTurn(false));
+    expect(powerSwitchTurn(true)).toBe(QUARTER_TURN);
+    const rest = markerAt(r, powerSwitchTurn(false));
+    const back = markerAt(r, powerSwitchTurn(false));
+    expect(back.distanceTo(rest)).toBeLessThan(1e-12);
+    // A quarter turn each way about one axis is the same arc reversed, by construction:
+    // the orientation is rebuilt from the scalar every frame rather than accumulated.
+    expect(markerAt(r, QUARTER_TURN).distanceTo(markerAt(r, -QUARTER_TURN))).toBeGreaterThan(0);
   });
 
-  it('no longer turns about Z anywhere in the scene', () => {
-    // The literal defect: `powerPivot.rotation.z = damp(..., -QUARTER_TURN, ...)`.
+  it('rebuilds the orientation from one scalar instead of easing a Euler component', () => {
     const source = readFileSync(
       path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'),
       'utf8'
     );
     const block = source.slice(source.indexOf('const powerPivot'), source.indexOf('const lampMat'));
-    expect(block).toMatch(/powerPivot\.rotation\.x = damp/);
-    expect(block).not.toMatch(/powerPivot\.rotation\.z = damp/);
+    expect(block).toMatch(/powerPivot\.quaternion\.setFromAxisAngle/);
+    expect(block).not.toMatch(/powerPivot\.rotation\.[xyz] = damp/);
   });
 
   it('is presentation only — it cannot change the rig', () => {
-    // `powerSwitchTurn` takes a boolean and returns a number. It has no access to the
-    // domain and the domain has no access to it.
-    const source = readFileSync(path.join(REPO_ROOT, 'src/lib/apparatusView.ts'), 'utf8');
+    const source = readFileSync(path.join(REPO_ROOT, 'src/lib/powerSwitch.ts'), 'utf8');
     expect(source).not.toMatch(/POWER_ON|POWER_OFF|dispatch|SimulationRuntime/);
   });
 });

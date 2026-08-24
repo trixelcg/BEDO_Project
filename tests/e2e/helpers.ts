@@ -264,6 +264,27 @@ declare global {
         meshPoint: (name: string) => ScreenPoint | null;
         dropPoint: () => ScreenPoint | null;
       };
+      /**
+       * Dev-only; see BEDO-044. Screen positions for the parts the install step hands over
+       * to, so the camera follow is judged on what the learner can see rather than on
+       * where the camera happens to be.
+       */
+      cameraProbe?: {
+        flyingDeflector: () => ScreenPoint | null;
+        head: () => {
+          rod: ScreenPoint | null;
+          cover: ScreenPoint | null;
+          deflector: ScreenPoint | null;
+        };
+        region: () => { canvas: PanelRect; panels: PanelRect[] } | null;
+        camera: () => Vec3;
+        lastFlight: () => { from: Vec3; to: Vec3; seconds: number } | null;
+        framing: () => {
+          centre: ScreenPoint | null;
+          radius: number;
+          plateTop: ScreenPoint | null;
+        } | null;
+      };
       /** Dev-only; see BEDO-021b. World coordinates for the weights and their flights. */
       weightProbe?: {
         seats: () => { index: number; landed: boolean; world: Vec3 | null }[];
@@ -281,6 +302,14 @@ declare global {
 
 /** A point in world units, as the dev probe reports it. */
 export type Vec3 = [number, number, number];
+
+/** A client rectangle, as the camera probe reports it. */
+export interface PanelRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 
 export const distance = (a: Vec3 | null, b: Vec3 | null): number =>
   a && b ? Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) : Number.POSITIVE_INFINITY;

@@ -22,9 +22,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
+import { startPreview } from './lib/preview-server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -108,20 +108,9 @@ const SAMPLE = () => {
 };
 
 async function serve() {
-  const server = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort'], {
-    cwd: ROOT,
-    stdio: 'ignore',
-  });
-  const url = `http://localhost:${PORT}`;
-  for (let i = 0; i < 150; i++) {
-    try {
-      if ((await fetch(url)).ok) return { url, server };
-    } catch {
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-  server.kill('SIGTERM');
-  throw new Error('vite preview did not start');
+  // One implementation, in scripts/lib/preview-server.mjs: it owns the process
+  // group and tears the server down on a throw or a Ctrl-C as well as on success.
+  return startPreview({ root: ROOT, port: PORT });
 }
 
 async function main() {

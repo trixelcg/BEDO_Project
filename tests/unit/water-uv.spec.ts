@@ -2,7 +2,6 @@ import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import {
   RIPPLE_TILES,
   WATER_UV_ATTRIBUTE,
@@ -11,6 +10,7 @@ import {
 } from '../../src/lib/waterUv';
 import { WATER_SHAPES, type WaterShapeKey } from '../../src/domain/apparatus';
 import { REPO_ROOT, assetPath } from '../helpers/glb';
+import { loadWater } from '../helpers/model';
 
 /**
  * The water's surface coordinate, and the banding it replaces (BUG-03's other half).
@@ -34,34 +34,9 @@ interface Prim {
 
 const prims: Prim[] = [];
 
-const ensureGlobals = () => {
-  const g = globalThis as unknown as { self?: unknown };
-  g.self ??= globalThis;
-};
 
-const loadWater = (url: string): Promise<THREE.Group> =>
-  new Promise((resolve, reject) => {
-    ensureGlobals();
-    const bytes = readFileSync(assetPath(path.join('public', url)));
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const error = console.error;
-    console.error = (...a: unknown[]) => {
-      if (typeof a[0] === 'string' && a[0].includes("Couldn't load texture")) return;
-      error(...a);
-    };
-    new GLTFLoader().parse(
-      buffer as ArrayBuffer,
-      '',
-      (g) => {
-        console.error = error;
-        resolve(g.scene);
-      },
-      (c) => {
-        console.error = error;
-        reject(c instanceof Error ? c : new Error(String(c)));
-      }
-    );
-  });
+// `loadWater` lives in tests/helpers/model.ts: the assets are meshopt-compressed, so the
+// loader has to be wired the way drei wires it at runtime, in exactly one place.
 
 beforeAll(async () => {
   for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
@@ -80,19 +55,22 @@ beforeAll(async () => {
   }
 });
 
-describe('the authored UV channels, and why they cannot be used', () => {
-  it('exist on every asset, so their absence is not the reason', () => {
+describe('the authored UV channels, and why they are not shipped', () => {
+  it('are gone from the runtime assets — the conversion drops them', () => {
+    // The caches were authored in 3ds Max and every one of them carries a `TEXCOORD_0`;
+    // three (`Water90_Flat`, `Water180_HemiSphere`, `Water45_Oblique`) carry a second
+    // channel as well. None of it was ever usable, for the reasons `src/lib/waterUv.ts`
+    // sets out: nothing addresses them, they are an atlas rather than a tiling, they
+    // reverse between primitives, and one primitive has no flow correlation at all.
+    //
+    // Until BEDO-044 they were shipped anyway. Now they are not, and the saving is not
+    // just their own bytes: a UV seam splits a vertex, and every split vertex is paid for
+    // again in each of the 80 morph targets. Dropping them took `Water90_Flat` from 820
+    // vertices to 741.
     expect(prims.length).toBeGreaterThanOrEqual(8);
     for (const p of prims) {
-      expect(p.uvSets, `${p.asset} has no UVs`).toContain('uv');
+      expect(p.uvSets, `${p.asset} still ships authoring UVs`).toEqual([]);
     }
-  });
-
-  it('has a second channel on exactly three assets', () => {
-    // `docs/41` recorded two. Re-inspecting the accessors for this task found three:
-    // Water45_Oblique carries TEXCOORD_1 as well. Pinned so the inventory stays honest.
-    const withUv1 = new Set(prims.filter((p) => p.uvSets.includes('uv1')).map((p) => p.asset));
-    expect([...withUv1].sort()).toEqual(['d180', 'd45', 'd90']);
   });
 
   it('addresses no texture at all — the channels are authoring leftovers', () => {
