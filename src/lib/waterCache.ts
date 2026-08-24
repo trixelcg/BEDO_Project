@@ -52,8 +52,32 @@ export const WATER_CACHE_FRAMES = 81;
  */
 export const WATER_CACHE_BASE_FRAME = WATER_CACHE_FRAMES - 1;
 
-/** How long the authored development takes. 3.3333 s. */
+/** How long the cache was *authored* over: 81 samples at 24 fps. 3.3333 s. */
 export const WATER_CACHE_SECONDS = WATER_CACHE_BASE_FRAME / WATER_CACHE_FPS;
+
+/**
+ * How long the water actually takes to establish — **measured from the reference**.
+ *
+ * The archive's 3.3333 s is the rate the cache was *authored* at. It is not the rate the
+ * simulator plays it at, and BEDO-044's first cut wrongly assumed it was.
+ *
+ * `Bedo_Mesu_J.mp4` (1920x1080, 30.000 fps) shows the water starting at **55.55 s** and
+ * establishing over about a second. Counting water pixels per frame in the tank region,
+ * against a stable pre-water baseline of ~8,200:
+ *
+ *   | share of steady | timestamp |
+ *   |-----------------|-----------|
+ *   | 0 %             | 55.55 s   |
+ *   | 50 %            | 56.02 s   |
+ *   | 90 %            | 56.40 s   |
+ *   | 95 %            | 56.70 s   |
+ *   | asymptotic      | ~57.0 s   |
+ *
+ * So the reference reaches its established state in **1.15 s**, not 3.33 s — nearly three
+ * times faster. The cache still plays frames 0..80 in order and still holds at 80; only the
+ * rate changes. `docs/44` records the measurement.
+ */
+export const WATER_STARTUP_SECONDS = 1.15;
 
 /** Morph targets carried by a converted asset: one per frame except the base. */
 export const WATER_CACHE_TARGETS = WATER_CACHE_FRAMES - 1;
@@ -64,11 +88,16 @@ export const cacheTargetName = (frame: number): string => `f${String(frame).padS
 /**
  * Where playback has reached, in frames, after `seconds` of flow.
  *
- * Clamped at the base frame rather than wrapped: holding the settled pose is the whole
- * playback policy (see above), so this is where "play once and hold" is actually decided.
+ * Paced by `WATER_STARTUP_SECONDS` — the duration measured from the reference — not by the
+ * cache's authored 24 fps. Clamped at the base frame rather than wrapped: holding the
+ * settled pose is the whole playback policy (see above), so this is where "play once and
+ * hold" is actually decided.
  */
 export const cacheFrameAt = (seconds: number): number =>
-  Math.min(WATER_CACHE_BASE_FRAME, Math.max(0, seconds * WATER_CACHE_FPS));
+  Math.min(
+    WATER_CACHE_BASE_FRAME,
+    Math.max(0, (seconds / WATER_STARTUP_SECONDS) * WATER_CACHE_BASE_FRAME)
+  );
 
 /**
  * Which morph target index carries which authored frame.

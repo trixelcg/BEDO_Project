@@ -66,32 +66,68 @@ export const NOZZLE_DIAMETER_MODEL_UNITS = NOZZLE_DIAMETER_M * MODEL_UNITS_PER_M
  * authored jet rather than one more plume — every other shipped shape has an aspect near
  * 1.3 and is a spray, not a column.
  *
- * The asset is therefore scaled by its full width: its silhouette *is* the jet.
+ * The asset is therefore scaled by its full width: its silhouette *is* the visible water
+ * body. What that body is scaled *to* is `bodyScale` below, not the bore — see there.
  */
 export const JET_ASSET = 'low' as const;
 
+// --- The visible body, which is not the bore -------------------------------------------
+//
+// ## Why these are two different things
+//
+// BEDO-017 scaled the *rendered* water to `NOZZLE_DIAMETER_M`. That fixed a real defect —
+// the water had been drawn at 95 % of the tank's diameter, 17 times too wide — but it
+// overshot, and `Bedo_Mesu_J.mp4` shows by how much.
+//
+// In the reference the water inside the tank is a broad translucent body that **envelops
+// the nozzle tube** and spans from the tank floor up to the deflector. Measured per row at
+// t = 60.63 s it is 27 px at the deflector, 48-54 px through its body and 74 px at the
+// flared foot. Using the deflector cone as an in-frame ruler — the one object visible in
+// both the low-flow and high-flow shots — that body is about **one deflector diameter**
+// across. It is emphatically not a 10 mm thread; at 10 mm it is invisible, which is what
+// the deployed build looked like and why it was reported as wrong.
+//
+// So the two concepts are separated:
+//
+//   * **physical bore** — `NOZZLE_DIAMETER_M`, derived from `NOZZLE_AREA_M2`. Feeds the
+//     force, velocity and momentum equations. Unchanged, and still asserted at 10.00 mm.
+//   * **visible body** — the authored Alembic silhouette, sized from the deflector the way
+//     the reference draws it. Presentation only; no equation reads it.
+//
+// `Water_low`'s own silhouette settles which of the two the asset represents: rendered at
+// its settled frame it is a tapered column, narrow at the top, widening downward to a
+// flared foot — which is exactly the shape in the video. BEDO authored the *visible body*,
+// not the bore.
+
 /**
- * What to scale the jet asset by so it leaves the nozzle at the right bore and reaches the
- * deflector.
+ * How wide the authored water body reads, in deflector diameters.
  *
- * `assetWidth` and `assetHeight` are the shape's own measured extents, so this works
- * whatever the GLB was authored at — and the shipped ones are authored in centimetre-scale
- * units a hundred times too big, which is exactly why measuring beats assuming.
- *
- * Cross-flow is scaled to the bore; along-flow is stretched to the gap the water actually
- * has to cross. Non-uniform on purpose: a jet is as long as its travel and as wide as its
- * nozzle, and those are independent facts.
+ * Measured from the reference rather than chosen: the low-flow column and the deflector
+ * cone are the same width to within the precision of the frame. See `docs/44`.
  */
-export function jetScale(
+export const BODY_WIDTH_IN_DEFLECTORS = 1.0;
+
+/**
+ * What to scale the authored water body by so it reads like the reference.
+ *
+ * Cross-flow comes from the deflector, along-flow from the span it has to cover — the same
+ * two-independent-facts structure the old bore-based scale used, but sized from the video
+ * rather than from the bore. `assetWidth`/`assetHeight` are the shape's own measured
+ * extents, so this works whatever units the GLB was authored in.
+ */
+export function bodyScale(
+  deflectorDiameterModelUnits: number,
   assetWidth: number,
-  assetHeight: number,
-  gapModelUnits: number
+  spanModelUnits: number,
+  assetHeight: number
 ): { crossFlow: number; alongFlow: number } {
   return {
-    crossFlow: NOZZLE_DIAMETER_MODEL_UNITS / Math.max(assetWidth, 1e-9),
-    alongFlow: Math.max(gapModelUnits, 1e-6) / Math.max(assetHeight, 1e-9),
+    crossFlow:
+      (deflectorDiameterModelUnits * BODY_WIDTH_IN_DEFLECTORS) / Math.max(assetWidth, 1e-9),
+    alongFlow: Math.max(spanModelUnits, 1e-6) / Math.max(assetHeight, 1e-9),
   };
 }
+
 
 /**
  * What to scale an after-impact plume by.
@@ -112,15 +148,6 @@ export function plumeScale(deflectorDiameterModelUnits: number, assetWidth: numb
   return (deflectorDiameterModelUnits * PLUME_SPREAD) / Math.max(assetWidth, 1e-9);
 }
 
-/**
- * How near the rendered jet has to be to the physical bore to count as correct.
- *
- * Two per cent, which is tighter than the five per cent the brief allows because nothing
- * here is estimated: the bore comes from a verified constant and the asset's width is
- * measured off its own vertices, so the only error is float noise and the asset's own
- * silhouette not being perfectly circular (5.079 by 5.083 — 0.08 per cent out of round).
- */
-export const JET_WIDTH_TOLERANCE = 0.02;
 
 /**
  * The valve opening at which the jet is treated as reaching the deflector.

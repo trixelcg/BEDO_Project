@@ -4,13 +4,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   JET_ASSET,
-  JET_WIDTH_TOLERANCE,
   NOZZLE_DIAMETER_M,
   NOZZLE_DIAMETER_MODEL_UNITS,
   PLUME_SPREAD,
   STARTUP_VALVE_OPENING,
   diameterOfArea,
-  jetScale,
+  BODY_WIDTH_IN_DEFLECTORS,
+  bodyScale,
   plumeScale,
 } from '../../src/lib/waterJet';
 import { NOZZLE_AREA_M2, TRAVEL_HEIGHT_M } from '../../src/domain/physics';
@@ -21,19 +21,26 @@ import { loadWater } from '../helpers/model';
 import { basePoseBox } from '../../src/lib/waterCache';
 
 /**
- * The water's size, against the nozzle it comes out of (BUG-03).
+ * The water's size — and the two different things "size" means here.
  *
- * ## The defect
+ * ## Two defects, in opposite directions
  *
- * The jet was drawn at 95% of the **tank's** diameter. The tank is 181 mm across and the
- * bore is 10 mm, so the water left the nozzle 17.2 times too wide — measured at HEAD as
- * 139.7 mm at the first reading's setpoint and 172.0 mm at full flow. It read as a pipe
- * filling the tank rather than a jet, and it hid the rod, the spring and the deflector
- * behind it.
+ * The water was first drawn at 95 % of the **tank's** diameter: 172 mm against a 10 mm
+ * bore, seventeen times too wide, reading as a pipe that filled the tank. BEDO-017 fixed
+ * that by scaling the rendered water to `NOZZLE_AREA_M2` — and overshot, because it applied
+ * a *physical bore* to what is actually an *authored silhouette*. At 10 mm the water was
+ * invisible, which is how it shipped and why it was reported as not looking like the
+ * simulation at all.
  *
- * These tests pin the replacement to the only thing that may decide a jet's width: the
- * area the domain says the nozzle has. Every asset dimension below is measured off the
- * shipped GLBs rather than written down, so a re-export cannot silently invalidate them.
+ * `Bedo_Mesu_J.mp4` settles it. The water in the tank is a broad translucent body about one
+ * deflector diameter across that envelops the nozzle tube — measured per row at t = 60.63 s
+ * as 27 px at the deflector, 48-54 px through the body, 74 px at the flared foot. So:
+ *
+ *   * the **bore** stays 10.00 mm and stays the physics' own number, and
+ *   * the **visible body** follows the authored Alembic silhouette, sized from the deflector.
+ *
+ * These tests hold both, separately. Every asset dimension is measured off the shipped GLBs
+ * rather than written down, so a re-export cannot silently invalidate them. See `docs/44`.
  */
 
 const shapes = {} as Record<WaterShapeKey, { width: number; height: number; uvSets: string[] }>;
@@ -94,52 +101,70 @@ describe('the nozzle, as a diameter', () => {
   });
 });
 
-describe('the jet is scaled from the nozzle', () => {
-  it('renders the shipped jet asset at exactly the bore', () => {
-    const { width, height } = shapes[JET_ASSET];
-    const scale = jetScale(width, height, 0.184);
-    expect(width * scale.crossFlow).toBeCloseTo(NOZZLE_DIAMETER_MODEL_UNITS, 9);
-    // Within the stated tolerance, by a wide margin.
-    const errorPct = Math.abs(width * scale.crossFlow - NOZZLE_DIAMETER_M) / NOZZLE_DIAMETER_M;
-    expect(errorPct).toBeLessThan(JET_WIDTH_TOLERANCE);
-    expect(errorPct).toBeLessThan(1e-9);
+describe('the physical bore is untouched by presentation', () => {
+  it('is still exactly the 10 mm the area implies', () => {
+    // BEDO-017's *physics* claim, preserved verbatim. Nothing about how the water is drawn
+    // may move this: it is what the force, velocity and momentum equations are built on.
+    expect(NOZZLE_DIAMETER_M).toBeCloseTo(0.0099975, 7);
+    expect(NOZZLE_DIAMETER_M * 1000).toBeGreaterThan(9.99);
+    expect(NOZZLE_DIAMETER_M * 1000).toBeLessThan(10.01);
+    expect(NOZZLE_DIAMETER_MODEL_UNITS).toBeCloseTo(NOZZLE_DIAMETER_M, 12);
   });
 
-  it('stretches along the flow to the gap it is given, and only along the flow', () => {
+  it('is derived from the area, so the two cannot drift apart', () => {
+    expect(diameterOfArea(NOZZLE_AREA_M2)).toBe(NOZZLE_DIAMETER_M);
+  });
+
+  it('no longer sizes the visible water, and nothing in the scene reads it as a width', () => {
+    // BEDO-017's *visual* claim is the one that was wrong. It sized the whole authored body
+    // to the bore, which rendered as an invisible thread — see `docs/44`. The bore stays;
+    // what changed is that it no longer decides how wide the water looks.
+    const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
+    expect(source).toMatch(/bodyScale\(/);
+    expect(source).not.toMatch(/jetScale\(/);
+  });
+});
+
+describe('the visible water body is scaled from the reference, not the bore', () => {
+  it('reads about one deflector diameter across, as the video shows', () => {
+    // Measured with the deflector cone as an in-frame ruler — the one object visible in
+    // both the low-flow and high-flow shots of `Bedo_Mesu_J.mp4`.
+    expect(BODY_WIDTH_IN_DEFLECTORS).toBeCloseTo(1.0, 6);
     const { width, height } = shapes[JET_ASSET];
-    const short = jetScale(width, height, 0.05);
-    const long = jetScale(width, height, 0.20);
-    expect(height * long.alongFlow).toBeCloseTo(0.2, 9);
+    const deflector = 0.0325;
+    const s = bodyScale(deflector, width, 0.25, height);
+    expect(width * s.crossFlow).toBeCloseTo(deflector * BODY_WIDTH_IN_DEFLECTORS, 9);
+  });
+
+  it('is far wider than the bore — that is the whole correction', () => {
+    const { width, height } = shapes[JET_ASSET];
+    const rendered = width * bodyScale(0.0325, width, 0.25, height).crossFlow;
+    expect(rendered).toBeGreaterThan(NOZZLE_DIAMETER_MODEL_UNITS * 2);
+  });
+
+  it('spans whatever it is given, and only along the flow', () => {
+    const { width, height } = shapes[JET_ASSET];
+    const short = bodyScale(0.0325, width, 0.05, height);
+    const long = bodyScale(0.0325, width, 0.25, height);
+    expect(height * long.alongFlow).toBeCloseTo(0.25, 9);
     expect(height * short.alongFlow).toBeCloseTo(0.05, 9);
-    // The bore does not care how far the water has to travel.
+    // How far the water has to travel says nothing about how wide it is.
     expect(short.crossFlow).toBe(long.crossFlow);
   });
 
   it('is the same width at every flow state', () => {
-    // §11: velocity may drive animation, never the bore. Nothing about the valve opening
-    // reaches `jetScale` at all — it takes a gap, and the gap is geometry.
+    // Velocity may drive animation; it may never drive the body's width, and it certainly
+    // may never drive the bore.
     const { width, height } = shapes[JET_ASSET];
     const widths = [0.05, 0.1, 0.4, 0.5, 1.0].map(
-      (n) => width * jetScale(width, height, 0.184 * Math.min(1, n / STARTUP_VALVE_OPENING)).crossFlow
+      (n) => width * bodyScale(0.0325, width, 0.25 * Math.min(1, n / STARTUP_VALVE_OPENING), height).crossFlow
     );
     expect(new Set(widths.map((w) => w.toFixed(12))).size).toBe(1);
-    expect(widths[0]).toBeCloseTo(NOZZLE_DIAMETER_MODEL_UNITS, 9);
-  });
-
-  it('is the same width for every deflector family', () => {
-    // §13: no experiment may quietly use a different nozzle. The jet asset is one asset.
-    const { width, height } = shapes[JET_ASSET];
-    const scale = jetScale(width, height, 0.184);
-    for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
-      if (key === JET_ASSET) continue;
-      // Choosing a plume never changes the jet — they are separate objects now.
-      expect(width * scale.crossFlow).toBeCloseTo(NOZZLE_DIAMETER_MODEL_UNITS, 9);
-    }
   });
 
   it('degrades safely rather than dividing by zero', () => {
-    expect(Number.isFinite(jetScale(0, 0, 0).crossFlow)).toBe(true);
-    expect(Number.isFinite(jetScale(0, 0, 0).alongFlow)).toBe(true);
+    expect(Number.isFinite(bodyScale(0, 0, 0, 0).crossFlow)).toBe(true);
+    expect(Number.isFinite(bodyScale(0, 0, 0, 0).alongFlow)).toBe(true);
   });
 });
 

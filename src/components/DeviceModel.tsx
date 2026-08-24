@@ -39,7 +39,7 @@ import {
   type HolderAnchor,
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
-import { jetState } from '../domain/physics';
+import { TOTAL_FLOW_L_MIN, flowRateLMin, jetState } from '../domain/physics';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
   commits,
@@ -58,7 +58,7 @@ import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
 import {
   JET_ASSET,
   STARTUP_VALVE_OPENING,
-  jetScale,
+  bodyScale,
   plumeScale,
 } from '../lib/waterJet';
 import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
@@ -69,6 +69,13 @@ import {
   createCacheClock,
   prepareCacheMesh,
 } from '../lib/waterCache';
+import {
+  advanceLevel,
+  createTankWaterGeometry,
+  measureTankInterior,
+  targetLevel,
+  type TankInterior,
+} from '../lib/tankWater';
 import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
 
@@ -349,6 +356,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const jetClock = useRef(createCacheClock());
   const plumeClock = useRef(createCacheClock());
+  /** The measured tank interior the procedural tank water is built in. */
+  const [tankInterior, setTankInterior] = useState<TankInterior | null>(null);
+  const tankWaterRef = useRef<THREE.Mesh>(null);
+  /** How full the tank is, 0..1 of its interior height. Presentation only. */
+  const tankLevel = useRef(0);
   /**
    * The power switch's spindle, in the space its pivot lives in, derived from the asset
    * once at install. Null until then. See `src/lib/powerSwitch.ts`.
@@ -552,28 +564,36 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, []);
 
   const waterMaterial = useMemo(() => {
+    // Tuned against `Bedo_Mesu_J.mp4`, not against generic PBR water.
+    //
+    // The reference draws a *readable* body: sampled across the column at t = 60.63 s its
+    // core is about rgb(83, 90, 111) — a dark, desaturated blue-grey — and the nozzle and
+    // deflector stay visible through it. It is not glass. The previous settings
+    // (transmission 0.3 with clearcoat 1.0 and envMapIntensity 1.6) made a 10 mm thread of
+    // mirror, which against the dark tank read as nothing at all; that, together with the
+    // width, is why the deployed water was reported as not looking like the simulation.
+    //
+    // So: a solid-reading body colour close to the sampled core, restrained transmission
+    // and environment response so the tank behind does not overwhelm it, and a soft
+    // clearcoat instead of a hard one. Opacity is high enough to read and low enough that
+    // the apparatus still shows through, as it does in the video.
     const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color('#4fb2f5'),
+      color: new THREE.Color('#6d84a6'),
       transparent: true,
-      opacity: 0.8,
-      roughness: 0.08,
+      opacity: 0.86,
+      roughness: 0.22,
       metalness: 0.0,
-      // Held deliberately low. The jet lives inside a dark tank, so a high transmission
-      // just shows that darkness through it and the water reads as smoked glass. A bright,
-      // mostly-opaque body with a hard clearcoat matches the reference, which shows a
-      // luminous blue column.
-      transmission: 0.3,
-      thickness: 0.35,
+      transmission: 0.12,
+      thickness: 0.22,
       ior: 1.33, // water
-      attenuationColor: new THREE.Color('#2f8fdd'),
-      attenuationDistance: 0.6,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.04,
-      specularIntensity: 1.0,
-      envMapIntensity: 1.6,
-      // A touch of self-illumination so the stream stays legible against the dark tank.
-      emissive: new THREE.Color('#0d4a86'),
-      emissiveIntensity: 0.3,
+      attenuationColor: new THREE.Color('#3f5877'),
+      attenuationDistance: 0.4,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.30,
+      specularIntensity: 0.55,
+      envMapIntensity: 0.45,
+      emissive: new THREE.Color('#16324f'),
+      emissiveIntensity: 0.18,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -602,10 +622,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
            // clamp(position.y * 0.05 + 0.5, ...), which assumed every shape was ~20 units
            // tall and centred on the origin; most are not (Water90_Flat sits at y 106.9 to
            // 128.9) and it sat pinned at 1 for them.
+           // Amplitude and speed measured, not chosen. Between 60 s and 64 s the
+           // reference's water region changes by 0.65/255 per frame on average against
+           // 0.05 for a static background — real, continuous motion, but a thirtieth of
+           // what the old 0.16 displacement produced. The authored morph now carries the
+           // shape; the ripple only has to keep the surface alive.
            float rise = aWaterUv.y;
-           float amp = 0.16 * rise;
-           transformed.x += sin(aWaterUv.y * 18.0 + uTime * 5.0) * amp;
-           transformed.z += cos(aWaterUv.y * 14.0 + uTime * 3.9) * amp;
+           float amp = 0.022 * rise;
+           transformed.x += sin(aWaterUv.y * 18.0 + uTime * 1.7) * amp;
+           transformed.z += cos(aWaterUv.y * 14.0 + uTime * 1.3) * amp;
            vRise = rise;
            vWaterUv = aWaterUv;`
         )
@@ -637,10 +662,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                         + vec2(uTime * 0.10, -uTime * 0.55);
                vec2 uvB = vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
                         + vec2(-uTime * 0.07, -uTime * 0.85);
-               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 1.8
-                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 2.2;
+               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 0.6
+                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.7;
+               // Gentle. The reference's surface shimmers rather than boils: its water
+               // region changes 0.65/255 per frame against 0.05 for a static background.
                vec3 bump = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
-               normal = normalize(normal + bump * 1.5);
+               normal = normalize(normal + bump * 0.45);
              }`
           )
           .replace(
@@ -657,18 +684,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                  vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
                  + vec2(-uTime * 0.09, -uTime * 0.95)).b;
 
-               // Fast-moving specular glints reflecting off turbulent wave crests
-               float glint = smoothstep(0.55, 0.90, hTop * 0.5 + hSide * 0.5) * 0.65;
+               // Highlights, kept to what the reference actually shows.
+               //
+               // These three used to sum to 1.8 before clamping at 0.95, so almost the
+               // whole surface was mixed to near-white — which is why the water read as a
+               // pale streak instead of the blue-grey body in the video. Sampled across
+               // the reference column at t = 60.63 s the core is rgb(83, 90, 111); the
+               // brightest crest highlights sit far below white. So the terms are scaled
+               // down, the ceiling is dropped, and the colour they mix toward is a light
+               // blue-grey rather than white.
+               float glint = smoothstep(0.62, 0.95, hTop * 0.5 + hSide * 0.5) * 0.18;
+               float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.16;
+               float foam = smoothstep(0.55, 0.92, hSide) * 0.12;
 
-               // Enhanced rim reflection highlight
-               float rim = pow(1.0 - abs(dot(N, V)), 2.5) * 0.55;
-
-               // Flowing foam streaks matching the high-velocity jet stream
-               float foam = smoothstep(0.40, 0.80, hSide) * 0.6;
-
-               float lum = clamp(glint + rim + foam, 0.0, 0.95);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.96, 0.98, 1.0), lum);
-               gl_FragColor.a = mix(gl_FragColor.a, 0.92, lum);
+               float lum = clamp(glint + rim + foam, 0.0, 0.40);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.72, 0.79, 0.89), lum);
+               gl_FragColor.a = mix(gl_FragColor.a, 0.90, lum * 0.6);
              }`
           );
     };
@@ -703,6 +734,40 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...waterGltfs, waterMaterial]);
+
+  /** Built once from the measured interior; rebuilt only if the model is re-exported. */
+  const tankWaterGeometry = useMemo(
+    () => (tankInterior ? createTankWaterGeometry(tankInterior) : null),
+    [tankInterior]
+  );
+
+  /**
+   * The tank body's own material.
+   *
+   * Flatter and more transmissive than the jet: in the reference you read the rod, the
+   * nozzle and the deflector straight through it, and its free surface catches light
+   * rather than reflecting the room. Depth-write is off so the apparatus inside stays
+   * visible from every angle rather than being clipped away.
+   */
+  const tankWaterMaterial = useMemo(
+    () =>
+      new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color('#5b7fa6'),
+        transparent: true,
+        opacity: 0.42,
+        roughness: 0.18,
+        metalness: 0,
+        transmission: 0.45,
+        thickness: 0.12,
+        ior: 1.33,
+        clearcoat: 0.5,
+        clearcoatRoughness: 0.25,
+        envMapIntensity: 0.5,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    []
+  );
 
   /**
    * Each jet shape's own offset and height, measured off a detached clone.
@@ -1019,6 +1084,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // worldToLocal does not preserve which corner is which under a mirrored transform.
       return { min: lo.clone().min(hi), max: lo.clone().max(hi) };
     };
+    // The tank's own interior, for the procedural water body. Measured off the glass, so a
+    // re-exported model changes the water with it rather than needing a constant edited.
+    const tankMesh = pick(MESH.tank);
+    setTankInterior(
+      tankMesh
+        ? measureTankInterior(tankMesh, (v) => group.worldToLocal(v))
+        : null
+    );
+
     const tankAabb = localAabb([MESH.tank]);
     const coverAabb = localAabb([MESH.tankCover]);
     setTransferObstacle(
@@ -2406,23 +2480,29 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const deflectorDiameter = Math.max(tmp.size.x, tmp.size.z) / modelScale;
 
       tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
-      const gap = Math.max(tmp.defPos.y - tmp.nozzlePos.y, 1e-4);
 
       // The jet climbs out of the nozzle as the valve opens, and reaches the deflector at
       // the same setpoint the plume starts at. Implementation behaviour: no BEDO source
       // describes the startup, only that the water "forms" when the valve is opened.
       const reach = Math.min(1, state.valveOpening / STARTUP_VALVE_OPENING);
-      const jet = jetScale(jetFit.width, jetFit.height, gap * reach);
+
+      // The visible body spans from the **tank floor** to the deflector, not from the
+      // nozzle lip: in the reference it swallows the nozzle tube entirely, and starting it
+      // at the lip is what left a bare thread hanging above a visible pipe. Falls back to
+      // the lip if the tank has not been measured.
+      const bodyFootY = tankInterior ? tankInterior.floorY : tmp.nozzlePos.y;
+      const span = Math.max(tmp.defPos.y - bodyFootY, 1e-4) * reach;
+      const body = bodyScale(deflectorDiameter, jetFit.width, span, jetFit.height);
 
       // On the nozzle axis, not the tank's: X and Z come from the lip, and only Y spans
-      // the gap. A jet that started anywhere else would be a magic offset.
+      // the gap. A body that started anywhere else would be a magic offset.
       jetGroupRef.current.visible = true;
       jetGroupRef.current.position.set(
         tmp.nozzlePos.x,
-        tmp.nozzlePos.y + (gap * reach) / 2,
+        bodyFootY + span / 2,
         tmp.nozzlePos.z
       );
-      jetGroupRef.current.scale.set(jet.crossFlow, jet.alongFlow, jet.crossFlow);
+      jetGroupRef.current.scale.set(body.crossFlow, body.alongFlow, body.crossFlow);
 
       // The plume forms once the jet actually arrives.
       const impacting = state.valveOpening > STARTUP_VALVE_OPENING;
@@ -2436,7 +2516,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         plumeGroupRef.current.visible = false;
       }
 
-      // Ripple faster the harder the jet runs.
+      // Ripple with the flow, but gently — see the material for the amplitude.
       waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
 
       (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
@@ -2464,6 +2544,29 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // the emergence again from frame 0 rather than inventing a drain (`docs/44 §F2`).
       jetClock.current.advance(false, delta);
       plumeClock.current.advance(false, delta);
+    }
+
+    // --- The tank fills once more arrives than the drain can carry -------------
+    //
+    // The second water state the reference shows (t = 74 s, full to just under the cover).
+    // Driven by how much water is arriving, which is what the recording actually shows
+    // changing — the student turns the *flow* valve, never the volumetric one, and the tank
+    // is empty through ten seconds at the lower setpoint. See `src/lib/tankWater.ts`.
+    const tankWater = tankWaterRef.current;
+    if (tankWater && tankInterior) {
+      const inflow = flowing
+        ? flowRateLMin(state.valveOpening) / Math.max(TOTAL_FLOW_L_MIN, 1e-9)
+        : 0;
+      tankLevel.current = advanceLevel(
+        tankLevel.current,
+        targetLevel(inflow, state.isVolumetricValveOpen),
+        delta
+      );
+      const height = Math.max(tankInterior.ceilingY - tankInterior.floorY, 1e-6);
+      tankWater.visible = tankLevel.current > 0.002;
+      tankWater.scale.set(1, Math.max(tankLevel.current, 1e-4), 1);
+      tankWater.position.set(tankInterior.axis.x, tankInterior.floorY, tankInterior.axis.y);
+      void height;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
@@ -2637,6 +2740,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             <group ref={plumeGroupRef} visible={false}>
               {plumes.map(shape)}
             </group>
+            {/*
+              The water that collects in the measuring tank. Procedural because no shipped
+              asset can draw it — `LIQUID001` is a four-vertex quad 480 mm below the tank.
+              Presentation only; the drain valve drives it. See `src/lib/tankWater.ts`.
+            */}
+            {tankWaterGeometry && (
+              <mesh
+                ref={tankWaterRef}
+                geometry={tankWaterGeometry}
+                material={tankWaterMaterial}
+                visible={false}
+                renderOrder={-1}
+              />
+            )}
           </>
         );
       })()}

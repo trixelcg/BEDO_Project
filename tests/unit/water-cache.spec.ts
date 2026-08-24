@@ -5,6 +5,7 @@ import {
   WATER_CACHE_FPS,
   WATER_CACHE_FRAMES,
   WATER_CACHE_SECONDS,
+  WATER_STARTUP_SECONDS,
   WATER_CACHE_TARGETS,
   applyCacheFrame,
   basePoseBox,
@@ -59,13 +60,25 @@ describe('the authored timing', () => {
     expect(WATER_CACHE_TARGETS).toBe(80);
   });
 
-  it('reaches the settled pose exactly when the authored motion ends, and holds', () => {
+  it('plays at the reference rate, not the authored one', () => {
+    // The archive was authored over 3.3333 s; the reference simulator establishes its
+    // water in 1.15 s. The frames are the same and their order is the same — only the
+    // pace differs. Measured in `Bedo_Mesu_J.mp4`; see `docs/44`.
+    expect(WATER_CACHE_SECONDS).toBeCloseTo(10 / 3, 6);
+    expect(WATER_STARTUP_SECONDS).toBe(1.15);
+    expect(WATER_STARTUP_SECONDS).toBeLessThan(WATER_CACHE_SECONDS);
+  });
+
+  it('reaches the settled pose exactly when the reference does, and holds', () => {
     expect(cacheFrameAt(0)).toBe(0);
-    expect(cacheFrameAt(WATER_CACHE_SECONDS / 2)).toBeCloseTo(40, 6);
-    expect(cacheFrameAt(WATER_CACHE_SECONDS)).toBe(WATER_CACHE_BASE_FRAME);
+    expect(cacheFrameAt(WATER_STARTUP_SECONDS / 2)).toBeCloseTo(40, 6);
+    expect(cacheFrameAt(WATER_STARTUP_SECONDS)).toBe(WATER_CACHE_BASE_FRAME);
     // Held, not wrapped. Wrapping is the one thing these caches must never do.
-    expect(cacheFrameAt(WATER_CACHE_SECONDS * 10)).toBe(WATER_CACHE_BASE_FRAME);
+    expect(cacheFrameAt(WATER_STARTUP_SECONDS * 10)).toBe(WATER_CACHE_BASE_FRAME);
     expect(cacheFrameAt(-5)).toBe(0);
+    // The reference's own midpoint: half of steady at ~0.47 s after the start.
+    expect(cacheFrameAt(0.47) / WATER_CACHE_BASE_FRAME).toBeGreaterThan(0.35);
+    expect(cacheFrameAt(0.47) / WATER_CACHE_BASE_FRAME).toBeLessThan(0.5);
   });
 });
 
@@ -220,7 +233,7 @@ describe('the one-shot clock', () => {
   it('starts at the first frame and reaches the last after the authored duration', () => {
     const clock = createCacheClock();
     expect(clock.advance(true, 0)).toBe(0);
-    expect(clock.advance(true, WATER_CACHE_SECONDS)).toBe(WATER_CACHE_BASE_FRAME);
+    expect(clock.advance(true, WATER_STARTUP_SECONDS)).toBe(WATER_CACHE_BASE_FRAME);
   });
 
   it('holds the settled pose instead of looping back', () => {
@@ -228,7 +241,7 @@ describe('the one-shot clock', () => {
     // diagonal, and no sub-range of any cache loops either. There is nothing to loop.
     const clock = createCacheClock();
     clock.advance(true, 0);
-    clock.advance(true, WATER_CACHE_SECONDS);
+    clock.advance(true, WATER_STARTUP_SECONDS);
     for (let i = 0; i < 20; i++) {
       expect(clock.advance(true, 0.5)).toBe(WATER_CACHE_BASE_FRAME);
     }
@@ -237,7 +250,7 @@ describe('the one-shot clock', () => {
   it('does not restart while it keeps running — a valve nudge is not a new start', () => {
     const clock = createCacheClock();
     clock.advance(true, 0);
-    const half = clock.advance(true, WATER_CACHE_SECONDS / 2);
+    const half = clock.advance(true, WATER_STARTUP_SECONDS / 2);
     expect(half).toBeGreaterThan(0);
     expect(clock.advance(true, 0.01)).toBeGreaterThan(half);
   });
@@ -245,7 +258,7 @@ describe('the one-shot clock', () => {
   it('replays from the first frame after a stop', () => {
     const clock = createCacheClock();
     clock.advance(true, 0);
-    clock.advance(true, WATER_CACHE_SECONDS);
+    clock.advance(true, WATER_STARTUP_SECONDS);
     expect(clock.advance(false, 0.1)).toBe(0);
     // The next start is a fresh emergence, not a resume and not a reverse: no authored
     // shutdown cache exists, so nothing is invented.
@@ -260,7 +273,7 @@ describe('the one-shot clock', () => {
   it('can be reset outright', () => {
     const clock = createCacheClock();
     clock.advance(true, 0);
-    clock.advance(true, WATER_CACHE_SECONDS);
+    clock.advance(true, WATER_STARTUP_SECONDS);
     clock.reset();
     expect(clock.advance(true, 0)).toBe(0);
   });
