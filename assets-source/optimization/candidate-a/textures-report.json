@@ -1,0 +1,676 @@
+[
+ {
+  "index": 0,
+  "name": "MergedBake_SM_D_Wood01_PBR_Lightmap",
+  "slots": [
+   "emissive"
+  ],
+  "from": "4096x4096",
+  "to": "4096x4096",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 3235649,
+  "bytesTo": 469420,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 1,
+  "name": "MergedBake_SM_D_Wood01_PBR_Normal",
+  "slots": [
+   "normal"
+  ],
+  "from": "4096x4096",
+  "to": "4096x4096",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 580173,
+  "bytesTo": 379424,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 2,
+  "name": "MergedBake_SM_D_Wood01_PBR_Diffuse",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "4096x4096",
+  "to": "4096x4096",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 822171,
+  "bytesTo": 353436,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 3,
+  "name": "MergedBake_SM_D_Wood01_PBR_Metalness-MergedBake_SM_D_Wood01_PBR",
+  "slots": [
+   "metalRough"
+  ],
+  "from": "4096x4096",
+  "to": "4096x4096",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 455966,
+  "bytesTo": 455966,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": true
+ },
+ {
+  "index": 4,
+  "name": "MergedBake_SM_D_Wood01_PBR_Diffuse-MergedBake_SM_D_Wood01_PBR_A",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "4096x4096",
+  "to": "4096x4096",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 710089,
+  "bytesTo": 695988,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": false
+ },
+ {
+  "index": 5,
+  "name": "ground_uv_3",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "1024x1024",
+  "to": "1024x1024",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 1306990,
+  "bytesTo": 1306990,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 6,
+  "name": "Gray metal",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "1396x2696",
+  "to": "1396x2696",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 408836,
+  "bytesTo": 408836,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": true
+ },
+ {
+  "index": 7,
+  "name": "screw",
+  "slots": [
+   "baseColor",
+   "ext:transmissionTexture"
+  ],
+  "from": "301x300",
+  "to": "301x300",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 122924,
+  "bytesTo": 122924,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 8,
+  "name": "DIRTY PLASTIC",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "418x418",
+  "to": "418x418",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 39201,
+  "bytesTo": 6414,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 9,
+  "name": "2",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "402x125",
+  "to": "402x125",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 10528,
+  "bytesTo": 3389,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 10,
+  "name": "background_uv_small",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2598x1923",
+  "to": "2598x1923",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 288239,
+  "bytesTo": 288239,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 11,
+  "name": "iron2 scratched",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "509x339",
+  "to": "509x339",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 47577,
+  "bytesTo": 47577,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": true
+ },
+ {
+  "index": 12,
+  "name": "metal-texture-background-brushed-metallic-texture-plate-400-206",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "236x400",
+  "to": "236x400",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 70813,
+  "bytesTo": 17330,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 13,
+  "name": "TUBE",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "80x837",
+  "to": "80x837",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 66136,
+  "bytesTo": 14032,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 14,
+  "name": "dirty copper",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "343x268",
+  "to": "343x268",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 6067,
+  "bytesTo": 4661,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 15,
+  "name": "iron basic",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "250x417",
+  "to": "250x417",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 22761,
+  "bytesTo": 17764,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 16,
+  "name": "black",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "612x408",
+  "to": "612x408",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 63763,
+  "bytesTo": 8554,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 17,
+  "name": "Wheel",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "194x194",
+  "to": "194x194",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 41645,
+  "bytesTo": 10416,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 18,
+  "name": "Jetforce_background",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "4800x2950",
+  "to": "4800x2950",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 1845815,
+  "bytesTo": 1845815,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 19,
+  "name": "water hose entry_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2018",
+  "to": "2048x2018",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 1700918,
+  "bytesTo": 1700918,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 20,
+  "name": "numbering",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "80x837",
+  "to": "80x837",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 69371,
+  "bytesTo": 15731,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 21,
+  "name": "numbering_cad",
+  "slots": [
+   "baseColor",
+   "ext:transmissionTexture"
+  ],
+  "from": "413x3602",
+  "to": "413x3602",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 195674,
+  "bytesTo": 195674,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 22,
+  "name": "60",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 2944,
+  "bytesTo": 2944,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 23,
+  "name": "CONE 60",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "1024x1024",
+  "to": "1024x1024",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 797896,
+  "bytesTo": 92272,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 24,
+  "name": "steel1",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "236x236",
+  "to": "236x236",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 7809,
+  "bytesTo": 6814,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 25,
+  "name": "30",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 2960,
+  "bytesTo": 2960,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 26,
+  "name": "180",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 3320,
+  "bytesTo": 3320,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 27,
+  "name": "120",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 2929,
+  "bytesTo": 2929,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 28,
+  "name": "135",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 2945,
+  "bytesTo": 2945,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 29,
+  "name": "0",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 3169,
+  "bytesTo": 3169,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 30,
+  "name": "45",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "267x115",
+  "to": "267x115",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/png",
+  "bytesFrom": 2506,
+  "bytesTo": 2506,
+  "opaque": false,
+  "minAlpha": 0,
+  "kept": true
+ },
+ {
+  "index": 31,
+  "name": "weight_50_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1168513,
+  "bytesTo": 191463,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 32,
+  "name": "weight_100_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1168626,
+  "bytesTo": 191811,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 33,
+  "name": "weight_200_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1169071,
+  "bytesTo": 192025,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 34,
+  "name": "weight_500_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1168912,
+  "bytesTo": 191987,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 35,
+  "name": "weight_custom weight_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1182780,
+  "bytesTo": 190731,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 36,
+  "name": "red_led_off",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1003135,
+  "bytesTo": 270106,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 37,
+  "name": "pointer_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1919542,
+  "bytesTo": 285113,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 38,
+  "name": "metal-texture-background-brushed-metallic-texture-plate-400-20",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "236x400",
+  "to": "236x400",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 70813,
+  "bytesTo": 17330,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 39,
+  "name": "plate_uv",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "2048x2048",
+  "to": "2048x2048",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 1993461,
+  "bytesTo": 261706,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 40,
+  "name": "DIRTY PLASTIC",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "418x418",
+  "to": "418x418",
+  "mimeFrom": "image/jpeg",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 6471,
+  "bytesTo": 5081,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ },
+ {
+  "index": 41,
+  "name": "screw thread",
+  "slots": [
+   "baseColor"
+  ],
+  "from": "600x800",
+  "to": "600x800",
+  "mimeFrom": "image/png",
+  "mimeTo": "image/jpeg",
+  "bytesFrom": 380320,
+  "bytesTo": 91471,
+  "opaque": true,
+  "minAlpha": 255,
+  "kept": false
+ }
+]

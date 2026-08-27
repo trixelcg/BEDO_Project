@@ -36,7 +36,11 @@ let cached: Promise<THREE.Group> | null = null;
  * The result is shared, so a spec that mutates a transform must put it back; the specs
  * that do this clone the part they move instead.
  */
-export const loadApparatus = (): Promise<THREE.Group> => {
+export const loadApparatus = async (): Promise<THREE.Group> => {
+  // The apparatus ships meshopt-compressed, so the decoder has to be ready before the
+  // loader will touch the file. drei's `useGLTF` wires this up at runtime; a Node test
+  // has to do it itself, exactly as `loadWater` below already does.
+  await MeshoptDecoder.ready;
   cached ??= new Promise<THREE.Group>((resolve, reject) => {
     ensureBrowserGlobals();
     const bytes = readFileSync(assetPath('public/Bedo_baked_v2.glb'));
@@ -46,7 +50,9 @@ export const loadApparatus = (): Promise<THREE.Group> => {
       if (typeof args[0] === 'string' && args[0].includes("Couldn't load texture")) return;
       error(...args);
     };
-    new GLTFLoader().parse(
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.parse(
       buffer as ArrayBuffer,
       '',
       (gltf) => {
