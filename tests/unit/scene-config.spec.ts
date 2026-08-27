@@ -45,8 +45,15 @@ describe('apparatus placement', () => {
 });
 
 describe('renderer and environment', () => {
-  it('exposes at 1.0 — the renderer tone-mapping exposure', () => {
-    expect(SCENE_CONFIG.exposure).toBe(1.0);
+  it('exposes above unity, to compensate for lighting the scene with a room', () => {
+    // The environment is the laboratory's own baked surfaces, not an outdoor panorama, and
+    // an interior is a much dimmer thing to stand in. Exposure carries that difference so
+    // the scene does not need fill lights the room does not contain — so the meaningful
+    // assertion is that it is *lifted*, not that it holds one particular number.
+    expect(SCENE_CONFIG.exposure).toBeGreaterThan(1.0);
+    // Bounded: past roughly 1.6 the highlights on the steel start to clip.
+    expect(SCENE_CONFIG.exposure).toBeLessThanOrEqual(1.6);
+    expect(SCENE_CONFIG.exposure).toBe(1.3);
   });
 
   it('lights the environment at 1.0 with no rotation', () => {

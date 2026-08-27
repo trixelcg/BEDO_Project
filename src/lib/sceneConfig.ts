@@ -65,7 +65,14 @@ export interface SceneConfig {
  * that differs from the one in this file.
  */
 export const SCENE_CONFIG: Readonly<SceneConfig> = Object.freeze({
-  exposure: 1.0,
+  // 1.3, not 1.0. The environment is now the laboratory's own baked surfaces rather than a
+  // 4k outdoor panorama, and a room is a far dimmer thing to stand in than an open field —
+  // the scene lost about 15% of its luminance the moment the lighting became correct. This
+  // is the camera compensating, which is the honest lever: it re-exposes the whole frame
+  // uniformly instead of re-introducing fill lights the room does not contain. Measured
+  // against the pre-change baseline it restores mean luminance (90.9 -> 92.2) and improves
+  // contrast (34.7 -> 38.7) with no highlight clipping.
+  exposure: 1.3,
   selfIllumination: 0.15,
   hdrLight: 1.0,
   hdrRotation: 0,

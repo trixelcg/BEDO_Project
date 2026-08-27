@@ -14,6 +14,8 @@ import type { AnchorKey } from '../domain/apparatus';
 import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
 import { fitDistance, regionOffset, usableRect } from '../lib/cameraFraming';
 import { TRANSFER_SECONDS } from '../interaction/transfer';
+import { ROOM_ENV_INTENSITY, captureRoomEnvironment } from '../lib/roomEnvironment';
+import { classifyMaterial } from '../lib/materialFamilies';
 
 interface Scene3DProps {
   state: SimulationView;
@@ -41,16 +43,130 @@ const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.rotation = (config.hdrRotation * Math.PI) / 180;
 
+    // Background only. This is an outdoor panorama seen through the laboratory window,
+    // which is exactly what a window should show — but it is a lossy 8-bit WebP of a field,
+    // and it used to light the entire room as well. Lighting now comes from the room
+    // itself; see `RoomLighting` below and `src/lib/roomEnvironment.ts`.
     scene.background = texture;
-    scene.environment = texture;
-    scene.environmentIntensity = config.hdrLight;
     scene.backgroundIntensity = config.hdrLight;
 
     return () => {
       scene.background = null;
-      scene.environment = null;
     };
   }, [texture, scene, config.hdrLight, config.hdrRotation]);
+
+  return null;
+};
+
+/**
+ * Lights the apparatus with the room it stands in.
+ *
+ * Rendered once, after the model is in the graph: a cube probe at the bench captures the
+ * laboratory's own baked surfaces, and PMREM turns that into a roughness pyramid. The
+ * apparatus is excluded from its own reflection.
+ *
+ * Deferred by two frames rather than run on mount — the GLB has to be present, and its
+ * materials have to have been classified, or the probe would capture a half-built scene.
+ */
+const RoomLighting: React.FC<{
+  groupRef: React.RefObject<THREE.Group | null>;
+  intensity: number;
+}> = ({ groupRef, intensity }) => {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const captured = useRef(false);
+
+  useFrame(() => {
+    if (captured.current) return;
+    const group = groupRef.current;
+    if (!group || group.children.length === 0) return;
+
+    // Do not capture a half-built room.
+    //
+    // This used to fire on the first frame the group had any children at all, and the
+    // result was a scene that rendered about 10 units of mean luminance darker on roughly
+    // half of all loads — the probe sometimes ran before the baked albedo had decoded, so
+    // it prefiltered an untextured room and every surface in the apparatus then reflected
+    // it. It reproduced by re-running the same build, which is what gave it away.
+    //
+    // Two conditions, both necessary. The room has to have been classified — until
+    // `DeviceModel` runs its material pass the baked surfaces still carry their authored
+    // `metalness: 1` and would capture as dark metal. And its colour map has to have an
+    // actual decoded image, not merely a texture object.
+    // *Every* room material, not the first one found. Waiting on only one still let the
+    // probe fire while another wall was untextured, which shifted the captured environment
+    // slightly and left two or three views irreproducible between runs.
+    let sawRoom = false;
+    let allReady = true;
+    group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        if (!material || classifyMaterial(material) !== 'roomSurface') continue;
+        sawRoom = true;
+        const standard = material as THREE.MeshStandardMaterial;
+        // Two separate readiness conditions, and the second is easy to miss.
+        //
+        // The albedo has to have decoded, or the probe prefilters an untextured room. And the
+        // material pass has to have *run*: `MergedBake_Baked` ships authored at
+        // `metalness: 1`, and a conductor has no diffuse response at all, so a room still in
+        // that state captures almost black no matter how brightly it is lit. Classification
+        // is by name, which is already true before anything is applied — so the name is not
+        // evidence the pass happened. The applied metalness is.
+        if (!standard.map?.image) allReady = false;
+        if (standard.metalness !== 0) allReady = false;
+      }
+    });
+    // A model with no room at all must not block for ever; it falls through and captures
+    // whatever is there, which is the existing degraded-model behaviour.
+    if (sawRoom && !allReady) return;
+
+    captured.current = true;
+
+    // The room is identified by material, the same way `DeviceModel` classifies it. The GLB
+    // puts the room and the apparatus in one shared hierarchy, so there is no group that
+    // means "the room" and no group that means "the apparatus".
+    const isRoomSurface = (mesh: THREE.Mesh) => {
+      const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+      return !!material && classifyMaterial(material) === 'roomSurface';
+    };
+
+    // Stand the probe at the apparatus, measured over the apparatus alone. Measuring the
+    // whole group would include the floor and far wall and put the probe out in the room.
+    const bounds = new THREE.Box3();
+    group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      // Morph-target meshes are skipped: `Box3` expands over every target and would drag
+      // the centre off. See `basePoseBox` in `lib/waterCache.ts`.
+      if (!mesh.isMesh || isRoomSurface(mesh) || mesh.morphTargetInfluences) return;
+      bounds.expandByObject(mesh);
+    });
+    const centre = bounds.isEmpty()
+      ? new THREE.Box3().setFromObject(group).getCenter(new THREE.Vector3())
+      : bounds.getCenter(new THREE.Vector3());
+
+    const room = captureRoomEnvironment(gl, scene, centre, isRoomSurface);
+    if (!room) return;
+    scene.environment = room.texture;
+    scene.environmentIntensity = ROOM_ENV_INTENSITY * intensity;
+
+    // Hand the environment to each material directly, as well as to the scene.
+    //
+    // `scene.environment` alone lights everything at exactly 1.0: three only consults a
+    // material's `envMapIntensity` when that material has its own `envMap`. Without this the
+    // per-family response in `materialFamilies.ts` is dead code — a baked wall and an
+    // unbaked steel rod receive the room identically, which is wrong in both directions.
+    scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        const standard = material as THREE.MeshStandardMaterial;
+        if (!standard?.isMeshStandardMaterial || standard.envMap) continue;
+        standard.envMap = room.texture;
+        standard.needsUpdate = true;
+      }
+    });
+  });
 
   return null;
 };
@@ -441,8 +557,20 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           <LabEnvironment config={sceneConfig} />
         </Suspense>
 
+        {/*
+          A restrained hierarchy: the room's own environment does the ambient work, so this
+          is only a key light for shape and contact.
+
+          Two orange fills used to sit here at 0.3 and 0.4 (#f58220, #ff9100). Nothing in the
+          model or the reference recording calls for orange light — the laboratory is lit
+          white — and their only effect was to wash out the contrast the key light provides.
+          Removed rather than dimmed.
+
+          Ambient is kept low and neutral. The room bake already carries indirect light, so a
+          bright ambient on top is double-lighting the very surfaces that are already lit.
+        */}
         <ambientLight
-          intensity={sceneConfig.selfIllumination * (2.0 - sceneConfig.contrast)}
+          intensity={sceneConfig.selfIllumination * 0.5 * (2.0 - sceneConfig.contrast)}
           color={sceneConfig.ambientColor}
         />
 
@@ -450,21 +578,30 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           position={[5, 8, 5]}
           intensity={0.8 * sceneConfig.contrast}
           castShadow
-          shadow-mapSize={[1024, 1024]}
-          shadow-bias={-0.0001}
-          shadow-camera-left={-2}
-          shadow-camera-right={2}
-          shadow-camera-top={2}
-          shadow-camera-bottom={-2}
+          shadow-mapSize={[2048, 2048]}
+          shadow-bias={-0.0002}
+          shadow-normalBias={0.02}
+          shadow-camera-left={-1.6}
+          shadow-camera-right={1.6}
+          shadow-camera-top={1.6}
+          shadow-camera-bottom={-1.6}
+          shadow-camera-near={4}
+          shadow-camera-far={18}
         />
-        <directionalLight
-          position={[-5, 5, -5]}
-          intensity={0.3 * (2.0 - sceneConfig.contrast)}
-          color="#f58220"
-        />
-        <directionalLight position={[0, 6, -6]} intensity={0.4 * sceneConfig.contrast} color="#ff9100" />
 
-        <ContactShadows position={[0, -1.81, 0]} opacity={0.65} scale={6} blur={2.4} far={3} />
+        {/*
+          Grounding. Kept, and tightened: the old 6-unit scale spread the same shadow budget
+          over four times the area the bench actually occupies, so the contact under the
+          apparatus was soft to the point of not reading as contact at all.
+        */}
+        <ContactShadows
+          position={[0, -1.808, 0]}
+          opacity={0.75}
+          scale={3.2}
+          blur={1.6}
+          far={1.4}
+          resolution={1024}
+        />
 
         <Suspense fallback={<ModelLoadingPlaceholder />}>
           <DeviceModel
@@ -497,6 +634,8 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             glassIor={sceneConfig.glassIor}
           />
         </Suspense>
+
+        <RoomLighting groupRef={apparatusRef} intensity={sceneConfig.hdrLight} />
 
         <CameraRig
           target={cameraTarget}
