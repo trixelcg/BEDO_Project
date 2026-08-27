@@ -62,6 +62,7 @@ import {
   plumeScale,
 } from '../lib/waterJet';
 import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
+import { applyFamily, applyGlass, classifyMaterial } from '../lib/materialFamilies';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
@@ -295,6 +296,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   glassIor,
 }) => {
   const { scene } = useGLTF('/Bedo_baked_v2.glb') as any;
+  /** Declared here because the material pass below needs the GPU's anisotropy limit. */
+  const gl = useThree((three) => three.gl);
 
   // One simulated plume per deflector, plus the startup trickle.
   const water = {
@@ -358,6 +361,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const plumeClock = useRef(createCacheClock());
   /** The measured tank interior the procedural tank water is built in. */
   const [tankInterior, setTankInterior] = useState<TankInterior | null>(null);
+
+  // Held in refs so the shader keeps one uniform object for its lifetime: the interior is
+  // measured after the model loads, which is later than the material is created.
+  const tankHeightUniform = useRef({ value: 1 });
+  const tankRadiusUniform = useRef({ value: 1 });
   const tankWaterRef = useRef<THREE.Mesh>(null);
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
@@ -445,42 +453,76 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     [scene]
   );
 
-  // Materials, shadows, glass. LIQUID001 and the mounted deflectors start hidden;
-  // everything else is forced visible, since several parts ship hidden in the GLB.
+  // Materials, shadows, visibility.
+  //
+  // This used to force `castShadow` and `receiveShadow` on every one of the 209 meshes and
+  // stamp one `envMapIntensity` over all 89 materials, then replace the tank cover outright
+  // with near-invisible glass. All three are gone: shadows are now selective, materials get
+  // the response their family actually has (`src/lib/materialFamilies.ts`), and the cover
+  // keeps its authored look.
+  //
+  // LIQUID001 and the mounted deflectors start hidden; everything else is forced visible,
+  // since several parts ship hidden in the GLB.
   useEffect(() => {
     if (!scene) return;
+    // Capped at 8: the jump from 1 is what matters, and the last doublings cost bandwidth
+    // for a difference nobody sees at training distances.
+    const maxAnisotropy = Math.min(8, gl?.capabilities?.getMaxAnisotropy?.() ?? 1);
     // child.name is already sanitised by the loader, so compare against sanitised names.
     const mounted = new Set(DEFLECTORS.map((d) => gltfName(d.installed)));
-    const coverName = gltfName(MESH.tankCover);
     const liquidName = gltfName(MESH.liquid);
+
+    // Only things that move, or that the learner brings close to the camera, are worth a
+    // real-time shadow. Everything else is a static room surface whose lighting is already
+    // baked into its albedo — a dynamic shadow there is cost with nothing to show for it.
+    const casters = new Set<string>([
+      gltfName(MESH.tankCover),
+      gltfName(MESH.rod),
+      gltfName(MESH.screws),
+      gltfName(MESH.pointer),
+      gltfName(MESH.spring),
+      ...DEFLECTORS.map((d) => gltfName(d.installed)),
+      ...DEFLECTORS.map((d) => gltfName(d.shelf)),
+      ...WEIGHTS.filter((w) => w.mesh).map((w) => gltfName(w.mesh!)),
+    ]);
 
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
-      child.castShadow = true;
-      child.receiveShadow = true;
-      if (child.material) child.material.envMapIntensity = reflection;
 
-      if (child.name === coverName) {
-        child.material = new THREE.MeshPhysicalMaterial({
-          color: '#ffffff',
-          transparent: true,
-          opacity: 1.0,
-          roughness: glassRoughness,
-          metalness: 0.0,
-          transmission: 0.98,
-          ior: glassIor,
-          thickness: 1.5,
-          clearcoat: 1.0,
-          clearcoatRoughness: glassRoughness * 0.5,
-          specularIntensity: glassSpecular,
-          depthWrite: false,
-        });
-        child.material.envMapIntensity = reflection;
+      child.castShadow = casters.has(child.name);
+      // The bench top and the tray receive; the room does not need to.
+      child.receiveShadow = casters.has(child.name) || child.name === gltfName(MESH.tank);
+
+      for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
+        if (!material) continue;
+
+        // Anisotropic filtering, where it actually buys something: colour maps seen at
+        // grazing angles — the floor, the bench top, the panel labels — go to mush with the
+        // isotropic default, and every texture in this model was sitting at 1 despite the
+        // GPU offering 16. Data maps are left alone: normals and roughness are sampled for
+        // their values, not their legibility, and filtering them wider only blurs the
+        // surface response.
+        const colourMap = (material as THREE.MeshStandardMaterial).map;
+        if (colourMap && colourMap.anisotropy < maxAnisotropy) {
+          colourMap.anisotropy = maxAnisotropy;
+          colourMap.needsUpdate = true;
+        }
+        const family = classifyMaterial(material);
+        if (family === 'glass') {
+          applyGlass(material, {
+            roughness: glassRoughness,
+            ior: glassIor,
+            envScale: reflection,
+            specularIntensity: glassSpecular,
+          });
+        } else {
+          applyFamily(material, family, reflection);
+        }
       }
 
       child.visible = child.name !== liquidName && !mounted.has(child.name);
     });
-  }, [scene, reflection, glassSpecular, glassRoughness, glassIor]);
+  }, [scene, gl, reflection, glassSpecular, glassRoughness, glassIor]);
 
   /**
    * Water, rather than blue plastic.
@@ -503,9 +545,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const waterTex = useMemo(() => {
     const N = 256;
+    // Seeded, not `Math.random`. Unseeded, the ripple field was rebuilt differently on every
+    // page load, so no two sessions showed the same water and no two captures of the same
+    // build could be compared — which is what made the visual harness unable to attribute a
+    // difference to the build. The field's character is unchanged; only its reproducibility
+    // is.
+    let seedState = 0x9e3779b9;
+    const random = () => {
+      seedState = (seedState + 0x6d2b79f5) >>> 0;
+      let t = seedState;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
     const lattice = (period: number) => {
       const g = new Float32Array(period * period);
-      for (let i = 0; i < g.length; i++) g[i] = Math.random();
+      for (let i = 0; i < g.length; i++) g[i] = random();
       return (u: number, v: number) => {
         const x = u * period;
         const y = v * period;
@@ -591,7 +646,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       clearcoat: 0.35,
       clearcoatRoughness: 0.30,
       specularIntensity: 0.55,
-      envMapIntensity: 0.45,
+      // 1.0, and deliberately so. This was written as 0.45 while `envMapIntensity` was inert
+      // — three ignores it unless the material owns an `envMap` — so the water that was
+      // measured against `Bedo_Mesu_J.mp4` and signed off was in fact receiving the
+      // environment at 1.0. Now that the factor is live, holding the authored 0.45 would
+      // silently retune an appearance that was already validated. The restraint the original
+      // value was reaching for is carried by `transmission` and `specularIntensity` instead.
+      envMapIntensity: 1.0,
       emissive: new THREE.Color('#16324f'),
       emissiveIntensity: 0.18,
       side: THREE.DoubleSide,
@@ -684,22 +745,55 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                  vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
                  + vec2(-uTime * 0.09, -uTime * 0.95)).b;
 
-               // Highlights, kept to what the reference actually shows.
+               // Optics, in the order light actually meets the column.
                //
-               // These three used to sum to 1.8 before clamping at 0.95, so almost the
-               // whole surface was mixed to near-white — which is why the water read as a
-               // pale streak instead of the blue-grey body in the video. Sampled across
-               // the reference column at t = 60.63 s the core is rgb(83, 90, 111); the
-               // brightest crest highlights sit far below white. So the terms are scaled
-               // down, the ceiling is dropped, and the colour they mix toward is a light
-               // blue-grey rather than white.
-               float glint = smoothstep(0.62, 0.95, hTop * 0.5 + hSide * 0.5) * 0.18;
-               float rim = pow(1.0 - abs(dot(N, V)), 3.0) * 0.16;
-               float foam = smoothstep(0.55, 0.92, hSide) * 0.12;
+               // Everything here changes only how the body *reads*. The silhouette, the
+               // scale, the morph playback and the 1.15 s startup are untouched: this
+               // stage runs entirely after the fragment's colour is resolved.
+               //
+               // The governing measurement stays the same. Sampled across the reference
+               // column at t = 60.63 s the core is rgb(83, 90, 111) — dark, desaturated
+               // blue-grey, with the nozzle and deflector clearly visible through it. Every
+               // term below is bounded so the core cannot drift off that value; where
+               // physical correctness and the recording disagree, the recording wins.
+               float cosView = abs(dot(N, V));
 
-               float lum = clamp(glint + rim + foam, 0.0, 0.40);
+               // 1. Fresnel. Water's reflectance at normal incidence is 0.02 and rises to 1
+               // at grazing — the reason a glass of water is transparent looking down and a
+               // mirror looking along. Schlick, kept honest at F0 and then scaled back,
+               // because a full-strength edge on a 32 mm column reads as a chrome tube.
+               float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
+               float edge = fresnel * 0.34;
+
+               // 2. Depth coloration. aWaterUv.y runs 0 at the nozzle to 1 at the far end,
+               // so it stands in for how much water the eye is looking through: the thin
+               // leading edge stays pale and the settled body deepens toward the
+               // attenuation colour. Beer-Lambert in shape, not in units — there is no
+               // physical path length to integrate on a hollow authored silhouette.
+               float depth = 1.0 - exp(-vRise * 1.15);
+               vec3 deep = vec3(0.247, 0.345, 0.467);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, depth * 0.30);
+
+               // 3. Contact darkening. Where the column meets glass or steel the light that
+               // would have bounced back out is instead trapped between the two surfaces,
+               // and the reference shows a distinctly darker seam at the nozzle collar and
+               // again where the jet spreads across the deflector face. Both ends of the
+               // flow axis, none of the middle.
+               float contact = smoothstep(0.14, 0.0, vRise) + smoothstep(0.86, 1.0, vRise);
+               gl_FragColor.rgb *= 1.0 - clamp(contact, 0.0, 1.0) * 0.22;
+
+               // 4. Highlights. These three used to sum to 1.8 before clamping at 0.95, so
+               // almost the whole surface was mixed to near-white. Scaled to what the video
+               // shows, and now weighted by Fresnel so crests light up at grazing angles
+               // and stay quiet face-on, which is what makes a surface read as wet.
+               float glint = smoothstep(0.62, 0.95, hTop * 0.5 + hSide * 0.5) * 0.18;
+               float foam = smoothstep(0.55, 0.92, hSide) * 0.12;
+               float lum = clamp((glint + foam) * (0.55 + 0.75 * fresnel) + edge, 0.0, 0.42);
                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.72, 0.79, 0.89), lum);
-               gl_FragColor.a = mix(gl_FragColor.a, 0.90, lum * 0.6);
+
+               // Grazing edges also go slightly more opaque, so the column keeps a readable
+               // silhouette against the dark tank without the body itself thickening.
+               gl_FragColor.a = clamp(gl_FragColor.a + edge * 0.30 + lum * 0.20, 0.0, 0.95);
              }`
           );
     };
@@ -749,25 +843,95 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * rather than reflecting the room. Depth-write is off so the apparatus inside stays
    * visible from every angle rather than being clipped away.
    */
-  const tankWaterMaterial = useMemo(
-    () =>
-      new THREE.MeshPhysicalMaterial({
-        color: new THREE.Color('#5b7fa6'),
-        transparent: true,
-        opacity: 0.42,
-        roughness: 0.18,
-        metalness: 0,
-        transmission: 0.45,
-        thickness: 0.12,
-        ior: 1.33,
-        clearcoat: 0.5,
-        clearcoatRoughness: 0.25,
-        envMapIntensity: 0.5,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      }),
-    []
-  );
+  const tankWaterMaterial = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color('#5b7fa6'),
+      transparent: true,
+      opacity: 0.42,
+      roughness: 0.18,
+      metalness: 0,
+      transmission: 0.45,
+      thickness: 0.12,
+      ior: 1.33,
+      clearcoat: 0.5,
+      clearcoatRoughness: 0.25,
+        // As with the jet: authored at 0.5 while the factor was inert, so the validated look
+        // is the one at 1.0. See the note on the jet material.
+        envMapIntensity: 1.0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    // The same optics as the jet, expressed in the tank's own geometry.
+    //
+    // A standing body of water reads differently from a falling one, and the two cues that
+    // carry it are both spatial: it gets darker with depth, and it darkens where it meets
+    // the glass. Neither is available to a uniform translucent cylinder, which is why the
+    // filled tank looked like a coloured sleeve rather than a volume.
+    //
+    // This changes appearance only. The level, the fill and drain rates, the threshold that
+    // starts it filling and the geometry itself are all untouched — see `lib/tankWater.ts`,
+    // whose numbers are measured off the recording and asserted in tests.
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTankHeight = tankHeightUniform.current;
+      shader.uniforms.uTankRadius = tankRadiusUniform.current;
+
+      shader.vertexShader =
+        'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           // Object space, before the per-frame y scale that raises the level — so "how far
+           // below the surface" does not change meaning as the tank fills.
+           vLocal = position;
+           vTankWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+           vTankWNorm = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+      shader.fragmentShader =
+        'uniform float uTankHeight;\nuniform float uTankRadius;\n' +
+        'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
+        shader.fragmentShader.replace(
+          '#include <opaque_fragment>',
+          `#include <opaque_fragment>
+           {
+             vec3 V = normalize(cameraPosition - vTankWPos);
+             vec3 N = normalize(vTankWNorm);
+             float cosView = abs(dot(N, V));
+
+             // Fresnel, as on the jet: near-transparent looking down into the tank,
+             // reflective looking along the surface.
+             float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
+
+             // Depth below the free surface. The geometry is built with its origin at the
+             // floor and a height of the full interior, so this is 0 at the top of the
+             // body and 1 at the tank floor regardless of how full it is.
+             float below = clamp(1.0 - vLocal.y / max(uTankHeight, 1e-5), 0.0, 1.0);
+             float depth = 1.0 - exp(-below * 1.6);
+             vec3 deep = vec3(0.180, 0.271, 0.376);
+             gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, depth * 0.42);
+             gl_FragColor.a = clamp(gl_FragColor.a + depth * 0.16, 0.0, 0.92);
+
+             // Contact darkening against the glass wall and the tank floor. Light entering
+             // the meniscus is trapped between water and glass instead of leaving, and the
+             // reference shows a clear dark ring where the body meets the cylinder.
+             float radial = length(vLocal.xz) / max(uTankRadius, 1e-5);
+             float wall = smoothstep(0.86, 1.0, radial);
+             float floorContact = smoothstep(0.06, 0.0, vLocal.y / max(uTankHeight, 1e-5));
+             gl_FragColor.rgb *= 1.0 - clamp(wall * 0.20 + floorContact * 0.16, 0.0, 0.40);
+
+             // A restrained bright line where the free surface turns away from the eye —
+             // the one genuinely bright feature the filled tank shows in the recording.
+             float surface = smoothstep(0.94, 1.0, vLocal.y / max(uTankHeight, 1e-5));
+             float rim = fresnel * (0.20 + 0.55 * surface);
+             gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.72, 0.79, 0.89),
+                                    clamp(rim, 0.0, 0.34));
+             gl_FragColor.a = clamp(gl_FragColor.a + rim * 0.26, 0.0, 0.94);
+           }`
+        );
+    };
+    return mat;
+  }, [tankHeightUniform, tankRadiusUniform]);
 
   /**
    * Each jet shape's own offset and height, measured off a detached clone.
@@ -1726,7 +1890,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * `import.meta.env.DEV` is compiled to `false` by `vite build`, so this is dead code the
    * bundler drops; `tests/unit/bundle.spec.ts` asserts `__bedoTest` is absent from `dist/`.
    */
-  const gl = useThree((three) => three.gl);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const project = (local: THREE.Vector3 | null) => {
@@ -2566,7 +2729,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       tankWater.visible = tankLevel.current > 0.002;
       tankWater.scale.set(1, Math.max(tankLevel.current, 1e-4), 1);
       tankWater.position.set(tankInterior.axis.x, tankInterior.floorY, tankInterior.axis.y);
-      void height;
+      // The optics need the interior's own dimensions to know what "deep" and "against the
+      // glass" mean. Measured, not assumed — see `measureTankInterior`.
+      tankHeightUniform.current.value = height;
+      tankRadiusUniform.current.value = tankInterior.radius;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
