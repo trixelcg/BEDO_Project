@@ -310,7 +310,37 @@ const posts = await at('hydrolic_bensh_posts');
 const bench = await at('Bing_Sink');
 const add = (c, d) => [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
 
-const VIEWS = [
+/**
+ * Stage C's own set, selected with `--glass`.
+ *
+ * The tank is the subject here rather than one object among many, so it gets its own
+ * sequence instead of borrowing the review set's. Two things make it a fair test of the
+ * glass and only the glass: the empty shots are taken *before* the pump is ever engaged, so
+ * nothing has been added to the vessel to flatter it; and the filled shots are the same two
+ * cameras, so the pair differs by water and by nothing else.
+ *
+ * The review set above is left exactly as it is. Its fourteen signatures are the approved
+ * Stage A.1 / B.1 baselines, and inserting a view anywhere in it would shift virtual time
+ * for every shot after the insertion — which would move the water's ripple phase and
+ * invalidate the comparison this stage is judged against.
+ */
+const GLASS_VIEWS = [
+  // Face-on. The question this frame answers is whether the *front* wall reads as a
+  // surface at all: face-on is where Fresnel is weakest and a glass that relies on
+  // reflection alone disappears.
+  ['C1-glass-empty-front', add(tank, [-1.15, 0.05, 0]), tank, 30],
+  // Three-quarter, which is where a cylinder shows what it is: both silhouette edges are
+  // at grazing incidence in the same frame as the face-on centre, so curvature, rim and
+  // wall thickness are all legible at once.
+  ['C2-glass-empty-3q', add(tank, [-0.8, 0.28, 0.8]), tank, 30],
+  ['C3-glass-water-front', add(tank, [-1.15, 0.05, 0]), tank, 30, true],
+  ['C4-glass-water-3q', add(tank, [-0.8, 0.28, 0.8]), tank, 30],
+  // The tank at working distance, to check that none of this reads as a trick up close and
+  // a smear at the distance a learner actually sits.
+  ['C5-hero', add(tank, [-1.15, 0.5, 0.8]), add(tank, [0, -0.18, 0]), 38],
+];
+
+const REVIEW_VIEWS = [
   ['1-laboratory', add(tank, [-4.2, 1.5, 2.2]), add(tank, [0, -0.3, 0]), 45],
   ['2-apparatus', add(tank, [-1.5, 0.55, 0.85]), add(tank, [0, -0.05, 0]), 40],
   ['3-glass-tank', add(tank, [-0.75, 0.2, 0.42]), tank, 38],
@@ -368,10 +398,14 @@ const VIEWS = [
   ['14-white-bench', add(bench, [-0.9, 0.38, 0.52]), bench, 40],
 ];
 
+const VIEWS = process.argv.includes('--glass') ? GLASS_VIEWS : REVIEW_VIEWS;
+
 const hashes = {};
 const signatures = {};
-for (const [name, pos, atPoint, fov] of VIEWS) {
-  if (name === '4-water-active') {
+let waterEngaged = false;
+for (const [name, pos, atPoint, fov, startsWater] of VIEWS) {
+  if (name === '4-water-active' || (startsWater && !waterEngaged)) {
+    waterEngaged = true;
     // Engage both controls with the clock still frozen, so the jet starts from a known
     // frame rather than from wherever React happened to land.
     const on = await press(/Turn On Pump/i, 0);

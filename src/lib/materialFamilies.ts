@@ -196,6 +196,37 @@ export const DIELECTRIC_SPECULAR = 1.0;
 export const MAX_SPECULAR_COLOUR = 1.0;
 
 /**
+ * How much environment glass reflects — the same 2.0 the rest of the apparatus receives.
+ *
+ * It was pinned at 1.0, and the note said why: the factor had been inert, glass had been
+ * receiving the environment at 1.0 all along, and making it live must not quietly retune an
+ * appearance that had been signed off. That was a preservation decision, not a physical one,
+ * and it is the reason the tank has no rim.
+ *
+ * The physics is the argument already made for `APPARATUS_ENV`: the probe photographs the
+ * room *flat-lit at unity*, so it holds the room's albedo rather than its radiance, and a
+ * surface reflecting it therefore shows a room dimmer than the one it stands in. That
+ * argument is *strongest* for glass. A painted panel reflects a few percent of the
+ * environment and the shortfall is invisible; a glass cylinder at grazing incidence
+ * reflects essentially all of it, so the same shortfall is the whole of what is missing.
+ *
+ * Measured on the tank's silhouette, against a render of the same frame with the tank
+ * hidden — which isolates the glass's own contribution from the background behind it:
+ *
+ *   | glass `envMapIntensity` | rim gain | rim band |
+ *   |---|---|---|
+ *   | 1.0 | +4.5 | 2 px |
+ *   | **2.0** | **+17.5** | **11 px** |
+ *   | 3.0 | +26.4 | 15 px |
+ *   | 4.0 | +32.1 | 16 px |
+ *
+ * 2.0 rather than the 3.0 or 4.0 that read brighter still, because 2.0 is the level every
+ * other unbaked surface in this scene already receives and needs no separate justification.
+ * Above it, glass would be reflecting a brighter room than the apparatus standing in it.
+ */
+export const GLASS_ENV = APPARATUS_ENV;
+
+/**
  * The dimmest reflectance a real conductor can have, in linear light.
  *
  * `MIN_CONDUCTOR_LUMINANCE` below decides whether something *is* a conductor. This decides
@@ -243,7 +274,7 @@ export const FAMILY_RESPONSE: Record<MaterialFamily, FamilyResponse> = {
     specularIntensity: DIELECTRIC_SPECULAR,
   },
   // Never metallic. Transmission and IOR carry the look; see `applyGlass`.
-  glass: { metalness: 0.0, roughness: { min: 0.0, max: 0.1 }, envMapIntensity: 1.0 },
+  glass: { metalness: 0.0, roughness: { min: 0.0, max: 0.1 }, envMapIntensity: GLASS_ENV },
   // Walls, floor, bench surfaces — all baked, all insulators.
   //
   // No band: these are the only materials in the model carrying a roughness *map*, so their
@@ -667,6 +698,68 @@ export interface GlassTuning {
   specularIntensity?: number;
 }
 
+/**
+ * ## The tank is authored as a standard material, and what that costs
+ *
+ * `Galss_Material` — the cylinder `JET_Force_2_205` and the base ring `Line010` — is the
+ * only glass in this model authored with **no material extensions at all**. No
+ * `KHR_materials_transmission`, no `KHR_materials_ior`, and no `KHR_materials_specular`
+ * either, so unlike almost everything else in Stage B it inherits no bad specular value to
+ * correct. What it inherits instead is a *type*: with no transmission extension the loader
+ * builds a `MeshStandardMaterial`, whose only route to transparency is `opacity`, and the
+ * GLB duly sets `baseColorFactor` alpha to 0.10 with a base colour of
+ * [0.499, 0.652, 0.801] — a blue filter.
+ *
+ * Two consequences, and only one of them is fixable here.
+ *
+ * **The tint is.** Glass is not blue, and a clear vessel's colour is the glass itself, so
+ * `applyGlass` sets the base colour neutral — the same correction Stage B made for
+ * conductors carrying a cast in their maps.
+ *
+ * **The attenuated reflection is not.** Alpha blending multiplies the entire shaded result
+ * — the environment reflection included — by the opacity, so at 0.10 the Fresnel term
+ * arrives at a tenth of its strength. The mechanism that fixes that is `transmission`,
+ * which takes light out of the diffuse path and leaves the specular alone; it needs a
+ * `MeshPhysicalMaterial`, and rebuilding the tank as one does work — measured, the rim gain
+ * goes from −14.9 to +17.5 and the face-on veil from −15.2 to +4.0.
+ *
+ * It is **not enabled**, and the reason is a rendering artifact rather than a material one.
+ * With transmission on, a black stippled band appears where the tank's bottom rim meets the
+ * collar. It was isolated to three's transmission resolve: hide the neighbouring opaque
+ * geometry and it is clean, clone the same tank into empty space and it is clean, and it
+ * scales with `transmissionResolutionScale` — 4.27% of the crop at 1.0, 1.99% at 3.0, never
+ * zero. It is independent of shadows, depth writing, render order, `polygonOffset`,
+ * `thickness` and `side`. So it is the renderer sampling a displaced UV across a
+ * high-contrast silhouette in a limited-resolution buffer, triggered by geometry that sits
+ * immediately behind the glass — and neither half is ours to change while the GLB is frozen.
+ *
+ * ## Whether it can be had another way — checked, and no
+ *
+ * three r184 exposes exactly **one** public control over that pass,
+ * `renderer.transmissionResolutionScale`. Everything else is fixed where the target is
+ * constructed: MSAA at `max(4, capabilities.samples)`, `resolveDepthBuffer: false`,
+ * half-float, mipmapped, working colour space, and tone mapping forced off for the duration.
+ * There is no per-object exclusion hook — the pass calls `renderObjects(opaqueObjects, …)`
+ * with no filter — so the collar cannot be kept out of the buffer that the glass samples
+ * without hiding it per frame around the render call, which is a custom rendering
+ * architecture and out of scope.
+ *
+ * drei's `MeshTransmissionMaterial` is a genuinely different acquisition path — its own FBO
+ * plus a full `gl.render(scene, camera)` every frame — but not a different *sampling* path,
+ * and its buffer holds the whole scene minus the parent mesh. That is a superset of what
+ * three's pass holds, so the collar silhouette that triggers the artifact is still in it.
+ * The extra scene render was measured in this scene at **+3.6 ms p50, +43%** — 8.4 ms to
+ * 12.0 ms — and a walled tube would want its `backside` buffer too, making that two.
+ *
+ * And the artifact does not fall away with resolution. Near-black pixels across the rim
+ * crop measure 8.9% at device pixel ratio 1.0, 6.7% at 1.25, 5.3% at 1.5 and 3.9% at 2.0,
+ * against a scene floor of 0.55% — still a plainly visible broken black outline at every
+ * ratio a desktop actually runs, and this app renders at whatever `devicePixelRatio` gives,
+ * which on an ordinary external monitor is 1.0, the worst case.
+ *
+ * What is kept is everything that carries no artifact: the neutral colour, and the glass
+ * environment response at `GLASS_ENV`.
+ */
 export function applyGlass(material: THREE.Material, tuning: GlassTuning = {}): void {
   const physical = material as THREE.MeshPhysicalMaterial;
   // Not every glass in this model was exported as a physical material — `Galss_Material` is
@@ -679,6 +772,10 @@ export function applyGlass(material: THREE.Material, tuning: GlassTuning = {}): 
     if (standard.isMeshStandardMaterial) {
       standard.metalness = 0;
       standard.roughness = tuning.roughness ?? 0.05;
+      // Neutral. The tank is authored as a blue filter — [0.499, 0.652, 0.801] — and a clear
+      // vessel has no colour of its own to impose on the room behind it. Alpha is left
+      // exactly as authored; only the hue is corrected.
+      standard.color.setRGB(1, 1, 1);
       standard.envMapIntensity = FAMILY_RESPONSE.glass.envMapIntensity * (tuning.envScale ?? 1);
       standard.needsUpdate = true;
     }
