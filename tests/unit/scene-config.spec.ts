@@ -110,7 +110,10 @@ describe('tank cover glass', () => {
 });
 
 describe('the configuration itself', () => {
-  it('has exactly the thirteen fields the scene consumes', () => {
+  // Seventeen since the window sun landed: the four `sun*` fields replaced a directional
+  // light that was hard-coded in `Scene3D`, which is what put its placement under this pin
+  // along with everything else that decides how the scene looks.
+  it('has exactly the seventeen fields the scene consumes', () => {
     expect(Object.keys(SCENE_CONFIG).sort()).toEqual(
       [
         'ambientColor',
@@ -126,8 +129,22 @@ describe('the configuration itself', () => {
         'hdrRotation',
         'reflection',
         'selfIllumination',
+        'sunAzimuth',
+        'sunColor',
+        'sunElevation',
+        'sunIntensity',
       ].sort()
     );
+  });
+
+  // The approved Stage A.1 sun. Azimuth and elevation place the beam, and the intensity is
+  // paired with `BAKED_ROOM_ENV` in `materialFamilies.ts` — the bake supplies the fill, the
+  // sun supplies the direction, and moving either alone unbalances the pair.
+  it('keeps the window sun where it was approved', () => {
+    expect(SCENE_CONFIG.sunAzimuth).toBe(40);
+    expect(SCENE_CONFIG.sunElevation).toBe(32);
+    expect(SCENE_CONFIG.sunIntensity).toBe(2.4);
+    expect(SCENE_CONFIG.sunColor).toBe('#fff4e6');
   });
 
   it('is frozen, so nothing can restyle the scene at runtime', () => {

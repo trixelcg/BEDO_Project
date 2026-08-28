@@ -58,6 +58,24 @@ export interface SceneConfig {
   glassRoughness: number;
   /** Tank cover glass: index of refraction. Water is 1.33; this is the acrylic lid. */
   glassIor: number;
+
+  /**
+   * The sun, as it comes through the laboratory window.
+   *
+   * Azimuth is degrees about Y measured from +X, elevation is degrees above the horizon.
+   * The window is the aperture in the wall mass that occupies x -10.6..-0.1, so the sun sits
+   * outside that wall and shines inward: the wall itself is the shadow mask and the window
+   * opening is what shapes the beam. That is why the room needs a single strong source
+   * rather than several corrective ones — the architecture does the shaping.
+   *
+   * Derived from the reference render: the sunlit floor patch falls to the +Z side of the
+   * apparatus with the window mullions crossing it, which puts the sun low enough to throw a
+   * long beam into the room and off to one side rather than straight down it.
+   */
+  sunAzimuth: number;
+  sunElevation: number;
+  sunIntensity: number;
+  sunColor: string;
 }
 
 /**
@@ -65,6 +83,13 @@ export interface SceneConfig {
  * that differs from the one in this file.
  */
 export const SCENE_CONFIG: Readonly<SceneConfig> = Object.freeze({
+  sunAzimuth: 40,
+  sunElevation: 32,
+  sunIntensity: 2.4,
+  // Daylight, very slightly warm. Sunlight is not white, but it is not orange either; the
+  // fills this replaces were #f58220 and had no physical basis at all.
+  sunColor: '#fff4e6',
+
   // 1.3, not 1.0. The environment is now the laboratory's own baked surfaces rather than a
   // 4k outdoor panorama, and a room is a far dimmer thing to stand in than an open field —
   // the scene lost about 15% of its luminance the moment the lighting became correct. This

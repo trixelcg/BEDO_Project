@@ -171,6 +171,71 @@ const RoomLighting: React.FC<{
   return null;
 };
 
+/**
+ * The sun, entering through the window.
+ *
+ * ## Why a single source
+ *
+ * The key light used to sit at `[5, 8, 5]` — outside the wall *opposite* the window, aimed
+ * back through the room. It lit the apparatus adequately and produced no architecture at all:
+ * no beam, no window shadow, nothing on the floor. Measured against the approved reference
+ * render, the scene was missing both ends of the tonal range — the darkest 5% of the frame sat
+ * at 57/255 where the reference reaches 23, and the brightest 5% stopped at 178 where the
+ * reference reaches 216.
+ *
+ * Both ends come from the same missing thing, so both are fixed by the same addition rather
+ * than by two corrective lights: one strong directional source placed *outside the window*.
+ * The wall mass then does the work. It occludes the sun everywhere except the aperture, so the
+ * beam, the mullion bars across the floor and the deep shade in the protected parts of the
+ * room are all consequences of the room's own geometry rather than of anything painted in.
+ *
+ * ## Placement
+ *
+ * Azimuth and elevation come from `sceneConfig`, and the light is stood off far enough to sit
+ * outside the building shell before being aimed at the apparatus. A directional light has no
+ * position in the shading maths — only a direction — but the position still decides where its
+ * shadow frustum sits, which is why the stand-off matters.
+ */
+const SUN_DISTANCE = 26;
+
+const WindowSun: React.FC<{ config: SceneConfig }> = ({ config }) => {
+  const light = useRef<THREE.DirectionalLight>(null);
+
+  const position = useMemo(() => {
+    const azimuth = (config.sunAzimuth * Math.PI) / 180;
+    const elevation = (config.sunElevation * Math.PI) / 180;
+    // Negative X: outside the wall the window is cut into.
+    const horizontal = Math.cos(elevation) * SUN_DISTANCE;
+    return new THREE.Vector3(
+      -Math.cos(azimuth) * horizontal,
+      Math.sin(elevation) * SUN_DISTANCE,
+      Math.sin(azimuth) * horizontal
+    );
+  }, [config.sunAzimuth, config.sunElevation]);
+
+  // The frustum covers the room, not the apparatus. The old one was 3.2 units across, which
+  // is the bench and nothing else — a floor shadow could not have been drawn even if the
+  // light had been in the right place.
+  return (
+    <directionalLight
+      ref={light}
+      position={position}
+      intensity={config.sunIntensity * config.contrast}
+      color={config.sunColor}
+      castShadow
+      shadow-mapSize={[4096, 4096]}
+      shadow-bias={-0.0004}
+      shadow-normalBias={0.035}
+      shadow-camera-left={-14}
+      shadow-camera-right={14}
+      shadow-camera-top={14}
+      shadow-camera-bottom={-14}
+      shadow-camera-near={1}
+      shadow-camera-far={60}
+    />
+  );
+};
+
 const RendererController: React.FC<{ config: SceneConfig }> = ({ config }) => {
   const { gl } = useThree();
   useEffect(() => {
@@ -574,20 +639,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           color={sceneConfig.ambientColor}
         />
 
-        <directionalLight
-          position={[5, 8, 5]}
-          intensity={0.8 * sceneConfig.contrast}
-          castShadow
-          shadow-mapSize={[2048, 2048]}
-          shadow-bias={-0.0002}
-          shadow-normalBias={0.02}
-          shadow-camera-left={-1.6}
-          shadow-camera-right={1.6}
-          shadow-camera-top={1.6}
-          shadow-camera-bottom={-1.6}
-          shadow-camera-near={4}
-          shadow-camera-far={18}
-        />
+        <WindowSun config={sceneConfig} />
 
         {/*
           Grounding. Kept, and tightened: the old 6-unit scale spread the same shadow budget

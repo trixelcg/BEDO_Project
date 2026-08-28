@@ -62,7 +62,12 @@ import {
   plumeScale,
 } from '../lib/waterJet';
 import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
-import { applyFamily, applyGlass, classifyMaterial } from '../lib/materialFamilies';
+import {
+  applyFamily,
+  applyGlass,
+  classifyMaterial,
+  neutraliseConductorTint,
+} from '../lib/materialFamilies';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
@@ -486,12 +491,34 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ...WEIGHTS.filter((w) => w.mesh).map((w) => gltfName(w.mesh!)),
     ]);
 
+    // The room casts too, and that is the whole mechanism behind the window light.
+    //
+    // The sun sits outside the building. Without the shell in the caster set it simply passes
+    // through the walls and lights every surface equally, which is what the scene looked like
+    // before: no beam, no mullion bars, no protected shade. With the shell casting, the wall
+    // occludes the sun everywhere except the aperture and the architecture shapes the light by
+    // itself — nothing has to be painted in.
+    //
+    // Still selective, not a blanket pass. These are the surfaces that bound the room or sit
+    // in the window's path; the other ~170 meshes are small parts inside the apparatus whose
+    // self-shadowing the key light already handles.
+    const roomShadow = (name: string) =>
+      /^(Walls_1st_Level|WALLS_INTERNAL_PARTITIONING|window_frame_|ALuminum_Frame|Floor_1st_Floor|Skirting_1st_Floor|White_Board_|Desks)/.test(
+        name
+      );
+    // The floor is the surface the beam actually lands on, so it receives and never casts —
+    // a ground plane casting into its own shadow map only costs texels and acne.
+    const floorName = 'Plane001_Baked';
+
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
 
-      child.castShadow = casters.has(child.name);
-      // The bench top and the tray receive; the room does not need to.
-      child.receiveShadow = casters.has(child.name) || child.name === gltfName(MESH.tank);
+      child.castShadow = casters.has(child.name) || roomShadow(child.name);
+      child.receiveShadow =
+        casters.has(child.name) ||
+        child.name === gltfName(MESH.tank) ||
+        child.name === floorName ||
+        roomShadow(child.name);
 
       for (const material of Array.isArray(child.material) ? child.material : [child.material]) {
         if (!material) continue;
@@ -518,6 +545,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         } else {
           applyFamily(material, family, reflection);
         }
+        // A conductor's base colour is the colour of its reflection, so a map with a cast
+        // in it tints every highlight the surface makes. See `neutraliseConductorTint`.
+        if (family === 'exposedMetal') neutraliseConductorTint(material);
       }
 
       child.visible = child.name !== liquidName && !mounted.has(child.name);

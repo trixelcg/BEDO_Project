@@ -302,6 +302,12 @@ await press('Free Mode');
 const rod = await at('deflector_rod');
 const panel = await at('Power_Switch');
 const weights = await at('Weight_500');
+// Anchors for the Stage B material crops. Each close-up is placed relative to the surface
+// it is judging rather than to the tank, so a crop named `13-black-frame` keeps filling
+// itself with black frame however the apparatus is transformed.
+const plate = await at('BENCH_GROUND');
+const posts = await at('hydrolic_bensh_posts');
+const bench = await at('Bing_Sink');
 const add = (c, d) => [c[0] + d[0], c[1] + d[1], c[2] + d[2]];
 
 const VIEWS = [
@@ -313,6 +319,53 @@ const VIEWS = [
   ['6-weights', add(weights, [-0.42, 0.3, 0.24]), weights, 35],
   ['7-deflector', add(rod, [-0.34, 0.12, 0.2]), rod, 32],
   ['8-environment', add(tank, [-2.6, 1.1, -2.4]), add(tank, [0, 0.4, -1.6]), 50],
+  // A framing matched to the approved reference render.
+  //
+  // Checked against the derived room geometry rather than placed by eye. The window wall's
+  // inward normal is (0.766, 0, -0.643) and its plane is `n . p = -5.245`, so a camera with a
+  // smaller dot product is standing *outside* the glazing — which is where the first attempt
+  // at this view ended up, looking at a wall of sky. This one sits 0.75 inside the glazing at
+  // eye level, which puts the window on the left and the instruction board on the right as
+  // the reference has them.
+  //
+  // The reference's own viewpoint is not reachable: it looks from a position that falls
+  // outside the +X partition at `n . p = -2.817`, so this is the closest composition the
+  // room actually allows.
+  ['9-reference-match', add(tank, [-4.3, 0.75, 2.3]), add(tank, [0.05, -0.8, -0.1]), 46],
+  // The window beam itself, which no reference-composition camera can see.
+  //
+  // The sunlit patch lands 1.66 to 6.11 units from the window wall — derived from the sill at
+  // y -0.72 and the head at y 2.17 with the sun at 32 degrees — and both reference-composition
+  // cameras look *across* that band at a grazing angle with the bench in the way. This one
+  // faces into it, so the beam, the sill shadow and the mullion bars are all measurable rather
+  // than merely asserted.
+  ['10-window-beam', add(tank, [1.912, 0.36, 2.713]), add(tank, [-0.018, -0.89, 0.413]), 50],
+
+  // --- Stage B material crops ---------------------------------------------------------
+  //
+  // Five surfaces carry the material work, and a full-scene view cannot settle any of them:
+  // at apparatus framing the checker plate is a hundred pixels of grey and the powder-coated
+  // legs are a silhouette. These are the frames the material judgement is actually made on.
+
+  // Open floor on the +Z side, away from the bench, looking down the sunlit gradient. The
+  // floor is a single plane at y -1.8 spanning 37 x 24 units, so the only thing that makes
+  // one patch of it worth photographing is where the window light falls: this looks into the
+  // lit band rather than across it, with shaded floor in the same frame for comparison.
+  ['11-floor', add(tank, [2.2, -0.5, 3.4]), add(tank, [0.4, -2.19, 1.9]), 42],
+
+  // The bench's tread plate, from the front at a shallow angle. Shallow deliberately — a
+  // checker plate seen face-on shows its pattern but almost none of its specular behaviour,
+  // and the question here is whether it reads as steel, which is a question about grazing
+  // reflection.
+  ['12-checker-plate', add(plate, [-0.85, 0.5, 0.5]), plate, 34],
+
+  // The powder-coated legs and frame, filling the frame top to bottom so the tonal range
+  // being judged is the coating's own rather than the room's.
+  ['13-black-frame', add(posts, [-1.05, -0.3, 0.62]), add(posts, [0, -0.45, 0]), 34],
+
+  // The white bench mass and sink surround, across a large enough span to show whether the
+  // paint carries a gradient or reads as one flat value.
+  ['14-white-bench', add(bench, [-0.9, 0.38, 0.52]), bench, 40],
 ];
 
 const hashes = {};
