@@ -371,6 +371,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   // measured after the model loads, which is later than the material is created.
   const tankHeightUniform = useRef({ value: 1 });
   const tankRadiusUniform = useRef({ value: 1 });
+  // How full the tank is, and how hard water is arriving. Both are *read* from the fill
+  // simulation, never written to it — the level is the same number that already drives the
+  // mesh scale, and the inflow the same one that already picks the target level. The
+  // surface optics need them to know real depth from fractional depth, and calm from
+  // agitated. See the free-surface block in `tankWaterMaterial`.
+  const tankLevelUniform = useRef({ value: 0 });
+  const tankInflowUniform = useRef({ value: 0 });
   const tankWaterRef = useRef<THREE.Mesh>(null);
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
@@ -663,26 +670,60 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // clearcoat instead of a hard one. Opacity is high enough to read and low enough that
     // the apparatus still shows through, as it does in the video.
     const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color('#6d84a6'),
+      // rgb(58, 79, 108). The authored #6d84a6 is rgb(109, 132, 166) — already lighter
+      // than the rgb(83, 90, 111) core the comment above sets as the target, before the
+      // tone curve lifts it further. This is the value that arrives near the target once
+      // ACES at exposure 1.3 and the room's environment have had their say.
+      color: new THREE.Color('#3a4f6c'),
       transparent: true,
       opacity: 0.86,
       roughness: 0.22,
       metalness: 0.0,
-      transmission: 0.12,
-      thickness: 0.22,
+      // No transmission, deliberately.
+      //
+      // `transmission` routes this material through three's transmission resolve — the same
+      // subsystem that forced Stage C-safe on the glass. Inside that now-approved glass it
+      // rendered the geometry behind the water as hard-edged axis-aligned blocks, worst
+      // across the tank floor and around the nozzle. Measured by rendering the identical
+      // frame with it on and off: the blocks disappear completely, the rod behind the water
+      // reads *better* rather than worse, and the frame gives back 79 draw calls and 31,428
+      // triangles that the pass was spending to re-render every opaque object.
+      //
+      // Nothing in `Bedo_Mesu_J.mp4` asks for it either. The reference water is a coloured
+      // translucent body with a strong surface, not a refractive one — it displaces nothing
+      // behind it. The translucency it was providing is carried by `opacity` and by the
+      // depth shader below, which is where it can be controlled.
+      //
+      // `thickness` and `attenuation*` are gone with it: three applies both only through the
+      // transmission path, so they were inert the moment this reached 0. `ior` stays — it
+      // still sets the dielectric F0.
       ior: 1.33, // water
-      attenuationColor: new THREE.Color('#3f5877'),
-      attenuationDistance: 0.4,
-      clearcoat: 0.35,
+      // Both cut hard, because together they were turning blue water white.
+      //
+      // Measured against the recording: its jet is *darker* than what surrounds it
+      // (luminance 63.5 against 78.3) and strongly blue (saturation 0.335, blue bias
+      // +42%). The shipped splash was the opposite on every count — brighter than its
+      // surround (172.5 against 148.2) and achromatic, saturation 0.006, blue bias +0.4%.
+      // A body colour of #6d84a6 cannot produce that on its own, so the blue was being
+      // buried rather than missing.
+      //
+      // The mechanism is additive and doubled. At opacity 0.86 the body is nearly opaque,
+      // and `DoubleSide` with `depthWrite: false` lets the front and the back face of the
+      // same shape each lay down a broad `clearcoat` lobe plus a `specularIntensity` one,
+      // neither of which is tinted by the body colour. Two stacked achromatic sheets over
+      // a nearly opaque base is white, whatever is underneath.
+      clearcoat: 0.08,
       clearcoatRoughness: 0.30,
-      specularIntensity: 0.55,
-      // 1.0, and deliberately so. This was written as 0.45 while `envMapIntensity` was inert
-      // — three ignores it unless the material owns an `envMap` — so the water that was
-      // measured against `Bedo_Mesu_J.mp4` and signed off was in fact receiving the
-      // environment at 1.0. Now that the factor is live, holding the authored 0.45 would
-      // silently retune an appearance that was already validated. The restraint the original
-      // value was reaching for is carried by `transmission` and `specularIntensity` instead.
-      envMapIntensity: 1.0,
+      specularIntensity: 0.18,
+      // Back to the 0.45 this was originally authored at.
+      //
+      // The reasoning for holding 1.0 was that the appearance at 1.0 had been validated, so
+      // dropping to 0.45 would silently retune something already signed off. Stage D's
+      // measurements retire that argument: the appearance at 1.0 is the one that renders
+      // the splash at saturation 0.006 against the recording's 0.335, so it is not an
+      // appearance worth preserving. The room probe holds albedo at unity and the jet is a
+      // thin body — at full strength the environment simply overwhelms its own colour.
+      envMapIntensity: 0.45,
       emissive: new THREE.Color('#16324f'),
       emissiveIntensity: 0.18,
       side: THREE.DoubleSide,
@@ -801,8 +842,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // attenuation colour. Beer-Lambert in shape, not in units — there is no
                // physical path length to integrate on a hollow authored silhouette.
                float depth = 1.0 - exp(-vRise * 1.15);
-               vec3 deep = vec3(0.247, 0.345, 0.467);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, depth * 0.30);
+               // Linear and pre-tone-map. The previous value was authored as though it
+               // were a display colour: vec3(0.247, 0.345, 0.467) renders near luminance
+               // 205 after ACES at exposure 1.3, so the "depth" term was *lightening* the
+               // column toward pale blue. Inverting the tone curve for the recording's
+               // core — rgb(60, 68, 92) — lands roughly six times lower, and the mix has
+               // to carry a floor as well as a slope or the near end reads as clear.
+               vec3 deep = vec3(0.039, 0.046, 0.069);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, 0.60 + depth * 0.34);
 
                // 3. Contact darkening. Where the column meets glass or steel the light that
                // would have bounced back out is instead trapped between the two surfaces,
@@ -816,10 +863,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // almost the whole surface was mixed to near-white. Scaled to what the video
                // shows, and now weighted by Fresnel so crests light up at grazing angles
                // and stay quiet face-on, which is what makes a surface read as wet.
-               float glint = smoothstep(0.62, 0.95, hTop * 0.5 + hSide * 0.5) * 0.18;
-               float foam = smoothstep(0.55, 0.92, hSide) * 0.12;
-               float lum = clamp((glint + foam) * (0.55 + 0.75 * fresnel) + edge, 0.0, 0.42);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.72, 0.79, 0.89), lum);
+               // Halved again, and capped harder. In the recording the only genuinely
+               // bright water is a small patch right where the jet strikes the cone; the
+               // column itself carries no white at all. A ceiling of 0.42 mixing toward a
+               // near-white target let most of the splash sheet reach it, which is what
+               // measured as saturation 0.006 against the reference's 0.335.
+               float glint = smoothstep(0.68, 0.96, hTop * 0.5 + hSide * 0.5) * 0.10;
+               float foam = smoothstep(0.62, 0.94, hSide) * 0.07;
+               float lum = clamp((glint + foam) * (0.55 + 0.75 * fresnel) + edge, 0.0, 0.22);
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.60, 0.68, 0.80), lum);
 
                // Grazing edges also go slightly more opaque, so the column keeps a readable
                // silhouette against the dark tank without the body itself thickening.
@@ -875,15 +927,29 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const tankWaterMaterial = useMemo(() => {
     const mat = new THREE.MeshPhysicalMaterial({
-      color: new THREE.Color('#5b7fa6'),
+      // Darker and more saturated than it looks like it should be, because ACES lifts it.
+      // The recording's water reads rgb(103,110,130) just under the surface; a body colour
+      // authored at that value renders far brighter than it, since the tone curve's shoulder
+      // sits under mid-darks. This is the colour that *arrives* at the reference's value.
+      color: new THREE.Color('#38536e'),
       transparent: true,
-      opacity: 0.42,
+      // Solved, not guessed. The recording's water just under the surface composites to
+      // luminance 109.7 over a background this scene renders at about 155; that needs the
+      // body to carry roughly 0.7 of the pixel. At 0.42 the room behind the tank supplied
+      // most of it, which is why the volume measured almost achromatic (saturation 0.04
+      // against the reference's 0.20) however dark the body colour was made.
+      opacity: 0.66,
       roughness: 0.18,
       metalness: 0,
-      transmission: 0.45,
-      thickness: 0.12,
+      // No transmission — see the jet material for the measurement. The tank is where the
+      // block artifact was worst, because it is the largest area of water with high-contrast
+      // apparatus directly behind it.
       ior: 1.33,
-      clearcoat: 0.5,
+      // Was 0.5, which laid a broad achromatic sheet over the whole body and was the main
+      // reason the volume read pale and desaturated near the surface — the same mechanism
+      // that whitens the splash. The free surface now carries its own explicit reflection,
+      // so the body does not need a clearcoat to look wet.
+      clearcoat: 0.12,
       clearcoatRoughness: 0.25,
         // As with the jet: authored at 0.5 while the factor was inert, so the validated look
         // is the one at 1.0. See the note on the jet material.
@@ -905,6 +971,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTankHeight = tankHeightUniform.current;
       shader.uniforms.uTankRadius = tankRadiusUniform.current;
+      shader.uniforms.uTankLevel = tankLevelUniform.current;
+      shader.uniforms.uInflow = tankInflowUniform.current;
+      // The jet's clock, not a second one. It is already `t * (0.6 + valveOpening * 1.6)`,
+      // so the standing water and the falling water stay in step, and the whole system
+      // stays reproducible under the capture harness's virtual clock.
+      shader.uniforms.uTime = waterTime.current;
+      shader.uniforms.uWaterTex = { value: waterTex };
 
       shader.vertexShader =
         'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
@@ -920,6 +993,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
       shader.fragmentShader =
         'uniform float uTankHeight;\nuniform float uTankRadius;\n' +
+        'uniform float uTankLevel;\nuniform float uInflow;\nuniform float uTime;\n' +
+        'uniform sampler2D uWaterTex;\n' +
         'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
         shader.fragmentShader.replace(
           '#include <opaque_fragment>',
@@ -927,41 +1002,133 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
            {
              vec3 V = normalize(cameraPosition - vTankWPos);
              vec3 N = normalize(vTankWNorm);
-             float cosView = abs(dot(N, V));
 
-             // Fresnel, as on the jet: near-transparent looking down into the tank,
-             // reflective looking along the surface.
-             float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
+             // The cylinder's top cap *is* the free surface. Its object normal is the only
+             // one pointing up, which separates it from the wall and the floor without
+             // needing to know the geometry's group order. Back faces keep the object
+             // normal here, so the surface is still the surface seen from underneath.
+             float isSurface = smoothstep(0.80, 0.98, N.y);
 
-             // Depth below the free surface. The geometry is built with its origin at the
-             // floor and a height of the full interior, so this is 0 at the top of the
-             // body and 1 at the tank floor regardless of how full it is.
-             float below = clamp(1.0 - vLocal.y / max(uTankHeight, 1e-5), 0.0, 1.0);
-             float depth = 1.0 - exp(-below * 1.6);
-             vec3 deep = vec3(0.180, 0.271, 0.376);
-             gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, depth * 0.42);
-             gl_FragColor.a = clamp(gl_FragColor.a + depth * 0.16, 0.0, 0.92);
+             // --- Depth (Beer-Lambert) ------------------------------------------------
+             // Real depth, not fractional depth. \`vLocal.y\` spans the full interior
+             // height and the mesh is scaled by the level, so a fragment sits
+             // (uTankHeight - y) * level below the surface. The previous form used the
+             // fraction alone, which made a tank at a tenth full exactly as dark at its
+             // floor as a full one.
+             //
+             // Calibrated against the recording, which over the filled column runs
+             // luminance 109.7 -> 76.0 and saturation 0.204 -> 0.331: light both fades and
+             // *saturates* along the path. The old constants moved luminance a third of
+             // that and moved saturation the wrong way, because at a flat 0.42 alpha the
+             // bright room behind the tank washed the tint back out. Transmittance drives
+             // opacity as well as colour here, which is what stops that happening.
+             float depthWorld = max(uTankHeight - vLocal.y, 0.0) * uTankLevel;
+             float transmit = exp(-depthWorld * 5.4);
+             // Beer-Lambert proper, per channel, rather than a fade toward one "deep"
+             // colour. Water absorbs red fastest and blue slowest, and that difference —
+             // not a darker tint — is what makes a deep column read blue while a shallow
+             // one reads nearly clear. The coefficients are in inverse world units over
+             // this tank's 0.317-unit interior.
+             //
+             // It *replaces* the shaded body rather than tinting it. Measured directly:
+             // with alpha forced to 1.0 the lit body still rendered at luminance 135 near
+             // the surface, about 2.5x its own albedo, because a smooth dielectric under a
+             // 2.4-intensity sun and a room probe is mostly specular. Tinting toward a dark
+             // colour barely moved it — the reference's water is transmitted light, so
+             // transmitted light is what has to drive it. A fifth of the shaded result is
+             // kept so the wall highlights and the grazing rim still live.
+             //
+             // \`shallow\` is linear and pre-tone-map: ACES at exposure 1.3 lifts mid-darks
+             // hard, so the value that *arrives* at the recording's near-surface water is
+             // well below the one it looks like it should be.
+             // The path is not just the depth. A fragment on the near wall has the whole
+             // width of the column behind it, and light reaching the eye crosses that too.
+             // Entering along -V from a point on the wall, the ray leaves the cylinder
+             // after -2*(p . v) — up to the full 0.169-unit diameter at the axis, nothing
+             // at the silhouette. This is why the recording's water is already blue just
+             // under the surface, and darker through the middle than near the glass, and
+             // omitting it left the shallow water reading as almost clear.
+             vec2 travel = normalize(-V.xz + vec2(1e-6, 0.0));
+             float chord = clamp(-2.0 * dot(vLocal.xz, travel), 0.0, 2.0 * uTankRadius);
 
-             // Contact darkening against the glass wall and the tank floor. Light entering
-             // the meniscus is trapped between water and glass instead of leaving, and the
-             // reference shows a clear dark ring where the body meets the cylinder.
+             vec3 shallow = vec3(0.070, 0.092, 0.130);
+             vec3 absorb = exp(-(depthWorld + chord) * vec3(5.5, 3.4, 2.0));
+             gl_FragColor.rgb = mix(shallow * absorb, gl_FragColor.rgb, 0.18);
+             gl_FragColor.a = clamp(mix(0.92, gl_FragColor.a, transmit), 0.0, 0.93);
+
+             // --- Contact darkening ---------------------------------------------------
+             // Light entering the meniscus is trapped between water and glass instead of
+             // leaving. The recording shows this clearly: the base of the column reads
+             // 40.7 luminance below the water just under the surface, and the floor of the
+             // tank is the darkest part of the whole vessel.
              float radial = length(vLocal.xz) / max(uTankRadius, 1e-5);
-             float wall = smoothstep(0.86, 1.0, radial);
-             float floorContact = smoothstep(0.06, 0.0, vLocal.y / max(uTankHeight, 1e-5));
-             gl_FragColor.rgb *= 1.0 - clamp(wall * 0.20 + floorContact * 0.16, 0.0, 0.40);
+             float wall = smoothstep(0.86, 1.0, radial) * (1.0 - isSurface);
+             float floorContact = smoothstep(0.10, 0.0, vLocal.y / max(uTankHeight, 1e-5));
+             gl_FragColor.rgb *= 1.0 - clamp(wall * 0.22 + floorContact * 0.30, 0.0, 0.45);
 
-             // A restrained bright line where the free surface turns away from the eye —
-             // the one genuinely bright feature the filled tank shows in the recording.
-             float surface = smoothstep(0.94, 1.0, vLocal.y / max(uTankHeight, 1e-5));
-             float rim = fresnel * (0.20 + 0.55 * surface);
-             gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.72, 0.79, 0.89),
-                                    clamp(rim, 0.0, 0.34));
-             gl_FragColor.a = clamp(gl_FragColor.a + rim * 0.26, 0.0, 0.94);
+             // --- Free surface --------------------------------------------------------
+             // The strongest cue the reference has and the one production was missing
+             // outright: walking down through the waterline, the recording falls to a
+             // trough and then rebounds +46 luminance into a textured bright band, while
+             // production stepped down 30 and stayed dead flat for 55 rows.
+             //
+             // The band is a reflection of the room, so it is built as one: ripple the
+             // surface normal, then take Fresnel against the rippled normal. A flat sheet
+             // at these viewing angles returns about 5%, far too little; a rippled one
+             // swings roughly 2.4% to 12% across the wave, and that *variation* is what
+             // reads as water rather than as a painted line.
+             //
+             // Both wave trains and the ring term run off the jet's clock, so ripple
+             // speed already follows the valve, and amplitude follows inflow — existing
+             // simulation state in both cases, never a free-running decoration.
+             if (isSurface > 0.001) {
+               vec2 sp = vLocal.xz / max(uTankRadius, 1e-5);
+               float agitation = 0.28 + 0.72 * clamp(uInflow, 0.0, 1.0);
+
+               // The jet's own ripple map, scrolled twice, rather than a sum of sines.
+               // Three sine trains at fixed frequencies in this space beat against each
+               // other into a regular dot lattice, which was plainly visible across the
+               // surface once the tank drained far enough to be seen from above — a tiled
+               // normal map in all but name. The texture is tileable and aperiodic at
+               // these scales, and reusing it keeps the standing water and the falling
+               // water made of the same material.
+               vec2 uvA = sp * 2.6 + vec2(uTime * 0.045, -uTime * 0.030);
+               vec2 uvB = sp * 1.7 + vec2(-uTime * 0.028, uTime * 0.052);
+               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5)
+                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.8;
+               vec3 Nr = normalize(N + vec3(grad.x, 0.0, grad.y) * 0.46 * agitation);
+               float cosR = clamp(dot(Nr, V), 0.0, 1.0);
+               float F = 0.02 + 0.98 * pow(1.0 - cosR, 5.0);
+
+               // The probe holds the room's albedo rather than its radiance — the same
+               // shortfall Stage B.1 compensates elsewhere — so the reflection needs a
+               // gain to reach the reference's rebound. 5.2 is where the band matches;
+               // see docs/48_WATER_RESPONSE.md.
+               vec3 sky = vec3(0.86, 0.90, 0.96);
+               // The reflection is bright, but it must not also make the water opaque.
+               // Seen along the surface — the drained tank is viewed from about 14 degrees
+               // above it — Fresnel alone reaches 0.27, so the mix saturates its ceiling
+               // across the whole cap at once and the alpha it used to add on top turned
+               // that into a white lid you could not see into. The colour still saturates
+               // there, which is correct (water at grazing incidence is a bright sheet),
+               // but a deeper ripple keeps variation inside it, and the opacity gain is
+               // now small enough that the body stays visible through the surface.
+               float spec = isSurface * F * 5.2;
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, clamp(spec, 0.0, 0.40));
+               gl_FragColor.a = clamp(gl_FragColor.a + clamp(spec, 0.0, 0.22), 0.0, 0.96);
+
+               // Where the surface meets the glass it climbs the wall slightly and catches
+               // a thin bright line. Small, but it is what makes the level readable at a
+               // glance rather than merely present.
+               float meniscus = smoothstep(0.90, 1.0, radial) * isSurface;
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, meniscus * 0.30);
+               gl_FragColor.a = clamp(gl_FragColor.a + meniscus * 0.22, 0.0, 0.96);
+             }
            }`
         );
     };
     return mat;
-  }, [tankHeightUniform, tankRadiusUniform]);
+  }, [tankHeightUniform, tankRadiusUniform, tankLevelUniform, tankInflowUniform, waterTime, waterTex]);
 
   /**
    * Each jet shape's own offset and height, measured off a detached clone.
@@ -2763,6 +2930,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // glass" mean. Measured, not assumed — see `measureTankInterior`.
       tankHeightUniform.current.value = height;
       tankRadiusUniform.current.value = tankInterior.radius;
+      // Appearance only, and read-only with respect to the fill: these are the level that
+      // was just applied to the mesh scale and the inflow that was just used to pick the
+      // target. Nothing downstream of them writes back.
+      tankLevelUniform.current.value = Math.max(tankLevel.current, 1e-4);
+      tankInflowUniform.current.value = inflow;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------

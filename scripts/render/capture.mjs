@@ -340,6 +340,43 @@ const GLASS_VIEWS = [
   ['C5-hero', add(tank, [-1.15, 0.5, 0.8]), add(tank, [0, -0.18, 0]), 38],
 ];
 
+/**
+ * Stage D's water set, selected with `--water`.
+ *
+ * The two flow states are the lesson's own setpoints, not invented ones: `ROW_VALVE_SETTINGS`
+ * puts the first reading at n = 0.40 and the second at n = 0.50, and `flowRateLMin` turns
+ * those into 0.131 and 0.225 of pump capacity — which straddle the 0.178 the tank needs
+ * before it accumulates anything. So low flow leaves the tank empty and high flow fills it,
+ * exactly as `Bedo_Mesu_J.mp4` shows across 55.5-65.5 s and 72.0-78.4 s.
+ *
+ * The tank's own fill takes `FILL_SECONDS` = 6, so the partial and full states are reached
+ * by advancing virtual time rather than by writing a level: nothing here sets the water
+ * level, the flow, or any physics value. The sequence only presses the controls a learner
+ * would press and then waits.
+ */
+const WATER_VIEWS = [
+  // Low flow, tank empty — the state at t = 60.63 s in the recording.
+  ['W1-jet-lowflow', add(tank, [-0.62, 0.16, 0.42]), add(tank, [0, 0.02, 0]), 30, { valve: 0.4, hold: 240 }],
+  // The impact region, where the column meets the deflector face.
+  ['W2-impact', add(rod, [-0.3, 0.06, 0.2]), add(rod, [0, -0.04, 0]), 28],
+  // High flow. Same framing as W1 so the pair differs by flow and nothing else.
+  ['W3-jet-highflow', add(tank, [-0.62, 0.16, 0.42]), add(tank, [0, 0.02, 0]), 30, { valve: 0.5, hold: 120 }],
+  // Genuinely part-filled. W3 already leaves the level near 0.42, and the 150 frames this
+  // used to hold carried it all the way to 0.90 — so the "partial" view was full, and the
+  // set had no picture of a surface anywhere but at the top of the tank. 45 frames lands
+  // it around two thirds, which is where the level has to be readable at a glance.
+  ['W4-tank-partial', add(tank, [-0.8, 0.28, 0.8]), tank, 30, { hold: 45 }],
+  // Full — the state at t = 74.0 s, surface just under the cover.
+  ['W5-tank-full', add(tank, [-0.8, 0.28, 0.8]), tank, 30, { hold: 270 }],
+  // The free surface itself, which is what makes the level readable at a glance.
+  ['W6-free-surface', add(tank, [-0.5, 0.30, 0.34]), add(tank, [0, 0.17, 0]), 26],
+  ['W7-hero', add(tank, [-1.15, 0.5, 0.8]), add(tank, [0, -0.18, 0]), 38],
+  // Draining. The volumetric valve is the one the tank empties through, and the level has
+  // to fall for the same reason it had to rise — so the set covers the down leg too, and
+  // the free surface gets checked at a level it was not tuned at.
+  ['W8-tank-draining', add(tank, [-0.8, 0.28, 0.8]), tank, 30, { drain: true, hold: 210 }],
+];
+
 const REVIEW_VIEWS = [
   ['1-laboratory', add(tank, [-4.2, 1.5, 2.2]), add(tank, [0, -0.3, 0]), 45],
   ['2-apparatus', add(tank, [-1.5, 0.55, 0.85]), add(tank, [0, -0.05, 0]), 40],
@@ -398,13 +435,48 @@ const REVIEW_VIEWS = [
   ['14-white-bench', add(bench, [-0.9, 0.38, 0.52]), bench, 40],
 ];
 
-const VIEWS = process.argv.includes('--glass') ? GLASS_VIEWS : REVIEW_VIEWS;
+const VIEWS = process.argv.includes('--glass')
+  ? GLASS_VIEWS
+  : process.argv.includes('--water')
+    ? WATER_VIEWS
+    : REVIEW_VIEWS;
 
 const hashes = {};
 const signatures = {};
+const waterState = {};
+/** Set the flow valve the way the learner does, through the control itself. */
+const setValve = async (opening) => {
+  const changed = await page.evaluate((v) => {
+    const input = document.querySelector('.valve-slider-container input[type="range"]');
+    if (!input) return false;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(
+      input,
+      String(v)
+    );
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }, opening);
+  if (!changed) failures.push(`valve control not found when setting ${opening}`);
+  await settleReact();
+};
+
 let waterEngaged = false;
 for (const [name, pos, atPoint, fov, startsWater] of VIEWS) {
-  if (name === '4-water-active' || (startsWater && !waterEngaged)) {
+  // The water set drives the pump and the valve itself, then waits — see `WATER_VIEWS`.
+  if (typeof startsWater === 'object' && startsWater !== null) {
+    if (!waterEngaged) {
+      waterEngaged = true;
+      if (!(await press(/Turn On Pump/i, 0))) failures.push('water set: pump never engaged');
+    }
+    if (startsWater.valve !== undefined) await setValve(startsWater.valve);
+    if (startsWater.drain && !(await press(/Open volumetric valve/i, 0))) {
+      failures.push('water set: volumetric valve never opened');
+    }
+    if (startsWater.hold) await advance(startsWater.hold);
+  } else if (typeof startsWater === 'number') {
+    await advance(startsWater);
+  }
+  if (name === '4-water-active' || (startsWater === true && !waterEngaged)) {
     waterEngaged = true;
     // Engage both controls with the clock still frozen, so the jet starts from a known
     // frame rather than from wherever React happened to land.
@@ -441,6 +513,34 @@ for (const [name, pos, atPoint, fov, startsWater] of VIEWS) {
   const captured = await shot(name);
   hashes[name] = captured.hash;
   signatures[name] = captured.signature;
+
+  // The fill level, read off the live scene rather than inferred from the picture.
+  //
+  // The tank-water mesh is scaled in y by the level and by nothing else, so its scale *is*
+  // the level. Recording it per view turns the water set into a behavioural check as well
+  // as a visual one: a capture that looks right because the tank happens to be full is not
+  // the same as one where the tank filled when it was supposed to, and only this number
+  // tells the two apart.
+  waterState[name] = await page.evaluate(() => {
+    const scene = window.__three.scenes.find((s) => s.getObjectByName('deflector_rod'));
+    let tank = null;
+    let jetMeshes = 0;
+    scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const m = o.material;
+      if (!m || Array.isArray(m) || !m.isMeshPhysicalMaterial) return;
+      if ((m.onBeforeCompile?.toString().length ?? 0) < 200) return;
+      // The tank body is the one whose geometry is a cylinder built by us; the jet shapes
+      // come from the GLBs and carry morph targets.
+      if (o.geometry?.type === 'CylinderGeometry') tank = o;
+      else if (o.visible) jetMeshes++;
+    });
+    return {
+      level: tank ? Number(tank.scale.y.toFixed(4)) : null,
+      tankVisible: tank ? tank.visible : null,
+      jetMeshesVisible: jetMeshes,
+    };
+  });
   console.error('  shot', name);
 }
 
@@ -483,7 +583,7 @@ const runtime = await page.evaluate(() => {
 
 fs.writeFileSync(
   path.join(OUT, 'capture.json'),
-  JSON.stringify({ stepMs: STEP_MS, hashes, signatures, runtime }, null, 2)
+  JSON.stringify({ stepMs: STEP_MS, hashes, signatures, waterState, runtime }, null, 2)
 );
 console.error('runtime:', JSON.stringify(runtime));
 
