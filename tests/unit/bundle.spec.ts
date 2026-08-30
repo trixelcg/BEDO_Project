@@ -70,8 +70,13 @@ describeBuilt('the production bundle', () => {
       expect(source).not.toContain('%PDF');
     }
     const js = bundles().reduce((total, file) => total + statSync(file).size, 0);
+    // Raised once, deliberately, for KTX2: `three`'s KTX2Loader plus its ktx-parse and
+    // zstddec dependencies measure +58,801 B (23.9 KB gzip) and cannot be code-split —
+    // drei's `extendLoader` is synchronous and `KHR_texture_basisu` sits in
+    // `extensionsRequired`, so the loader must be attached before the GLB is parsed.
+    // That buys a 420 MB reduction in GPU texture residency. Headroom is kept tight.
     expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
-      1_300_000
+      1_380_000
     );
   });
 
@@ -137,11 +142,14 @@ describeBuilt('the production bundle', () => {
       expect(shipped, `${gone} is back in dist/`).not.toContain(gone);
     }
 
-    // The whole shipped set, pinned: 12 assets + the shell, one JS chunk, one stylesheet.
+    // The whole shipped set, pinned: 12 assets + the shell, one JS chunk, one stylesheet,
+    // plus the two self-hosted Basis transcoder files KTX2Loader fetches at runtime.
     expect(shipped.sort()).toEqual(
       [
         'Bedo_Mesu_J.mp4',
         'Bedo_baked_v2.glb',
+        'basis/basis_transcoder.js',
+        'basis/basis_transcoder.wasm',
         'WaterShapes/Water120_HemiSphere.glb',
         'WaterShapes/Water135_Conical.glb',
         'WaterShapes/Water180_HemiSphere.glb',

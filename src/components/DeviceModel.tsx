@@ -7,6 +7,8 @@ import React, {
   useState,
 } from 'react';
 import { useGLTF } from '@react-three/drei';
+import { extendWithKTX2, setKTX2Renderer } from '../lib/ktx2';
+
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { LessonView, SimulationView } from '../types/index';
@@ -300,9 +302,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   glassRoughness,
   glassIor,
 }) => {
-  const { scene } = useGLTF('/Bedo_baked_v2.glb') as any;
+  // PERF-04 candidate: `?glb=v3` selects the KHR_texture_basisu build. The KTX2 loader is
+  // attached only here — the eight WaterShapes GLBs carry no textures.
+  const { scene } = useGLTF('/Bedo_baked_v2.glb', true, true, extendWithKTX2) as any;
   /** Declared here because the material pass below needs the GPU's anisotropy limit. */
   const gl = useThree((three) => three.gl);
+  setKTX2Renderer(gl);
 
   // One simulated plume per deflector, plus the startup trickle.
   const water = {
@@ -3210,5 +3215,5 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
 };
 
-useGLTF.preload('/Bedo_baked_v2.glb');
+useGLTF.preload('/Bedo_baked_v2.glb', true, true, extendWithKTX2);
 Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(s.url));

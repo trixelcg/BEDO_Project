@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -112,7 +113,12 @@ describe('the served asset set is closed', () => {
     'answer-sheets/semi.pdf',
     'answer-sheets/conical.pdf',
     'answer-sheets/oblique.pdf',
-  ];
+  // Self-hosted Basis transcoder for KHR_texture_basisu in the apparatus GLB. Kept in the
+  // repository deliberately: KTX2Loader must fetch these at runtime and a CDN would add an
+  // external dependency to first load.
+  'basis/basis_transcoder.js',
+  'basis/basis_transcoder.wasm',
+];
 
   const served = (dir: string, prefix = ''): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
@@ -135,9 +141,28 @@ describe('the served asset set is closed', () => {
     const fromSource = new Set(referenced.map((url) => url.replace(/^\//, '')));
     fromSource.add('favicon.svg'); // referenced by index.html, not by src/
     fromSource.add('answer-sheets/README.txt'); // provenance note, not loaded by the app
+    // KTX2Loader is given the directory (`/basis/`) and appends these filenames itself, so
+    // neither appears literally in src/. They are fetched at runtime for every user.
+    fromSource.add('basis/basis_transcoder.js');
+    fromSource.add('basis/basis_transcoder.wasm');
     for (const asset of PRODUCTION_ASSETS) {
       expect(fromSource.has(asset), `${asset} is served but nothing references it`).toBe(true);
     }
+  });
+
+  it('pins the frozen behavioural fixture, and keeps it out of the served set', () => {
+    // tests/e2e/fixture.ts serves this file in place of the production apparatus GLB for
+    // the behavioural suite, because that suite runs on SwiftShader where compressed
+    // texture sampling is emulated. It must stay byte-identical to the pre-KTX2 production
+    // asset (dc8b4c8) or the functional baseline silently becomes the candidate.
+    const fixture = 'tests/fixtures/Bedo_baked_v2.functional.glb';
+    expect(fileSize(fixture), 'the frozen functional fixture is missing').toBe(11_948_588);
+    expect(
+      createHash('sha256').update(readFileSync(assetPath(fixture))).digest('hex'),
+      'the frozen functional fixture no longer matches the dc8b4c8 production GLB'
+    ).toBe('f1836e3b0af22f9090df2136899b69e77e455b7dd19d9b3aa3ccf2f6cf24d6f4');
+    // It is test-only: it must never be served.
+    expect(served(assetPath('public'))).not.toContain('Bedo_baked_v2.functional.glb');
   });
 
   it('keeps the source assets out of the served directory', () => {

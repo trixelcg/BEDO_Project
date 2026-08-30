@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixture';
 import { button, openApp, popup, pressCover, sidebar, stepBadge, stubApparatusModel } from './helpers';
 
 /**

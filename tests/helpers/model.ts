@@ -5,6 +5,22 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { assetPath } from './glb';
 
 /**
+ * The apparatus GLB declares `KHR_texture_basisu` in `extensionsRequired`, so GLTFLoader
+ * refuses to parse it without a KTX2 loader — even here, where only geometry is read.
+ * These specs never look at pixels (textures already fail to decode in Node and that noise
+ * is suppressed below), so a stub that hands back an empty texture is enough to satisfy the
+ * extension and keeps the parse geometry-faithful.
+ */
+const stubKTX2Loader = () => ({
+  load: (
+    _url: string,
+    onLoad: (t: THREE.Texture) => void
+  ) => {
+    onLoad(new THREE.Texture());
+  },
+});
+
+/**
  * The shipped apparatus, as a real three.js scene graph (BEDO-016).
  *
  * `tests/helpers/glb.ts` reads the file's *structure* — node names, counts — which is what
@@ -52,6 +68,7 @@ export const loadApparatus = async (): Promise<THREE.Group> => {
     };
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.setKTX2Loader(stubKTX2Loader() as never);
     loader.parse(
       buffer as ArrayBuffer,
       '',
@@ -121,6 +138,7 @@ export const loadWater = async (url: string): Promise<THREE.Group> => {
     };
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.setKTX2Loader(stubKTX2Loader() as never);
     loader.parse(
       buffer as ArrayBuffer,
       '',
