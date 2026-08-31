@@ -1,10 +1,22 @@
 import React from 'react';
 import type { Language } from '../types';
 
+/**
+ * Which real milestone the startup has reached.
+ *
+ * These are not decorative stages on a timer — each maps to a readiness marker the
+ * application already publishes. `apparatus` is entered when the shell is mounted
+ * (`app`), and `ready` when the apparatus is in the scene graph (`scene`), which is the
+ * reveal condition. Nothing advances without one of those actually happening.
+ */
+export type LoadingPhase = 'app' | 'apparatus' | 'ready';
+
+const PHASE_ORDER: LoadingPhase[] = ['app', 'apparatus', 'ready'];
+
 interface LoadingScreenProps {
-  /** False once the experience is ready. The overlay fades, then stops rendering. */
   visible: boolean;
   language: Language;
+  phase: LoadingPhase;
   /** A genuine asset failure reported by three's loading manager. */
   failed: boolean;
   onRetry: () => void;
@@ -12,16 +24,31 @@ interface LoadingScreenProps {
 
 const COPY = {
   en: {
-    title: 'Measurement of Jet Forces',
     code: 'VL-FM009',
-    loading: 'Preparing the experiment…',
+    title: 'Measurement of Jet Forces',
+    phases: {
+      app: 'Preparing application…',
+      apparatus: 'Loading 3D experiment…',
+      ready: 'Experiment ready',
+    },
     failed: 'Unable to load the experiment.',
     retry: 'Retry',
   },
   ar: {
-    title: 'قياس قوة نفث الماء',
     code: 'VL-FM009',
-    loading: 'جارٍ تجهيز التجربة…',
+    title: 'قياس قوة نفث الماء',
+    /*
+      Built only from wording the project already uses: «التجربة» is how every experiment
+      is named in `src/domain/experiments.ts`, «تحميل» appears in the existing failure
+      string, and «تجهيز»/«جاهز» are already in the interface. The English phase says
+      "3D"; that is deliberately not translated here because the project has no approved
+      Arabic term for it, and inventing one is worse than omitting it.
+    */
+    phases: {
+      app: 'جارٍ تجهيز التطبيق…',
+      apparatus: 'جارٍ تحميل التجربة…',
+      ready: 'التجربة جاهزة',
+    },
     failed: 'تعذر تحميل التجربة.',
     retry: 'إعادة المحاولة',
   },
@@ -30,21 +57,23 @@ const COPY = {
 /**
  * The screen shown until the experience is genuinely usable.
  *
- * It is driven by the `scene` readiness milestone, not by React having mounted: the
- * apparatus and the eight water plumes are ~14 MB of GLB, and until they are in the scene
- * graph the canvas shows an orange wireframe placeholder. That is the unfinished state
- * this covers.
+ * BEDO-UX-01 gated this on the right signal but drew it too quietly: a small block of text
+ * on a near-black page, which a user reported as simply not seeing a loading screen at all
+ * — measured, it was on screen for ~3.7 s, so the defect was perceptual, not timing. This
+ * is the same contract with a presence that reads as a deliberate loading state.
  *
- * Direction is inherited from `<html dir>` rather than re-implemented here, so the layout
- * mirrors in Arabic for the same reason the rest of the interface does.
+ * There is no BEDO logo file in the repository, so the mark here is typographic and uses
+ * the existing brand accent rather than a newly invented image.
  */
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({
   visible,
   language,
+  phase,
   failed,
   onRetry,
 }) => {
   const t = COPY[language === 'ar' ? 'ar' : 'en'];
+  const reached = PHASE_ORDER.indexOf(phase);
 
   return (
     <div
@@ -53,8 +82,11 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
       // its retry button would remain focusable on top of a live, usable interface.
       inert={!visible}
       data-bedo-loading={visible ? 'active' : 'done'}
+      data-bedo-loading-phase={phase}
     >
       <div className="loading-card">
+        <div className="loading-mark">BEDO</div>
+        <div className="loading-rule" />
         <div className="loading-code">{t.code}</div>
         <h1 className="loading-title">{t.title}</h1>
 
@@ -71,26 +103,35 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
         ) : (
           <>
             {/*
-              Only the message sits in the live region. The percentage changes many times
-              a second, and putting it here would make a screen reader announce the whole
-              status on every tick.
+              Only the phase label sits in the live region, and it changes twice for the
+              whole startup — not per frame.
             */}
             <p className="loading-message" role="status">
-              {t.loading}
+              {t.phases[phase]}
             </p>
             {/*
-              Indeterminate, deliberately, and no percentage.
+              Segmented, not a percentage.
 
-              three's loading manager counts ITEMS, not bytes. Measured on a throttled cold
-              load, the item count reached 89% in 8.7 s and then sat there for 22.5 s while
-              the 11.9 MB apparatus GLB — by far the majority of the wait — downloaded as a
-              single item, before jumping to 100%. That number is real but it does not
-              describe the remaining work, and a bar parked at 89% for twenty seconds is
-              worse than no bar. A byte-accurate figure would mean owning the loaders, which
-              is out of scope here. So: no value is claimed, and none is invented.
+              Each segment is one real milestone, so a filled segment means that milestone
+              actually happened and a full bar means the reveal condition is satisfied. The
+              earlier build showed drei's item count, which sat at 89% for 22 s while the
+              11.9 MB apparatus downloaded as a single item — a number that looked precise
+              and was not. Segments claim only what can be observed.
             */}
-            <div className="loading-bar" role="progressbar" aria-label={t.loading}>
-              <div className="loading-bar-fill is-indeterminate" />
+            <div
+              className="loading-bar"
+              role="progressbar"
+              aria-label={t.phases[phase]}
+              aria-valuemin={0}
+              aria-valuemax={PHASE_ORDER.length - 1}
+              aria-valuenow={reached}
+              aria-valuetext={t.phases[phase]}
+            >
+              {PHASE_ORDER.slice(0, -1).map((p, i) => (
+                <div key={p} className={`loading-seg${i < reached ? ' is-done' : ''}`}>
+                  {i === reached && <span className="loading-seg-active" />}
+                </div>
+              ))}
             </div>
           </>
         )}

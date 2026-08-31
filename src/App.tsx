@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Scene3D } from './components/Scene3D';
 import type { WeightAvailability } from './components/DeviceModel';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
-import { LoadingScreen } from './components/LoadingScreen';
+import { LoadingScreen, type LoadingPhase } from './components/LoadingScreen';
 import { useProgress } from '@react-three/drei';
 import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
@@ -125,6 +125,17 @@ export default function App() {
   );
 
   /**
+   * How far startup has actually got, for the loading screen's segmented progress.
+   *
+   * Each value is read from a readiness marker the app already publishes, so a segment
+   * fills only because something real happened. Measured on production, `app` lands at
+   * ~1.5 s and `scene` at ~3.8 s of a ~3.9 s startup, which is why the apparatus phase is
+   * the one the user spends most of the wait in.
+   */
+  const appReady = useSyncExternalStore(subscribeReady, () => isReady('app'), () => false);
+  const phase: LoadingPhase = sceneReady ? 'ready' : appReady ? 'apparatus' : 'app';
+
+  /**
    * Only the error list is taken from the loader manager.
    *
    * Its `progress` counts items rather than bytes, so on a throttled cold load it reached
@@ -135,17 +146,44 @@ export default function App() {
   const { errors } = useProgress();
 
   /**
+   * A floor on how briefly the loading screen can appear.
+   *
+   * On production startup takes ~3.9 s and this never engages. On a warm cache or a local
+   * preview the whole load finishes in about a second, and the overlay would appear and
+   * vanish inside a few frames — a flash that reads as a glitch rather than as loading.
+   *
+   * The rule is strictly `reveal = max(actual readiness, MIN_LOADING_MS)`. It can only
+   * ever delay a reveal that has ALREADY been earned; it can never reveal early, and on
+   * any genuinely slow load it contributes nothing.
+   */
+  const MIN_LOADING_MS = 400;
+  const [minWindowDone, setMinWindowDone] = useState(false);
+  const overlayShownAt = useRef(performance.now());
+  useEffect(() => {
+    const remaining = MIN_LOADING_MS - (performance.now() - overlayShownAt.current);
+    if (remaining <= 0) {
+      setMinWindowDone(true);
+      return;
+    }
+    const id = window.setTimeout(() => setMinWindowDone(true), remaining);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  /** Readiness is necessary; the presentation floor only postpones an earned reveal. */
+  const revealed = sceneReady && minWindowDone;
+
+  /**
    * The overlay stays mounted for the length of its fade, then stops rendering so the
-   * indeterminate bar's animation cannot keep running behind a live interface. This
-   * timeout is the CSS transition's duration, not a delay on readiness — the scene is
-   * already interactive when it starts.
+   * segment animation cannot keep running behind a live interface. This timeout is the
+   * CSS transition's duration, not a delay on readiness — the scene is already
+   * interactive when it starts.
    */
   const [overlayMounted, setOverlayMounted] = useState(true);
   useEffect(() => {
-    if (!sceneReady) return;
+    if (!revealed) return;
     const id = window.setTimeout(() => setOverlayMounted(false), 350);
     return () => window.clearTimeout(id);
-  }, [sceneReady]);
+  }, [revealed]);
 
   // A genuine asset failure, not a slow one: three reports it through the same manager.
   const startupFailed = !sceneReady && errors.length > 0;
@@ -612,7 +650,7 @@ export default function App() {
         the shell a node to mark inert. Without this the overlay would block the mouse but
         a Tab press would still walk into the controls behind it.
       */}
-      <div style={{ display: 'contents' }} inert={overlayMounted && !sceneReady}>
+      <div style={{ display: 'contents' }} inert={overlayMounted && !revealed}>
         <Scene3D
           state={view}
           lesson={lessonView}
@@ -682,8 +720,9 @@ export default function App() {
 
       {overlayMounted && (
         <LoadingScreen
-          visible={!sceneReady}
+          visible={!revealed}
           language={ui.language}
+          phase={phase}
           failed={startupFailed}
           onRetry={() => window.location.reload()}
         />

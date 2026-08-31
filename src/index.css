@@ -562,14 +562,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 
 /* ---------------------------------------------------------------------------
-   Loading screen (BEDO-UX-01)
+   Loading screen (BEDO-UX-01, redrawn in BEDO-UX-04)
 
    Covers the experience until the `scene` readiness milestone. The apparatus and
    the eight water plumes are ~14 MB of GLB; until they are in the scene graph the
    canvas shows an orange wireframe placeholder, and that is what this hides.
 
-   `dir` is inherited from <html>, so the card mirrors in Arabic along with the
-   rest of the interface — there are no left/right offsets here to get wrong.
+   UX-04 note: the timing was already right — measured at ~3.7 s on screen — but the
+   first version drew a small block of text on a near-black page and a user reported
+   not seeing a loading screen at all. The sizing, the brand mark and the vignette
+   below exist so the state reads as deliberate rather than as an empty page.
+
+   `dir` is inherited from <html>, so the card mirrors in Arabic along with the rest
+   of the interface — there are no left/right offsets here to get wrong.
 --------------------------------------------------------------------------- */
 .loading-screen {
   position: fixed;
@@ -579,7 +584,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
   align-items: center;
   justify-content: center;
   /* Opaque: the point is that the unfinished scene is never visible behind it. */
-  background: var(--brand-bg);
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 45%, rgba(245, 130, 32, 0.07), transparent 70%),
+    var(--brand-bg);
   opacity: 1;
   transition: opacity 320ms ease;
 }
@@ -594,63 +601,91 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 32px 44px;
   text-align: center;
-  max-width: min(90vw, 460px);
+  padding: 40px 48px;
+  max-width: min(92vw, 560px);
+}
+
+/*
+  Typographic mark. There is no BEDO logo file in the repository — `favicon.svg` is a
+  purple template asset, not the brand — so rather than invent one this uses the brand
+  accent and the same letterform treatment as the boot shell in index.html, which keeps
+  the two frames identical as React takes over.
+*/
+.loading-mark {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: var(--accent-blue);
+}
+
+.loading-rule {
+  width: 56px;
+  height: 2px;
+  margin: 20px 0 22px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, rgba(245, 130, 32, 0.55), transparent);
 }
 
 .loading-code {
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  color: var(--accent-blue);
-  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: #7f9298;
+  margin-bottom: 8px;
 }
 
 .loading-title {
-  margin: 0;
-  font-size: 20px;
+  margin: 0 0 22px;
+  font-size: 26px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.94);
+  text-wrap: balance;
 }
 
 .loading-message {
-  margin: 0;
+  margin: 0 0 16px;
   font-size: 13px;
   color: #8fa7ad;
+  min-height: 1.4em;
 }
 
+/* Segmented: one segment per real milestone, not a percentage. */
 .loading-bar {
-  width: 240px;
-  max-width: 70vw;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.08);
+  display: flex;
+  gap: 6px;
+  width: 320px;
+  max-width: 72vw;
+}
+
+.loading-seg {
+  position: relative;
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
   overflow: hidden;
+  transition: background 260ms ease;
 }
 
-.loading-bar-fill {
-  height: 100%;
-  border-radius: 2px;
+.loading-seg.is-done {
   background: linear-gradient(90deg, var(--accent-blue), var(--accent-gold));
-  transition: width 200ms ease;
 }
 
-/* Used only when the loader reports no total to measure against. */
-.loading-bar-fill.is-indeterminate {
-  width: 40%;
-  animation: bedo-loading-slide 1.1s ease-in-out infinite;
+/* Liveness inside the segment currently in progress. Claims no value. */
+.loading-seg-active {
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent-blue), var(--accent-gold));
+  animation: bedo-loading-slide 1.15s ease-in-out infinite;
 }
 
 @keyframes bedo-loading-slide {
   0% { transform: translateX(-110%); }
-  100% { transform: translateX(320%); }
-}
-
-.loading-percent {
-  font-size: 11px;
-  color: #6f8288;
-  font-variant-numeric: tabular-nums;
+  100% { transform: translateX(240%); }
 }
 
 .loading-retry {
@@ -658,14 +693,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 /*
-  Reduced motion: no sliding bar and no fade. The overlay still disappears — it just
+  Reduced motion: no sliding segment and no fade. The overlay still disappears — it just
   stops rather than animates, so nobody depends on an animation to see the change.
 */
 @media (prefers-reduced-motion: reduce) {
   .loading-screen {
     transition: none;
   }
-  .loading-bar-fill.is-indeterminate {
+  .loading-seg-active {
     animation: none;
     width: 100%;
   }

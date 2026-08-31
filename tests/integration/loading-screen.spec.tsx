@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { isReady, markReady } from '../../src/lib/readiness';
@@ -38,13 +38,15 @@ afterEach(() => {
 });
 
 describe('the loading overlay, as a component', () => {
-  const base = { language: 'en' as const, failed: false, onRetry: () => {} };
+  const base = { language: 'en' as const, phase: 'app' as const, failed: false, onRetry: () => {} };
 
   it('is visible and interactive while loading', () => {
     render(<LoadingScreen {...base} visible />);
     expect(overlay()?.className).not.toContain('is-hidden');
     expect(overlay()?.hasAttribute('inert'), 'must accept its own retry focus').toBe(false);
-    expect(screen.getByText('Preparing the experiment…')).toBeTruthy();
+    expect(screen.getByText('Preparing application…')).toBeTruthy();
+    // The brand mark is what makes this read as a loading state rather than a blank page.
+    expect(screen.getByText('BEDO')).toBeTruthy();
   });
 
   it('hides and goes inert once ready, so nothing behind it is blocked', () => {
@@ -53,25 +55,41 @@ describe('the loading overlay, as a component', () => {
     expect(overlay()?.hasAttribute('inert')).toBe(true);
   });
 
-  it('announces the loading message politely, and only once', () => {
-    render(<LoadingScreen {...base} visible />);
-    expect(screen.getByRole('status').textContent).toBe('Preparing the experiment…');
+  it('announces the phase politely, and only when it actually changes', () => {
+    const { rerender } = render(<LoadingScreen {...base} visible />);
+    expect(screen.getByRole('status').textContent).toBe('Preparing application…');
+    rerender(<LoadingScreen {...base} visible phase="apparatus" />);
+    expect(screen.getByRole('status').textContent).toBe('Loading 3D experiment…');
   });
 
-  it('claims no completion figure, because none can be measured honestly', () => {
+  it('fills a segment only once its milestone has actually been reached', () => {
+    const segs = () => document.querySelectorAll('.loading-seg');
+    const done = () => document.querySelectorAll('.loading-seg.is-done').length;
+    const { rerender } = render(<LoadingScreen {...base} visible />);
+    expect(segs()).toHaveLength(2);
+    expect(done(), 'nothing is complete yet').toBe(0);
+    rerender(<LoadingScreen {...base} visible phase="apparatus" />);
+    expect(done(), 'the application phase is genuinely finished').toBe(1);
+    rerender(<LoadingScreen {...base} visible phase="ready" />);
+    // Full only at the reveal condition — 100% cannot mean anything else.
+    expect(done()).toBe(2);
+  });
+
+  it('reports phases, never a byte percentage', () => {
     // three's manager counts items, not bytes: measured on a throttled cold load it read
-    // 89% for 22.5 s while the 11.9 MB apparatus GLB downloaded as one item. A bar parked
-    // at 89% is worse than no bar, so the indicator is indeterminate and states no value.
+    // 89% for 22.5 s while the 11.9 MB apparatus GLB downloaded as one item. Segments
+    // describe milestones that demonstrably happened instead.
     render(<LoadingScreen {...base} visible />);
     const bar = screen.getByRole('progressbar');
-    expect(bar.getAttribute('aria-valuenow'), 'no value may be claimed').toBeNull();
-    expect(bar.querySelector('.is-indeterminate')).toBeTruthy();
     expect(screen.queryByText(/\d+%/), 'no percentage may be shown').toBeNull();
+    expect(bar.getAttribute('aria-valuetext')).toBe('Preparing application…');
+    expect(bar.getAttribute('aria-valuemax')).toBe('2');
   });
 
-  it('shows a localized message in Arabic', () => {
+  it('shows a localized phase and title in Arabic', () => {
     render(<LoadingScreen {...base} visible language="ar" />);
-    expect(screen.getByText('جارٍ تجهيز التجربة…')).toBeTruthy();
+    expect(screen.getByText('جارٍ تجهيز التطبيق…')).toBeTruthy();
+    expect(screen.getByText('قياس قوة نفث الماء')).toBeTruthy();
   });
 
   it('reports a genuine failure with a retry, instead of spinning forever', () => {
@@ -90,9 +108,33 @@ describe('what the overlay waits for', () => {
     stubConfigFetch();
     renderApp();
 
-    // The scene double marks readiness on mount, so the app is past loading here.
+    // The scene double marks readiness on mount, so readiness itself is already satisfied.
     expect(isReady('scene')).toBe(true);
-    expect(overlay()?.getAttribute('data-bedo-loading')).toBe('done');
+
+    // Readiness alone does not reveal: a short presentation floor (BEDO-UX-04) keeps the
+    // overlay on screen so a fast load cannot flash it for a couple of frames. It only
+    // ever postpones a reveal that has already been earned.
+    expect(overlay()?.getAttribute('data-bedo-loading')).toBe('active');
+
+    await waitFor(
+      () => expect(overlay()?.getAttribute('data-bedo-loading') ?? 'gone').not.toBe('active'),
+      { timeout: 2000 }
+    );
+  });
+
+  it('holds an already-complete bar during the floor, rather than advancing anything', () => {
+    stubConfigFetch();
+    renderApp();
+
+    // The milestone has genuinely fired, so the phase and the segments are already at
+    // their final state. The presentation floor only postpones the reveal — it is not
+    // progress, and it must never be what fills a segment.
+    const overlayEl = overlay();
+    expect(overlayEl?.getAttribute('data-bedo-loading'), 'still held').toBe('active');
+    expect(overlayEl?.getAttribute('data-bedo-loading-phase'), 'phase is real, not timed').toBe(
+      'ready'
+    );
+    expect(document.querySelectorAll('.loading-seg.is-done')).toHaveLength(2);
   });
 
   it('does not treat the app or training milestones as readiness', () => {
