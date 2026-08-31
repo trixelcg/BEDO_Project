@@ -85,6 +85,15 @@ export default function App() {
   const lessonState = useLessonState(runner);
   const [ui, setUi] = useState<LessonAndUiState>(() => initialLessonState());
 
+  // The language switch is document state, not only panel styling. Screen readers,
+  // browser translation, punctuation order and native form controls all read these
+  // attributes from the root element. Keep them in sync with the visible language.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.lang = ui.language;
+    root.dir = ui.language === 'ar' ? 'rtl' : 'ltr';
+  }, [ui.language]);
+
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
   /**
@@ -572,6 +581,7 @@ export default function App() {
         onClearWeights={handleClearWeights}
         onRemoveWeight={handleRemoveWeight}
         onTogglePower={handleTogglePower}
+        onCoverClick={handleCoverClick}
         onToggleVolumetricValve={handleToggleVolumetricValve}
         onToggleMonitor={handleToggleMonitor}
         onReset={handleReset}

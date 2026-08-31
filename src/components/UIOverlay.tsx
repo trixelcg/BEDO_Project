@@ -51,6 +51,8 @@ interface UIOverlayProps {
   canRemoveWeights: boolean;
   onTogglePower: () => void;
   onToggleVolumetricValve: () => void;
+  /** Same intent the tank-cover mesh raises. See the button below for why it exists. */
+  onCoverClick: () => void;
   onToggleMonitor: () => void;
   onReset: () => void;
   clearWarning: () => void;
@@ -78,6 +80,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   canRemoveWeights,
   onTogglePower,
   onToggleVolumetricValve,
+  onCoverClick,
   onToggleMonitor,
   onReset,
   clearWarning,
@@ -132,7 +135,11 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     <div className={`ui-container ${isAr ? 'rtl' : ''}`}>
       {/* Blocking guard from the state machine */}
       {warningMessage && (
-        <div className={`warning-popup interactive ${isAr ? 'rtl' : ''}`}>
+        // `role="alert"` because this is the interlock's only feedback. A refused action —
+        // pressing the tank-cover button while the pump runs, say — changes nothing on
+        // screen except this popup, so without a live region a screen-reader user is told
+        // nothing at all and the control appears simply not to work.
+        <div className={`warning-popup interactive ${isAr ? 'rtl' : ''}`} role="alert">
           <AlertTriangle size={18} />
           <span>{isAr ? warningMessage.ar : warningMessage.en}</span>
           <button onClick={clearWarning}>{isAr ? 'حسناً' : 'OK'}</button>
@@ -143,6 +150,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
       {notice && !warningMessage && (
         <div
           className={`warning-popup interactive ${isAr ? 'rtl' : ''}`}
+          // An observation, not a refusal: announced politely so it never interrupts.
+          role="status"
           style={{ background: 'rgba(0, 162, 255, 0.14)', borderColor: 'var(--accent-blue)' }}
         >
           <Info size={18} />
@@ -646,6 +655,10 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           >
             <span>{isAr ? 'غطاء الخزان:' : 'Tank cover:'}</span>
             <span
+              // A stable hook for the cover's state. Reading it from the visible words is
+              // ambiguous now that a "Open tank cover" button sits beside this row, and
+              // bilingual text cannot be matched on the English words at all.
+              data-bedo-cover-state={isCoverOpen ? 'open' : 'closed'}
               style={{
                 color: isCoverOpen ? 'var(--accent-gold)' : 'var(--success-green)',
                 fontWeight: 600,
@@ -654,6 +667,40 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               {isCoverOpen ? (isAr ? 'مفتوح' : 'Open') : isAr ? 'مغلق' : 'Closed'}
             </span>
           </div>
+
+          {/*
+            The tank cover's only real control used to be the plate mesh inside the WebGL
+            canvas, which cannot be reached by keyboard: step 1 of the lesson was therefore
+            impossible without a pointer. (The `window.__bedoTest.coverClick` adapter is
+            dev-only and compiled out of production builds, so it is not an answer.)
+
+            This raises exactly the intent the mesh raises, through the same gate, so
+            pressing it out of turn is refused with the same message rather than skipping
+            any lesson state. It is deliberately not wrapped in `show(...)`: the mesh is
+            always clickable, so gating the keyboard equivalent would make the DOM path
+            weaker than the pointer path, which is the defect being fixed.
+          */}
+          {/*
+            No `aria-pressed` here on purpose. This button re-labels itself to name the
+            next action ("Open tank cover" / "Close tank cover"), and the ARIA toggle-button
+            pattern says to do that OR expose a pressed state, not both: "Close tank cover,
+            toggle button, pressed" invites the reading that *closing* is the active state,
+            when the flag actually means the cover is open. The label carries the action and
+            the status line above carries the state.
+          */}
+          <button
+            className="btn-secondary"
+            onClick={onCoverClick}
+            style={{ width: '100%', fontSize: 11, marginBottom: 8 }}
+          >
+            {isCoverOpen
+              ? isAr
+                ? 'إغلاق غطاء الخزان'
+                : 'Close tank cover'
+              : isAr
+                ? 'فتح غطاء الخزان'
+                : 'Open tank cover'}
+          </button>
 
           <div
             style={{

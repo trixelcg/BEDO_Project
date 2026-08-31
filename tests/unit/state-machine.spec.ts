@@ -422,19 +422,11 @@ describe('the guided sequence, as pure transitions', () => {
   });
 });
 
-describe('specified but not implemented', () => {
-  // docs/13 §5 transcribes two behaviours from BEDO's state-machine document that this
-  // application has never had. They are asserted as *absent* so that the gap is a
-  // deliberate, visible fact rather than an assumption — and so that implementing them
-  // (BEDO-023, BEDO-010) is a change that has to update this file.
-
-  it('has no way to remove a single weight from the holder (R-3, BEDO-023)', () => {
-    // The document has "weight-on-holder -> B (weight removed, 2 s)". The only removal
-    // this app offers is all-or-nothing.
-    const actions: string[] = ALL_ACTIONS.map((a) => a.type);
-    expect(actions).not.toContain('REMOVE_WEIGHT');
-    expect(actions).toContain('REMOVE_ALL_WEIGHTS');
-  });
+describe('presentation-owned behavior', () => {
+  // Single-weight removal is implemented and covered in weight-removal.spec.ts, including
+  // stack identity, runtime routing, and the storyboard's two-second transfer. Do not use
+  // ALL_ACTIONS as a completeness list here: its fixtures intentionally contain only
+  // parameter-free actions.
 
   it('does not drain the tank when the pump stops (R-13, BEDO-010)', () => {
     // The document has A -> B "water drains" on power-off. Here, power-off shuts the

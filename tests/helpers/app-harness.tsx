@@ -73,10 +73,11 @@ export const expectStep = (step: number, title?: string) => {
 };
 
 export const coverState = (): 'Open' | 'Closed' => {
-  const row = [...sidebar().querySelectorAll('div')].find((d) =>
-    d.textContent?.startsWith('Tank cover:')
-  );
-  return row?.textContent?.includes('Open') ? 'Open' : 'Closed';
+  // Read the state attribute, not the words. The old text match looked for the first div
+  // whose text began "Tank cover:" and then asked whether it contained "Open" — which the
+  // adjacent "Open tank cover" button also satisfies, so a closed cover reported as open.
+  const flag = sidebar().querySelector('[data-bedo-cover-state]');
+  return flag?.getAttribute('data-bedo-cover-state') === 'open' ? 'Open' : 'Closed';
 };
 
 export const loadedWeightG = (): number => {

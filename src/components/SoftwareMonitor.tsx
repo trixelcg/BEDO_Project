@@ -5,6 +5,22 @@ import { X, RefreshCw, BarChart2, Calculator, Camera, Download, CheckCircle2 } f
 import { GRAVITY_MS2 } from '../domain/physics';
 import { csvFilename, toCsv } from '../lib/exportSchema';
 
+/**
+ * How a numeric readout is rendered.
+ *
+ * `dir="ltr"` with `unicode-bidi: isolate` is the part that matters. These readouts mix
+ * Arabic labels with a left-to-right technical expression, and in an RTL document the
+ * bidi algorithm reorders the neutral characters inside it: "0 g × g = 0.000 N" was being
+ * displayed as "g × g = 0.000 N 0", which separates the value from its unit and reads as
+ * nonsense. Isolating the run keeps the expression internally left-to-right while the row
+ * as a whole still mirrors with the rest of the interface.
+ */
+const NUMERIC_READOUT: React.CSSProperties = {
+  fontWeight: 700,
+  direction: 'ltr',
+  unicodeBidi: 'isolate',
+};
+
 interface SoftwareMonitorProps {
   state: SimulationView;
   experiment: ExperimentDef;
@@ -120,6 +136,12 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             <Camera size={15} />
             {isAr ? 'حفظ الشاشة' : 'Save Screen'}
           </button>
+          {/* Storyboard sl. 24 says Export is "active after filling out the table". That
+              is deliberately NOT implemented as a disabled state here: this table is
+              pre-populated from the fixed ROW_VALVE_SETTINGS, so a genuinely empty table
+              never occurs and the guard would be unreachable code that merely looks like
+              compliance. Which state counts as "filled" (any reading vs. after Calculate)
+              is not decidable from the storyboard — see the monitor gap table. */}
           <button className="btn-secondary" onClick={handleExportData}>
             <Download size={15} />
             {isAr ? 'تصدير البيانات' : 'Export Data'}
@@ -152,13 +174,27 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             {isAr ? 'جدول القراءات' : 'Recorded Readings'}
           </h3>
 
+          {/* Gravity readout. Storyboard sl. 23 lists it as its own display beside the
+              total weight, with the unit symbol in a fixed position. The value is the same
+              constant the force equations use, read from the physics module rather than
+              retyped here, so the monitor can never disagree with the calculation. */}
+          <div
+            className="indicator-card"
+            style={{ marginBottom: '8px', justifyContent: 'space-between' }}
+          >
+            <span>{isAr ? 'تسارع الجاذبية' : 'Gravity'}</span>
+            <span style={NUMERIC_READOUT}>
+              {GRAVITY_MS2.toFixed(2)} m/s²
+            </span>
+          </div>
+
           {/* Total weight × g, as printed on the BEDO board. */}
           <div
             className="indicator-card"
             style={{ marginBottom: '12px', justifyContent: 'space-between' }}
           >
             <span>{isAr ? 'الوزن الكلي' : 'Total Weight'}</span>
-            <span style={{ fontWeight: 700, color: 'var(--accent-gold)' }}>
+            <span style={{ ...NUMERIC_READOUT, color: 'var(--accent-gold)' }}>
               {totalWeightG} g × g = {totalWeightN.toFixed(3)} N
             </span>
           </div>

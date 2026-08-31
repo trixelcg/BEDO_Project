@@ -358,7 +358,10 @@ const WATER_VIEWS = [
   // Low flow, tank empty — the state at t = 60.63 s in the recording.
   ['W1-jet-lowflow', add(tank, [-0.62, 0.16, 0.42]), add(tank, [0, 0.02, 0]), 30, { valve: 0.4, hold: 240 }],
   // The impact region, where the column meets the deflector face.
-  ['W2-impact', add(rod, [-0.3, 0.06, 0.2]), add(rod, [0, -0.04, 0]), 28],
+  // Aim inside the glass at the underside of the deflector. The rod's bounding-box centre
+  // is up in the exposed spring mechanism, which previously produced an "impact" frame
+  // containing no water at all and therefore could not verify the contact geometry.
+  ['W2-impact', add(tank, [-0.44, 0.24, 0.25]), add(tank, [0, 0.18, 0]), 28],
   // High flow. Same framing as W1 so the pair differs by flow and nothing else.
   ['W3-jet-highflow', add(tank, [-0.62, 0.16, 0.42]), add(tank, [0, 0.02, 0]), 30, { valve: 0.5, hold: 120 }],
   // Genuinely part-filled. W3 already leaves the level near 0.42, and the 150 frames this

@@ -8,11 +8,9 @@ import { button, openApp, popup, pressCover, sidebar, stepBadge, stubApparatusMo
  * that switching one flips the content and the direction flag, and that the training UI
  * stays usable in either.
  *
- * A limitation of today's app is asserted honestly rather than wished away: the only
- * element that actually receives `direction: rtl` is the popup. The `rtl` class is set on
- * the overlay and the monitor as well, but no stylesheet rule matches it, and neither
- * `<html dir>` nor `<html lang>` changes with the language. That gap is recorded in
- * `docs/25` and remains the audit's BUG-09.
+ * The language is also reflected on the document root. That is the contract assistive
+ * technology and browser-native bidi handling consume; a component class alone is not
+ * sufficient.
  */
 
 const AR_STEP_1 = 'فك اللوحة العلوية';
@@ -30,6 +28,7 @@ test('English is the language the lesson opens in', async ({ page }) => {
   await expect(sidebar(page).getByText('Measurement of Jet Forces')).toBeVisible();
   await expect(page.locator('.ui-container')).not.toHaveClass(/rtl/);
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
 });
 
 test('Arabic loads, flips the direction flag, and keeps the training UI usable', async ({
@@ -46,6 +45,8 @@ test('Arabic loads, flips the direction flag, and keeps the training UI usable',
 
   // ...and the overlay is marked right-to-left.
   await expect(page.locator('.ui-container')).toHaveClass(/rtl/);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ar');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
   // The lesson still runs: step 1 completes and step 2 is announced in Arabic.
   await pressCover(page);
@@ -75,6 +76,8 @@ test('a guard message renders right-to-left in Arabic and left-to-right in Engli
   await expect(englishPopup).not.toHaveClass(/rtl/);
   await expect(englishPopup).toHaveCSS('direction', 'ltr');
   await expect(page.locator('.ui-container')).not.toHaveClass(/rtl/);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('html')).toHaveAttribute('dir', 'ltr');
 });
 
 test('a lesson refusal is bilingual too, and is not the safety banner', async ({ page }) => {
