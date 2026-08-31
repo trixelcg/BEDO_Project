@@ -16,6 +16,7 @@ import { fitDistance, regionOffset, usableRect } from '../lib/cameraFraming';
 import { TRANSFER_SECONDS } from '../interaction/transfer';
 import { ROOM_ENV_INTENSITY, captureRoomEnvironment } from '../lib/roomEnvironment';
 import { classifyMaterial } from '../lib/materialFamilies';
+import { assetUrl } from '../lib/assetUrl';
 
 interface Scene3DProps {
   state: SimulationView;
@@ -35,7 +36,7 @@ interface Scene3DProps {
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
   const { scene } = useThree();
-  const texture = useTexture('/rosendal_plains_2_4k.webp');
+  const texture = useTexture(assetUrl('rosendal_plains_2_4k.webp'));
 
   useEffect(() => {
     if (!texture) return;

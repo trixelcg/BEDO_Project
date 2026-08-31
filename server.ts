@@ -17,6 +17,88 @@ try {
   console.warn("GCP Storage client could not be initialized in server.ts. Using local fallback.", e);
 }
 
+/**
+ * One MIME table, used by BOTH the local-file path and the GCS proxy path.
+ *
+ * These used to be two different tables: the local path knew about `.js`, and the proxy
+ * path had five entries and fell back to `application/octet-stream`. That gap is not
+ * cosmetic — a browser refuses to execute an ES module served as octet-stream, so a
+ * bundle proxied from the bucket loaded with status 200 and then failed to run. During a
+ * Cloud Run traffic split that is exactly the request that gets proxied, so the split
+ * tore every page load whose HTML and JS landed on different revisions (PERF-05/05B).
+ *
+ * Keep the two paths on one table so they cannot drift apart again.
+ */
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.json': 'application/json',
+  '.wasm': 'application/wasm',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.webp': 'image/webp',
+  '.glb': 'model/gltf-binary',
+  '.ktx2': 'image/ktx2',
+  '.bin': 'application/octet-stream',
+  '.mp4': 'video/mp4',
+  '.pdf': 'application/pdf',
+};
+
+/**
+ * Immutability follows the URL, not the file extension.
+ *
+ * `/assets/*` (Vite content-hashed) and `/runtime/<hash>/*` (content-addressed runtime
+ * assets) carry their content hash in the path, so they can never change meaning and are
+ * safe to cache for a year. Everything else must not be: a stable name like
+ * `/Bedo_baked_v2.glb` can legitimately differ between releases, and marking that
+ * `immutable` pins a stale model in the browser cache with no way to revise it.
+ */
+const isContentAddressed = (pathname: string): boolean =>
+  pathname.startsWith('/assets/') || pathname.startsWith('/runtime/');
+
+const cacheControlFor = (pathname: string, ext: string): string =>
+  isContentAddressed(pathname)
+    ? 'public, max-age=31536000, immutable'
+    : ext === '.html' || ext === '.json'
+      ? 'no-cache, no-store, must-revalidate'
+      : 'public, max-age=300';
+
+/**
+ * This generation's content-addressed URLs, mapped back to the files in `dist/`.
+ *
+ * `assetUrl()` in the bundle emits `/runtime/<hash>/Bedo_baked_v2.glb`. Those bytes are
+ * already in the image (Vite copies `public/` into `dist/`), just under their plain name,
+ * so there is no reason to ship a second content-addressed copy of an 11.9 MB model.
+ * This map lets the revision answer its own generation's URLs from local disk.
+ *
+ * A URL from a DIFFERENT generation is deliberately absent here. It falls through to the
+ * GCS proxy below and is served from the shared bucket — which is the whole point: during
+ * a traffic split any revision can answer any generation's asset request.
+ */
+const runtimeLocalFiles = new Map<string, string>();
+try {
+  const manifestPath = path.join(__dirname, 'dist', 'runtime-manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    const { uploads } = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+      uploads: { key: string; source: string }[];
+    };
+    for (const u of uploads) {
+      const local = path.join(__dirname, 'dist', u.source.replace(/^public\//, ''));
+      if (fs.existsSync(local)) runtimeLocalFiles.set('/' + u.key, local);
+    }
+    console.log(`Runtime manifest: ${runtimeLocalFiles.size} content-addressed assets served locally`);
+  } else {
+    console.warn('Runtime manifest absent — content-addressed assets will be served from GCS.');
+  }
+} catch (e) {
+  console.error('Failed to read runtime manifest; falling back to GCS for runtime assets.', e);
+}
+
 const server = http.createServer(async (req, res) => {
   const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
   const pathname = urlObj.pathname;
@@ -42,6 +124,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // This generation's content-addressed runtime assets resolve to local files.
+  // Other generations fall through to the shared bucket below.
+  const localRuntime = runtimeLocalFiles.get(pathname);
+  if (localRuntime) {
+    const rtExt = path.extname(localRuntime).toLowerCase();
+    res.setHeader('Content-Type', MIME_TYPES[rtExt] || 'application/octet-stream');
+    res.setHeader('Cache-Control', cacheControlFor(pathname, rtExt));
+    res.statusCode = 200;
+    fs.createReadStream(localRuntime).pipe(res);
+    return;
+  }
+
   // Serve static frontend assets
   let filePath = path.join(__dirname, 'public', pathname === '/' ? 'index.html' : pathname);
   
@@ -60,10 +154,8 @@ const server = http.createServer(async (req, res) => {
           const [exists] = await file.exists();
           if (exists) {
             const ext = path.extname(filename).toLowerCase();
-            const mimeTypes: Record<string, string> = {
-              '.glb': 'model/gltf-binary', '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.json': 'application/json'
-            };
-            res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+            res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
+            res.setHeader('Cache-Control', cacheControlFor(pathname, ext));
             res.statusCode = 200;
             file.createReadStream().pipe(res);
             return;
@@ -82,29 +174,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.html': 'text/html',
-    '.css': 'text/css',
-    '.js': 'application/javascript',
-    '.json': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.glb': 'model/gltf-binary',
-    '.mp4': 'video/mp4',
-    '.webp': 'image/webp',
-  };
-
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
-  res.setHeader('Content-Type', contentType);
-  
-  if (ext === '.js' || ext === '.css' || ext === '.glb') {
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-  } else if (ext === '.html' || ext === '.json') {
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  }
+  res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
+  res.setHeader('Cache-Control', cacheControlFor(pathname, ext));
 
   if (fs.existsSync(filePath)) {
     const stream = fs.createReadStream(filePath);

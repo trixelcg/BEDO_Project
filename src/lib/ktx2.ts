@@ -26,8 +26,11 @@ import * as THREE from 'three';
 // PERF-01/02/03 all validated against three's loader, so this also keeps the evidence chain
 // intact. The cast bridges the two packages' structurally identical types.
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { assetDirUrl } from './assetUrl';
 
-const TRANSCODER_PATH = '/basis/';
+/** Resolved lazily: `assetDirUrl` throws on a manifest gap, and at module scope that
+ *  would take down the whole app instead of just the KTX2 path. */
+const transcoderPath = (): string => assetDirUrl('basis');
 
 let loader: KTX2Loader | null = null;
 let detectedFrom: THREE.WebGLRenderer | 'probe' | null = null;
@@ -46,7 +49,7 @@ const probeSupport = () => {
 
 const ktx2 = (): KTX2Loader => {
   if (!loader) {
-    loader = new KTX2Loader().setTranscoderPath(TRANSCODER_PATH);
+    loader = new KTX2Loader().setTranscoderPath(transcoderPath());
     loader.detectSupport(probeSupport() as unknown as THREE.WebGLRenderer);
     detectedFrom = 'probe';
   }

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run assets:manifest && tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
@@ -14,6 +14,7 @@
     "test:unit:watch": "vitest",
     "test:e2e": "playwright test",
     "test:ci": "npm run typecheck && npm run lint && npm run test:unit && npm run test:e2e",
+    "assets:manifest": "node scripts/release/asset-manifest.mjs",
     "glb:report": "node scripts/analyze-glb.mjs public/Bedo_baked_v2.glb",
     "glb:nodes": "node scripts/analyze-glb.mjs public/Bedo_baked_v2.glb --nodes",
     "perf:baseline": "node scripts/perf-baseline.mjs",

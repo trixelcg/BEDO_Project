@@ -31,6 +31,10 @@ tsconfig.test.json
 
 # Tooling that runs on a developer machine or in CI, not in the image
 scripts
+# ...except the release scripts the build itself runs. `npm run build` generates the
+# content-addressed runtime manifest (PERF-06) before Vite runs, so this one directory has
+# to be in the build context or the image build fails with MODULE_NOT_FOUND.
+!scripts/release
 .oxlintrc.json
 cloudbuild.yaml
 push.sh

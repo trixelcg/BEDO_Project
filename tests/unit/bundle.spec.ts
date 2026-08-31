@@ -143,7 +143,8 @@ describeBuilt('the production bundle', () => {
     }
 
     // The whole shipped set, pinned: 12 assets + the shell, one JS chunk, one stylesheet,
-    // plus the two self-hosted Basis transcoder files KTX2Loader fetches at runtime.
+    // the two self-hosted Basis transcoder files KTX2Loader fetches at runtime, and the
+    // generated runtime manifest server.ts reads at boot (PERF-06).
     expect(shipped.sort()).toEqual(
       [
         'Bedo_Mesu_J.mp4',
@@ -167,6 +168,7 @@ describeBuilt('the production bundle', () => {
         'favicon.svg',
         'index.html',
         'rosendal_plains_2_4k.webp',
+        'runtime-manifest.json',
         ...shipped.filter((f) => f.startsWith('assets/')),
       ].sort()
     );

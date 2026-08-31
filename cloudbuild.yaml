@@ -24,6 +24,16 @@
 #
 # The tag is still pushed, for humans reading the registry. Nothing deploys from it.
 #
+# ## The deploy takes NO traffic
+#
+# `gcloud run deploy` sends 100% of traffic to the new revision by default. That is how a
+# pipeline turns a build into an outage with no separate decision in between, and it is the
+# wrong default for a service that has now torn page loads twice under traffic splitting.
+#
+# The revision is created with `--no-traffic` and a tag, so it is reachable at its own tag
+# URL for smoke tests while production keeps serving whatever it was serving. Shifting
+# traffic is a deliberate, separate act.
+#
 # ## Public access is NOT granted here
 #
 # This pipeline deploys the service and its revision. It does not touch IAM.
@@ -52,6 +62,11 @@ steps:
     id: 'build'
     args:
       - 'build'
+      - '--build-arg'
+      # The release generation identity. `_TAG` is the commit the release is cut from, so a
+      # running page can report exactly which source produced it — during a rollout two
+      # builds serve at once and the URL alone does not say which one answered.
+      - 'BUILD_GEN=$_TAG'
       - '-t'
       - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
       - '.'
@@ -79,6 +94,54 @@ steps:
           --format '{{index .RepoDigests 0}}' > /workspace/image-digest.txt
         echo "deploying by digest: $$(cat /workspace/image-digest.txt)"
 
+  # 3b. Publish this build's static assets to the shared, revision-independent origin.
+  #
+  # `dist/` is extracted from the image that was just pushed rather than rebuilt here, so
+  # the bytes published are provably the same bytes the revision serves.
+  #
+  # This must happen BEFORE the deploy. Cloud Run routes every request independently, so
+  # the moment a revision can receive traffic its assets must already be reachable from the
+  # shared origin — otherwise a split tears page loads (PERF-05, PERF-05B).
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'extract-dist'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        IMAGE="$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG"
+        CID=$$(docker create "$${IMAGE}")
+        rm -rf /workspace/dist
+        docker cp "$${CID}:/app/dist" /workspace/dist
+        docker rm "$${CID}" > /dev/null
+        echo "extracted $$(find /workspace/dist -type f | wc -l) files from the image"
+
+  # Runs on `node:20`, not on cloud-sdk. No stock builder image has both node and gcloud
+  # (checked: cloud-sdk has no node, node:20 has no gcloud), and `apt-get install nodejs`
+  # would make every release depend on a package repo being up. The release scripts talk to
+  # GCS over its REST API using a token from Cloud Build's metadata server, so this step
+  # needs no installs and no `npm ci`.
+  - name: 'node:20'
+    id: 'publish-assets'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        node scripts/release/publish-assets.mjs --bucket "$_ASSET_BUCKET"
+
+  # 3c. Asset-closure gate. Fails the build if anything the HTML or the manifest references
+  # is absent from the shared origin, or is published with a content type a browser will
+  # refuse (a module served as octet-stream loads 200 and then does not execute).
+  - name: 'node:20'
+    id: 'verify-asset-closure'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -euo pipefail
+        node scripts/release/verify-asset-closure.mjs --bucket "$_ASSET_BUCKET"
+
   # 4. Deploy that digest to Cloud Run.
   #
   # Service and revision only. IAM is deliberately not touched here — see the header.
@@ -93,7 +156,16 @@ steps:
           --image "$$(cat /workspace/image-digest.txt)" \
           --region "$_RUN_REGION" \
           --platform managed \
-          --set-env-vars 'GCS_BUCKET_NAME=bedo-project-assets-2026,NODE_ENV=production'
+          --no-traffic \
+          --tag "$_TAG" \
+          --set-env-vars "GCS_BUCKET_NAME=$_ASSET_BUCKET,NODE_ENV=production"
+
+        # `gcloud run deploy` returns once the revision is serving, but state the invariant
+        # out loud anyway: this pipeline must never move traffic. If it ever does, the build
+        # log is where that will be visible.
+        echo "--- traffic after deploy (must be unchanged by this pipeline) ---"
+        gcloud run services describe "$_SERVICE_NAME" --region "$_RUN_REGION" \
+          --format='value(status.traffic)'
 
 images:
   - '$_AR_REGION-docker.pkg.dev/$PROJECT_ID/$_AR_REPO/bedo-project-r3f:$_TAG'
@@ -102,6 +174,7 @@ images:
 # `_SERVICE_NAME` are deliberately absent; see the header.
 substitutions:
   _AR_REGION: 'us-central1'
+  _ASSET_BUCKET: 'bedo-project-assets-2026'
   _AR_REPO: 'bedo-project-r3f-repo'
   _RUN_REGION: 'us-central1'
 

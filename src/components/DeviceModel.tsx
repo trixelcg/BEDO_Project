@@ -86,6 +86,7 @@ import {
 } from '../lib/tankWater';
 import { directionOf } from '../interaction/transfer';
 import { useObjectDrag } from './useObjectDrag';
+import { assetUrl } from '../lib/assetUrl';
 
 type Action =
   | { kind: 'cover' }
@@ -304,21 +305,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 }) => {
   // PERF-04 candidate: `?glb=v3` selects the KHR_texture_basisu build. The KTX2 loader is
   // attached only here — the eight WaterShapes GLBs carry no textures.
-  const { scene } = useGLTF('/Bedo_baked_v2.glb', true, true, extendWithKTX2) as any;
+  const { scene } = useGLTF(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2) as any;
   /** Declared here because the material pass below needs the GPU's anisotropy limit. */
   const gl = useThree((three) => three.gl);
   setKTX2Renderer(gl);
 
   // One simulated plume per deflector, plus the startup trickle.
   const water = {
-    low: useGLTF(WATER_SHAPES.low.url) as any,
-    d30: useGLTF(WATER_SHAPES.d30.url) as any,
-    d45: useGLTF(WATER_SHAPES.d45.url) as any,
-    d60: useGLTF(WATER_SHAPES.d60.url) as any,
-    d90: useGLTF(WATER_SHAPES.d90.url) as any,
-    d120: useGLTF(WATER_SHAPES.d120.url) as any,
-    d135: useGLTF(WATER_SHAPES.d135.url) as any,
-    d180: useGLTF(WATER_SHAPES.d180.url) as any,
+    low: useGLTF(assetUrl(WATER_SHAPES.low.url)) as any,
+    d30: useGLTF(assetUrl(WATER_SHAPES.d30.url)) as any,
+    d45: useGLTF(assetUrl(WATER_SHAPES.d45.url)) as any,
+    d60: useGLTF(assetUrl(WATER_SHAPES.d60.url)) as any,
+    d90: useGLTF(assetUrl(WATER_SHAPES.d90.url)) as any,
+    d120: useGLTF(assetUrl(WATER_SHAPES.d120.url)) as any,
+    d135: useGLTF(assetUrl(WATER_SHAPES.d135.url)) as any,
+    d180: useGLTF(assetUrl(WATER_SHAPES.d180.url)) as any,
   };
   const waterGltfs = Object.values(water);
 
@@ -3215,5 +3216,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
 };
 
-useGLTF.preload('/Bedo_baked_v2.glb', true, true, extendWithKTX2);
-Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(s.url));
+useGLTF.preload(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2);
+// Preload through `assetUrl` as well. Preloading the authored path while the component
+// loads the content-addressed one gives the two different cache keys, so every plume
+// was fetched twice in production — 8 redundant GLB requests per page load.
+Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(assetUrl(s.url)));

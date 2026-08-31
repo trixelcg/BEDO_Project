@@ -12,6 +12,12 @@ RUN npm ci
 # Copy full application code
 COPY . .
 
+# Build generation stamp. Defaults to the image tag the release pipeline passes, so a
+# running page can report which build served it — during a rollout two builds are live at
+# once and the URL alone does not say which one answered.
+ARG BUILD_GEN=unknown
+ENV BUILD_GEN=$BUILD_GEN
+
 # Build Vite frontend assets (creates dist/ folder)
 RUN npm run build
 
