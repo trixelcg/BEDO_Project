@@ -152,12 +152,22 @@ steps:
       - '-c'
       - |
         set -euo pipefail
+
+        # Cloud Run traffic tags must begin with a LETTER and contain only lowercase
+        # letters, digits and '-'. `_TAG` is the commit sha, which begins with a digit
+        # about 62% of the time, so passing it straight through failed the deploy for most
+        # commits (`spec.traffic.tag: Resource name must use only lowercase letters...`).
+        # The `rev-` prefix guarantees a valid first character; the rest is sanitised so an
+        # unusual `_TAG` cannot fail the release at the very last step.
+        TAG_SAFE="rev-$$(printf '%s' "$_TAG" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/-*$$//')"
+        echo "traffic tag: $${TAG_SAFE}"
+
         gcloud run deploy "$_SERVICE_NAME" \
           --image "$$(cat /workspace/image-digest.txt)" \
           --region "$_RUN_REGION" \
           --platform managed \
           --no-traffic \
-          --tag "$_TAG" \
+          --tag "$${TAG_SAFE}" \
           --set-env-vars "GCS_BUCKET_NAME=$_ASSET_BUCKET,NODE_ENV=production"
 
         # `gcloud run deploy` returns once the revision is serving, but state the invariant
