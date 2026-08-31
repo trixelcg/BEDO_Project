@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import type React from 'react';
 import { DEFLECTORS, WEIGHTS } from '../../src/domain/apparatus';
+import { markReady } from '../../src/lib/readiness';
 
 /**
  * Stand-in for the WebGL scene, used by the jsdom integration specs.
@@ -44,7 +46,14 @@ export const Scene3D: React.FC<MockProps> = ({
   onVolumetricValveClick,
   onAddWeight,
   onRemoveWeight,
-}) => (
+}) => {
+  // This double stands in for a scene that has finished loading, so it reaches the same
+  // milestone the real `DeviceModel` reaches once the apparatus is in the scene graph.
+  // Without it the loading overlay (BEDO-UX-01) would stay up for the whole suite, and
+  // the specs would pass only because jsdom does not honour `inert` or hit-testing.
+  useEffect(() => markReady('scene'), []);
+
+  return (
   <div data-testid="scene-3d">
     <button data-testid="scene-cover" onClick={onCoverClick}>
       cover
@@ -91,4 +100,5 @@ export const Scene3D: React.FC<MockProps> = ({
       </button>
     ))}
   </div>
-);
+  );
+};

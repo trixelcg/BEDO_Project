@@ -1,15 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Scene3D } from './components/Scene3D';
 import type { WeightAvailability } from './components/DeviceModel';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
+import { LoadingScreen } from './components/LoadingScreen';
+import { useProgress } from '@react-three/drei';
 import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
 import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
 import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparatusGate';
 import { DEFLECTORS, getDeflector } from './domain/apparatus';
 import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
-import { markReady } from './lib/readiness';
+import { isReady, markReady, subscribeReady } from './lib/readiness';
 import { SCENE_CONFIG } from './lib/sceneConfig';
 import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
@@ -93,6 +95,48 @@ export default function App() {
     root.lang = ui.language;
     root.dir = ui.language === 'ar' ? 'rtl' : 'ltr';
   }, [ui.language]);
+
+  /**
+   * When the experience is actually usable.
+   *
+   * `scene` is the existing milestone for "the apparatus is in the scene graph", and it
+   * is reached only after the suspended `useGLTF` calls resolve — the apparatus plus the
+   * eight water plumes. Subscribing to it rather than inventing a second readiness model
+   * is deliberate: the loading screen and the Playwright/capture waits then agree by
+   * construction. `app` and `training` fire far earlier (React mounted, panel mounted)
+   * and would uncover the orange wireframe placeholder.
+   */
+  const sceneReady = useSyncExternalStore(
+    subscribeReady,
+    () => isReady('scene'),
+    () => false,
+  );
+
+  /**
+   * Only the error list is taken from the loader manager.
+   *
+   * Its `progress` counts items rather than bytes, so on a throttled cold load it reached
+   * 89% in 8.7 s and then stalled there for 22.5 s while the 11.9 MB apparatus GLB — one
+   * item, and most of the wait — finished. The loading screen therefore shows an
+   * indeterminate indicator rather than a number that would sit at 89% and look stuck.
+   */
+  const { errors } = useProgress();
+
+  /**
+   * The overlay stays mounted for the length of its fade, then stops rendering so the
+   * indeterminate bar's animation cannot keep running behind a live interface. This
+   * timeout is the CSS transition's duration, not a delay on readiness — the scene is
+   * already interactive when it starts.
+   */
+  const [overlayMounted, setOverlayMounted] = useState(true);
+  useEffect(() => {
+    if (!sceneReady) return;
+    const id = window.setTimeout(() => setOverlayMounted(false), 350);
+    return () => window.clearTimeout(id);
+  }, [sceneReady]);
+
+  // A genuine asset failure, not a slow one: three reports it through the same manager.
+  const startupFailed = !sceneReady && errors.length > 0;
 
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
@@ -551,64 +595,80 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Scene3D
-        state={view}
-        lesson={lessonView}
-        sceneConfig={SCENE_CONFIG}
-        onCoverClick={handleCoverClick}
-        onSelectDeflector={handleSelectDeflector}
-        onPowerClick={handleTogglePower}
-        onFlowValveClick={handleFlowValveClick}
-        onVolumetricValveClick={handleToggleVolumetricValve}
-        onAddWeight={handleAddWeight}
-        onRemoveWeight={handleRemoveWeight}
-        onWeightAvailability={setWeights}
-      />
-
-      <UIOverlay
-        state={view}
-        lesson={lessonView}
-        experiment={experiment}
-        availableDeflectors={availableDeflectors}
-        onSelectLanguage={(lang) => setUi((prev) => ({ ...prev, language: lang }))}
-        onSetMode={handleSetMode}
-        onSelectExperiment={handleSelectExperiment}
-        onSetParams={handleSetParams}
-        onSelectDeflector={handleSelectDeflector}
-        onSetValve={handleSetValve}
-        canRemoveWeights={weights.canRemove}
-        onAddWeight={handleAddWeight}
-        onClearWeights={handleClearWeights}
-        onRemoveWeight={handleRemoveWeight}
-        onTogglePower={handleTogglePower}
-        onCoverClick={handleCoverClick}
-        onToggleVolumetricValve={handleToggleVolumetricValve}
-        onToggleMonitor={handleToggleMonitor}
-        onReset={handleReset}
-        clearWarning={clearWarning}
-        clearNotice={clearNotice}
-        onOkClick={handleStepOkClick}
-        onOpenAnswerSheet={handleOpenAnswerSheet}
-      />
-
-      {ui.showAnswerSheet && lessonView.answerSheetUrl && (
-        <AnswerSheet
-          url={lessonView.answerSheetUrl}
-          experimentName={ui.language === 'ar' ? experiment.nameAr : experiment.nameEn}
-          isArabic={ui.language === 'ar'}
-          onClose={handleCloseAnswerSheet}
-        />
-      )}
-
-      {view.showMonitor && (
-        <SoftwareMonitor
+      {/*
+        `display: contents` keeps the existing layout exactly as it was while still giving
+        the shell a node to mark inert. Without this the overlay would block the mouse but
+        a Tab press would still walk into the controls behind it.
+      */}
+      <div style={{ display: 'contents' }} inert={overlayMounted && !sceneReady}>
+        <Scene3D
           state={view}
+          lesson={lessonView}
+          sceneConfig={SCENE_CONFIG}
+          onCoverClick={handleCoverClick}
+          onSelectDeflector={handleSelectDeflector}
+          onPowerClick={handleTogglePower}
+          onFlowValveClick={handleFlowValveClick}
+          onVolumetricValveClick={handleToggleVolumetricValve}
+          onAddWeight={handleAddWeight}
+          onRemoveWeight={handleRemoveWeight}
+          onWeightAvailability={setWeights}
+        />
+
+        <UIOverlay
+          state={view}
+          lesson={lessonView}
           experiment={experiment}
-          deflectorName={deflectorName}
-          onCalculate={handleCalculate}
-          onAnswerQuiz={handleAnswerQuiz}
-          onClose={handleToggleMonitor}
+          availableDeflectors={availableDeflectors}
+          onSelectLanguage={(lang) => setUi((prev) => ({ ...prev, language: lang }))}
+          onSetMode={handleSetMode}
+          onSelectExperiment={handleSelectExperiment}
+          onSetParams={handleSetParams}
+          onSelectDeflector={handleSelectDeflector}
+          onSetValve={handleSetValve}
+          canRemoveWeights={weights.canRemove}
+          onAddWeight={handleAddWeight}
+          onClearWeights={handleClearWeights}
+          onRemoveWeight={handleRemoveWeight}
+          onTogglePower={handleTogglePower}
+          onCoverClick={handleCoverClick}
+          onToggleVolumetricValve={handleToggleVolumetricValve}
+          onToggleMonitor={handleToggleMonitor}
           onReset={handleReset}
+          clearWarning={clearWarning}
+          clearNotice={clearNotice}
+          onOkClick={handleStepOkClick}
+          onOpenAnswerSheet={handleOpenAnswerSheet}
+        />
+
+        {ui.showAnswerSheet && lessonView.answerSheetUrl && (
+          <AnswerSheet
+            url={lessonView.answerSheetUrl}
+            experimentName={ui.language === 'ar' ? experiment.nameAr : experiment.nameEn}
+            isArabic={ui.language === 'ar'}
+            onClose={handleCloseAnswerSheet}
+          />
+        )}
+
+        {view.showMonitor && (
+          <SoftwareMonitor
+            state={view}
+            experiment={experiment}
+            deflectorName={deflectorName}
+            onCalculate={handleCalculate}
+            onAnswerQuiz={handleAnswerQuiz}
+            onClose={handleToggleMonitor}
+            onReset={handleReset}
+          />
+        )}
+      </div>
+
+      {overlayMounted && (
+        <LoadingScreen
+          visible={!sceneReady}
+          language={ui.language}
+          failed={startupFailed}
+          onRetry={() => window.location.reload()}
         />
       )}
     </div>

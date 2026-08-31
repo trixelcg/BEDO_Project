@@ -7,9 +7,16 @@
  * visible 3D scene" by sampling screenshots by eye, which is not a number later work can
  * be compared against.
  *
- * The instrumentation is deliberately inert: it writes a data attribute on <html> and
- * drops a `performance.mark`. It renders nothing, changes no state, and is not read by
- * any application code — see `scripts/perf-baseline.mjs` and `tests/e2e`.
+ * The instrumentation writes a data attribute on <html> and drops a `performance.mark`.
+ * It renders nothing and changes no application state — see `scripts/perf-baseline.mjs`
+ * and `tests/e2e`.
+ *
+ * It used to be read by nothing at all. BEDO-UX-01 added the loading screen, which needs
+ * to know exactly when the experience is usable, and the honest answer was already here:
+ * `scene` is the moment the apparatus is in the scene graph. Rather than invent a second
+ * readiness model that could disagree with the markers the tests and the capture harness
+ * wait on, the overlay subscribes to *these* signals. The marker semantics are unchanged —
+ * `subscribeReady`/`isReady` only observe them.
  */
 export type ReadyStage = 'app' | 'scene' | 'training';
 
@@ -17,6 +24,29 @@ export type ReadyStage = 'app' | 'scene' | 'training';
 const attribute = (stage: ReadyStage) => `bedo${stage[0].toUpperCase()}${stage.slice(1)}Ready`;
 
 export const READY_MARK = (stage: ReadyStage) => `bedo:${stage}-ready`;
+
+/**
+ * Observers of the milestones above.
+ *
+ * The `<html>` dataset stays the single source of truth — `isReady` reads it rather than
+ * keeping a parallel copy, so a subscriber can never believe something the markers do not
+ * say. Listeners are notified only when a milestone actually flips, never per frame.
+ */
+const listeners = new Set<() => void>();
+
+/** Subscribe to milestone changes. Returns an unsubscribe, for `useSyncExternalStore`. */
+export function subscribeReady(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+/** Has this milestone been reached? Read straight from the marker it writes. */
+export function isReady(stage: ReadyStage): boolean {
+  if (typeof document === 'undefined') return false;
+  return Boolean(document.documentElement.dataset[attribute(stage)]);
+}
 
 export function markReady(stage: ReadyStage): void {
   if (typeof document === 'undefined') return;
@@ -26,6 +56,7 @@ export function markReady(stage: ReadyStage): void {
   if (root.dataset[key]) return;
   root.dataset[key] = String(Math.round(performance.now()));
   performance.mark?.(READY_MARK(stage));
+  for (const listener of listeners) listener();
 }
 
 /**
