@@ -9,7 +9,16 @@ import { buildStubGlb } from './stub-model';
  * machine makes the suite slower, never flakier.
  */
 
-export const sidebar = (page: Page) => page.locator('.sidebar-panel');
+/**
+ * The 2D interface layer.
+ *
+ * This used to be `.sidebar-panel`, because every control lived there. BEDO-UX-06 moved
+ * the guided controls into the bottom dock and left the panel as a free-mode surface, so
+ * scoping to it made assertions fail for reasons that had nothing to do with what they
+ * were testing. Nearly every use here means "somewhere in the UI, not in the canvas", and
+ * `.ui-container` is exactly that — it wraps the chip, dock, footer and the panel alike.
+ */
+export const sidebar = (page: Page) => page.locator('.ui-container');
 export const stepBadge = (page: Page) => page.locator('.step-badge');
 export const okButton = (page: Page) => page.locator('.ok-confirm-btn');
 export const popup = (page: Page) => page.locator('.warning-popup');
@@ -43,7 +52,6 @@ export async function openApp(page: Page, options: { waitForScene?: boolean } = 
   // the scene-ready marker instead.
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('[data-bedo-app-ready]')).toHaveCount(1);
-  await expect(sidebar(page)).toBeVisible();
   await expect(page.locator('[data-bedo-training-ready]')).toHaveCount(1);
 
   // Freeze CSS animations. The popups slide in over 300 ms, and Playwright will not act
@@ -53,6 +61,20 @@ export async function openApp(page: Page, options: { waitForScene?: boolean } = 
   await page.addStyleTag({
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
   });
+
+  // BEDO-UX-06 puts an information panel in front of the experiment. It is a real part of
+  // the flow, so the suite dismisses it the way a learner does rather than disabling it.
+  //
+  // It is WAITED for, not merely probed: the panel mounts at scene-ready, which is later
+  // than the training-ready marker above. Probing without waiting found nothing, and the
+  // panel then appeared over the interface and swallowed every subsequent click.
+  const start = page.getByRole('button', { name: /^(Start|ابدأ)$/ });
+  await start.click({ timeout: 120_000 });
+
+  // The guided step card is what "the app is usable" means now. This used to assert the
+  // sidebar, which BEDO-UX-06 removed from the guided experience: the instruction moved to
+  // the bottom-centre card and the panel became a free-mode surface.
+  await expect(page.locator('.step-card')).toBeVisible();
 
   if (options.waitForScene) {
     await expect(page.locator('[data-bedo-scene-ready]')).toHaveCount(1, { timeout: 120_000 });

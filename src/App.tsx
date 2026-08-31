@@ -4,6 +4,7 @@ import type { WeightAvailability } from './components/DeviceModel';
 import { UIOverlay } from './components/UIOverlay';
 import { SoftwareMonitor } from './components/SoftwareMonitor';
 import { LoadingScreen, type LoadingPhase } from './components/LoadingScreen';
+import { ExperimentIntro } from './components/ExperimentIntro';
 import { useProgress } from '@react-three/drei';
 import { AnswerSheet } from './components/AnswerSheet';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
@@ -187,6 +188,16 @@ export default function App() {
 
   // A genuine asset failure, not a slow one: three reports it through the same manager.
   const startupFailed = !sceneReady && errors.length > 0;
+
+  /**
+   * The pre-experiment information panel is up until the learner presses Start.
+   *
+   * Kept out of `LessonAndUiState` on purpose: that object is rebuilt by "Reset simulator",
+   * and re-showing the intro every time someone resets the rig mid-session would be a
+   * different behaviour from the one the reference describes. This is a session-level
+   * "have we begun", not lesson state.
+   */
+  const [hasStarted, setHasStarted] = useState(false);
 
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
@@ -687,6 +698,7 @@ export default function App() {
           onRemoveWeight={handleRemoveWeight}
           onTogglePower={handleTogglePower}
           onCoverClick={handleCoverClick}
+          started={hasStarted}
           onToggleVolumetricValve={handleToggleVolumetricValve}
           onToggleMonitor={handleToggleMonitor}
           onReset={handleReset}
@@ -717,6 +729,19 @@ export default function App() {
           />
         )}
       </div>
+
+      {/*
+        Mounted as soon as the scene is ready — not after the loading overlay has faded —
+        so it is already in place behind the overlay and does not pop in afterwards. The
+        overlay sits above it until the reveal.
+      */}
+      {sceneReady && !hasStarted && (
+        <ExperimentIntro
+          experiment={experiment}
+          language={ui.language}
+          onStart={() => setHasStarted(true)}
+        />
+      )}
 
       {overlayMounted && (
         <LoadingScreen

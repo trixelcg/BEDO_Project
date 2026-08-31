@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { WEIGHTS, type DeflectorDef } from '../domain/apparatus';
 import { markReady } from '../lib/readiness';
+import { StepInstructionCard } from './StepInstructionCard';
 import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
 import { flowRateLMin } from '../domain/physics';
 import type { PanelControl } from '../lesson/schema';
@@ -53,6 +54,8 @@ interface UIOverlayProps {
   onToggleVolumetricValve: () => void;
   /** Same intent the tank-cover mesh raises. See the button below for why it exists. */
   onCoverClick: () => void;
+  /** False while the intro panel is up: the guided dock must not show behind it. */
+  started: boolean;
   onToggleMonitor: () => void;
   onReset: () => void;
   clearWarning: () => void;
@@ -81,6 +84,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onTogglePower,
   onToggleVolumetricValve,
   onCoverClick,
+  started,
   onToggleMonitor,
   onReset,
   clearWarning,
@@ -90,6 +94,14 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 }) => {
   const [showVideo, setShowVideo] = useState(false);
   const [panel, setPanel] = useState<Panel>('steps');
+  /**
+   * In guided mode the full panel is closed by default and opened on demand.
+   *
+   * The requirement is that no large all-purpose panel is the *primary* guided UI — not
+   * that experiment selection and the advanced parameters become unreachable. So they stay
+   * one click away behind the footer instead of occupying the left edge of every step.
+   */
+  const [guidedPanelOpen, setGuidedPanelOpen] = useState(false);
 
   // The training panel is on screen and usable. See src/lib/readiness.ts.
   useEffect(() => markReady('training'), []);
@@ -131,6 +143,222 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     (g, i, arr) => g > 0 && arr.indexOf(g) === i
   );
 
+  /**
+   * The apparatus controls, defined once and rendered in whichever layout is active.
+   *
+   * In guided mode they sit in a compact dock above the step card, so only the control the
+   * current step actually needs is on screen — `show()` already gates them on the lesson's
+   * `panelControls`. In free mode the same blocks fill the sidebar, which stays the
+   * engineering surface. Extracting them keeps one definition rather than two that drift.
+   */
+  const apparatusControls = (
+    <>
+      {/* Deflector selection */}
+      {show('deflectors') && (
+        <div
+          className="glass-card"
+          style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}
+        >
+          <span style={{ fontSize: '11px', fontWeight: 600, color: '#f58220' }}>
+            {isAr ? 'اختر العاكس:' : 'Select deflector:'}
+          </span>
+          {availableDeflectors.map((d) => (
+            <button
+              key={d.id}
+              className="btn-secondary"
+              onClick={() => onSelectDeflector(d.id)}
+              style={{
+                justifyContent: 'flex-start',
+                fontSize: '11px',
+                borderColor:
+                  selectedDeflectorId === d.id ? '#f58220' : 'rgba(255,255,255,0.08)',
+                background:
+                  selectedDeflectorId === d.id ? 'rgba(245, 130, 32, 0.08)' : 'transparent',
+                color: selectedDeflectorId === d.id ? '#f58220' : '#fff',
+              }}
+            >
+              {isAr ? d.nameAr : d.nameEn}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Power */}
+      {show('power') && (
+        <button
+          className="btn-primary interactive"
+          onClick={onTogglePower}
+          style={{
+            marginBottom: 12,
+            background: isPowerOn ? 'var(--danger-red)' : 'var(--accent-blue)',
+            color: isPowerOn ? '#fff' : '#141517',
+          }}
+        >
+          <Power size={16} />
+          {isPowerOn
+            ? isAr
+              ? 'إيقاف المضخة'
+              : 'Turn Off Pump'
+            : isAr
+              ? 'تشغيل المضخة'
+              : 'Turn On Pump'}
+        </button>
+      )}
+
+      {/* Volumetric valve */}
+      {show('volumetricValve') && (
+        <div className="glass-card" style={{ marginBottom: 12 }}>
+          <button
+            className="btn-secondary"
+            onClick={onToggleVolumetricValve}
+            style={{
+              width: '100%',
+              fontSize: '11px',
+              background: state.isVolumetricValveOpen
+                ? 'rgba(245, 130, 32, 0.12)'
+                : 'transparent',
+              borderColor: state.isVolumetricValveOpen
+                ? 'var(--accent-blue)'
+                : 'rgba(255,255,255,0.1)',
+            }}
+          >
+            {state.isVolumetricValveOpen
+              ? isAr
+                ? 'الصمام الحجمي مفتوح'
+                : 'Volumetric valve open'
+              : isAr
+                ? 'فتح الصمام الحجمي'
+                : 'Open volumetric valve'}
+          </button>
+        </div>
+      )}
+
+      {/* Flow valve */}
+      {show('flowValve') && (
+        <div className="glass-card valve-slider-container" style={{ marginBottom: 12 }}>
+          <div className="slider-label">
+            <span>{isAr ? 'صمام التدفق (n):' : 'Flow control valve (n):'}</span>
+            <span className="slider-val">{(valveOpening * 100).toFixed(0)}%</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={valveOpening}
+            onChange={(e) => onSetValve(parseFloat(e.target.value))}
+          />
+          <div
+            style={{
+              fontSize: '11px',
+              color: '#8fa7ad',
+              display: 'flex',
+              justifyContent: 'space-between',
+              marginTop: 4,
+            }}
+          >
+            <span>{isAr ? 'مغلق' : 'Closed'}</span>
+            <span>Q ≈ {flow.toFixed(1)} L/min</span>
+            <span>{isAr ? 'مفتوح' : 'Open'}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Weights */}
+      {show('weights') && (
+        <div
+          className="glass-card"
+          style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+            <span>{isAr ? 'الأوزان المضافة:' : 'Added weights:'}</span>
+            <span
+              // A stable hook, like the cover's. Matching on the visible words breaks in
+              // Arabic and moved with the control when the guided dock replaced the
+              // sidebar; the value should be readable wherever the row is rendered.
+              data-bedo-loaded-weight={totalLoadedWeight}
+              style={{ color: 'var(--accent-gold)', fontWeight: 700 }}
+            >
+              {totalLoadedWeight} g
+            </span>
+          </div>
+
+          <div className="weight-pan-grid">
+            {weightOptions.map((g) => (
+              <button key={g} className="weight-add-btn" onClick={() => onAddWeight(g)}>
+                +{g}g
+              </button>
+            ))}
+          </div>
+
+          {/*
+            The discs on the holder, in the order they were stacked. Clicking one
+            takes that one off — the storyboard's "click on the weight on holder"
+            (sl. 32), which the panel had no equivalent for. Position, not mass:
+            two 50 g discs are two discs.
+          */}
+          {loadedWeightsG.length > 0 && (
+            <div className="weight-pan-grid">
+              {loadedWeightsG.map((g, index) => (
+                <button
+                  key={`${index}-${g}`}
+                  className="weight-add-btn"
+                  disabled={!canRemoveWeights}
+                  onClick={() => onRemoveWeight(index)}
+                  title={isAr ? `إزالة ${g} غ` : `Remove ${g} g`}
+                  aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
+                  style={{ borderColor: 'var(--danger-red)', color: 'var(--danger-red)' }}
+                >
+                  −{g}g
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button
+            className="btn-secondary"
+            disabled={!canRemoveWeights}
+            onClick={onClearWeights}
+            style={{ color: 'var(--danger-red)' }}
+          >
+            {isAr ? 'إزالة كافة الأوزان' : 'Clear all weights'}
+          </button>
+
+          {activeRow && (
+            <div
+              className={`indicator-card ${
+                activeRow.isBalanced ? 'indicator-balanced' : 'indicator-unbalanced'
+              }`}
+            >
+              <Scale size={16} />
+              <span>
+                {activeRow.isBalanced
+                  ? isAr
+                    ? 'المؤشر متوازن!'
+                    : 'Pointer balanced!'
+                  : isAr
+                    ? `غير متوازن (الهدف ≈ ${activeRow.targetMassG.toFixed(0)} غ)`
+                    : `Unbalanced (target ≈ ${activeRow.targetMassG.toFixed(0)} g)`}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monitor */}
+      {show('monitor') && (
+        <button
+          className="btn-primary"
+          onClick={onToggleMonitor}
+          style={{ background: 'var(--success-green)' }}
+        >
+          <Monitor size={16} />
+          {isAr ? 'فتح شاشة البيانات' : 'Open Data Monitor'}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <div className={`ui-container ${isAr ? 'rtl' : ''}`}>
       {/* Blocking guard from the state machine */}
@@ -160,6 +388,16 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
         </div>
       )}
 
+      {/*
+        The sidebar is now the free-mode engineering surface, not the guided UI.
+
+        The reference guided experience puts one instruction at the bottom centre over the
+        apparatus and nothing permanent down the left; keeping this panel up during a
+        guided step is exactly the "all settings live on the left" shape the rebuild
+        removes. Everything it carries stays reachable while guided — the apparatus
+        controls move into the dock below, the global actions into the footer.
+      */}
+      {(!guided || guidedPanelOpen) && (
       <div className="sidebar-panel interactive">
         <div className="sidebar-header">
           <div className="logo-container">
@@ -235,7 +473,11 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             <button
               key={key}
               className="btn-secondary"
-              onClick={() => setPanel(key)}
+              onClick={() => {
+                setPanel(key);
+                // Returning to Steps returns to the focused guided view.
+                if (guided && key === 'steps') setGuidedPanelOpen(false);
+              }}
               style={{
                 flex: 1,
                 fontSize: '10px',
@@ -363,66 +605,12 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           {/* ------------------------------------------------ Steps / controls */}
           {panel === 'steps' && (
             <>
-              {guided && activeStep && (
-                <div
-                  className="glass-card"
-                  style={{ borderLeft: '3px solid var(--accent-blue)', marginBottom: '14px' }}
-                >
-                  <div className="step-badge">
-                    {isAr
-                      ? `الخطوة ${lesson.displayNumber} / ${lesson.totalSteps}`
-                      : `Step ${lesson.displayNumber} / ${lesson.totalSteps}`}
-                  </div>
-                  <h3 className="step-title" style={{ marginTop: 8, marginBottom: 6 }}>
-                    {isAr ? activeStep.titleAr : activeStep.titleEn}
-                  </h3>
-                  <p className="step-desc">{isAr ? activeStep.bodyAr : activeStep.bodyEn}</p>
-
-                  {show('answerSheet') && (
-                    <button
-                      className="btn-primary interactive answer-sheet-btn"
-                      onClick={onOpenAnswerSheet}
-                      style={{
-                        marginTop: 12,
-                        width: '100%',
-                        background: 'var(--success-green)',
-                        color: '#fff',
-                        fontWeight: 'bold',
-                      }}
-                    >
-                      {isAr ? 'عرض ورقة الإجابة' : 'Open the answer sheet'}
-                    </button>
-                  )}
-
-                  {lesson.isComplete && (
-                    <p
-                      className="step-desc"
-                      data-testid="lesson-complete"
-                      style={{ marginTop: 10, color: 'var(--success-green)', fontWeight: 600 }}
-                    >
-                      {isAr ? '✅ اكتملت التجربة.' : '✅ Experiment complete.'}
-                    </p>
-                  )}
-
-                  {okVisible && (
-                    <button
-                      className="btn-primary interactive ok-confirm-btn"
-                      onClick={onOkClick}
-                      style={{
-                        marginTop: 12,
-                        width: '100%',
-                        background: '#f58220',
-                        color: '#fff',
-                        fontWeight: 'bold',
-                        boxShadow: '0 0 12px rgba(245, 130, 32, 0.4)',
-                      }}
-                    >
-                      {isAr ? 'موافق' : 'OK'}
-                    </button>
-                  )}
-                </div>
-              )}
-
+              {/*
+                The guided step is rendered once, by `StepInstructionCard` in the bottom
+                dock. It used to live here too; with the panel now openable during a step
+                that produced two copies of the same instruction, two step badges and two
+                OK buttons.
+              */}
               {!guided && (
                 <div
                   className="glass-card"
@@ -436,203 +624,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 </div>
               )}
 
-              {/* Deflector selection */}
-              {show('deflectors') && (
-                <div
-                  className="glass-card"
-                  style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}
-                >
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#f58220' }}>
-                    {isAr ? 'اختر العاكس:' : 'Select deflector:'}
-                  </span>
-                  {availableDeflectors.map((d) => (
-                    <button
-                      key={d.id}
-                      className="btn-secondary"
-                      onClick={() => onSelectDeflector(d.id)}
-                      style={{
-                        justifyContent: 'flex-start',
-                        fontSize: '11px',
-                        borderColor:
-                          selectedDeflectorId === d.id ? '#f58220' : 'rgba(255,255,255,0.08)',
-                        background:
-                          selectedDeflectorId === d.id ? 'rgba(245, 130, 32, 0.08)' : 'transparent',
-                        color: selectedDeflectorId === d.id ? '#f58220' : '#fff',
-                      }}
-                    >
-                      {isAr ? d.nameAr : d.nameEn}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Power */}
-              {show('power') && (
-                <button
-                  className="btn-primary interactive"
-                  onClick={onTogglePower}
-                  style={{
-                    marginBottom: 12,
-                    background: isPowerOn ? 'var(--danger-red)' : 'var(--accent-blue)',
-                    color: isPowerOn ? '#fff' : '#141517',
-                  }}
-                >
-                  <Power size={16} />
-                  {isPowerOn
-                    ? isAr
-                      ? 'إيقاف المضخة'
-                      : 'Turn Off Pump'
-                    : isAr
-                      ? 'تشغيل المضخة'
-                      : 'Turn On Pump'}
-                </button>
-              )}
-
-              {/* Volumetric valve */}
-              {show('volumetricValve') && (
-                <div className="glass-card" style={{ marginBottom: 12 }}>
-                  <button
-                    className="btn-secondary"
-                    onClick={onToggleVolumetricValve}
-                    style={{
-                      width: '100%',
-                      fontSize: '11px',
-                      background: state.isVolumetricValveOpen
-                        ? 'rgba(245, 130, 32, 0.12)'
-                        : 'transparent',
-                      borderColor: state.isVolumetricValveOpen
-                        ? 'var(--accent-blue)'
-                        : 'rgba(255,255,255,0.1)',
-                    }}
-                  >
-                    {state.isVolumetricValveOpen
-                      ? isAr
-                        ? 'الصمام الحجمي مفتوح'
-                        : 'Volumetric valve open'
-                      : isAr
-                        ? 'فتح الصمام الحجمي'
-                        : 'Open volumetric valve'}
-                  </button>
-                </div>
-              )}
-
-              {/* Flow valve */}
-              {show('flowValve') && (
-                <div className="glass-card valve-slider-container" style={{ marginBottom: 12 }}>
-                  <div className="slider-label">
-                    <span>{isAr ? 'صمام التدفق (n):' : 'Flow control valve (n):'}</span>
-                    <span className="slider-val">{(valveOpening * 100).toFixed(0)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    value={valveOpening}
-                    onChange={(e) => onSetValve(parseFloat(e.target.value))}
-                  />
-                  <div
-                    style={{
-                      fontSize: '11px',
-                      color: '#8fa7ad',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginTop: 4,
-                    }}
-                  >
-                    <span>{isAr ? 'مغلق' : 'Closed'}</span>
-                    <span>Q ≈ {flow.toFixed(1)} L/min</span>
-                    <span>{isAr ? 'مفتوح' : 'Open'}</span>
-                  </div>
-                </div>
-              )}
-
-              {/* Weights */}
-              {show('weights') && (
-                <div
-                  className="glass-card"
-                  style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                    <span>{isAr ? 'الأوزان المضافة:' : 'Added weights:'}</span>
-                    <span style={{ color: 'var(--accent-gold)', fontWeight: 700 }}>
-                      {totalLoadedWeight} g
-                    </span>
-                  </div>
-
-                  <div className="weight-pan-grid">
-                    {weightOptions.map((g) => (
-                      <button key={g} className="weight-add-btn" onClick={() => onAddWeight(g)}>
-                        +{g}g
-                      </button>
-                    ))}
-                  </div>
-
-                  {/*
-                    The discs on the holder, in the order they were stacked. Clicking one
-                    takes that one off — the storyboard's "click on the weight on holder"
-                    (sl. 32), which the panel had no equivalent for. Position, not mass:
-                    two 50 g discs are two discs.
-                  */}
-                  {loadedWeightsG.length > 0 && (
-                    <div className="weight-pan-grid">
-                      {loadedWeightsG.map((g, index) => (
-                        <button
-                          key={`${index}-${g}`}
-                          className="weight-add-btn"
-                          disabled={!canRemoveWeights}
-                          onClick={() => onRemoveWeight(index)}
-                          title={isAr ? `إزالة ${g} غ` : `Remove ${g} g`}
-                          aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
-                          style={{ borderColor: 'var(--danger-red)', color: 'var(--danger-red)' }}
-                        >
-                          −{g}g
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <button
-                    className="btn-secondary"
-                    disabled={!canRemoveWeights}
-                    onClick={onClearWeights}
-                    style={{ color: 'var(--danger-red)' }}
-                  >
-                    {isAr ? 'إزالة كافة الأوزان' : 'Clear all weights'}
-                  </button>
-
-                  {activeRow && (
-                    <div
-                      className={`indicator-card ${
-                        activeRow.isBalanced ? 'indicator-balanced' : 'indicator-unbalanced'
-                      }`}
-                    >
-                      <Scale size={16} />
-                      <span>
-                        {activeRow.isBalanced
-                          ? isAr
-                            ? 'المؤشر متوازن!'
-                            : 'Pointer balanced!'
-                          : isAr
-                            ? `غير متوازن (الهدف ≈ ${activeRow.targetMassG.toFixed(0)} غ)`
-                            : `Unbalanced (target ≈ ${activeRow.targetMassG.toFixed(0)} g)`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Monitor */}
-              {show('monitor') && (
-                <button
-                  className="btn-primary"
-                  onClick={onToggleMonitor}
-                  style={{ background: 'var(--success-green)' }}
-                >
-                  <Monitor size={16} />
-                  {isAr ? 'فتح شاشة البيانات' : 'Open Data Monitor'}
-                </button>
-              )}
+              {apparatusControls}
             </>
           )}
         </div>
@@ -725,6 +717,98 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           </button>
         </div>
       </div>
+      )}
+
+      {/*
+        The focused dock stands down while the full panel is open, so the two never compete
+        — and so controls like Free Mode are not on screen twice.
+      */}
+      {guided && started && !guidedPanelOpen && (
+        <>
+          {/* Quiet identification, so the apparatus keeps the viewport. */}
+          <div className="guided-chip">
+            <span className="guided-chip-code">VL-FM009</span>
+            <span className="guided-chip-title">
+              {isAr ? 'قياس قوة نفث الماء' : 'Measurement of Jet Forces'}
+            </span>
+          </div>
+
+          {/*
+            Bottom dock: only the control this step needs, then the instruction.
+            `show()` already gates each control on the lesson's `panelControls`, so the
+            dock is empty on steps that ask for a purely physical action.
+          */}
+          <div className="guided-dock interactive">
+            <div className="guided-controls">{apparatusControls}</div>
+            {activeStep && (
+              <StepInstructionCard
+                lesson={lesson}
+                language={state.language}
+                okVisible={okVisible}
+                onOkClick={onOkClick}
+                showAnswerSheet={show('answerSheet')}
+                onOpenAnswerSheet={onOpenAnswerSheet}
+              />
+            )}
+          </div>
+
+          {/* Global actions, deliberately small and out of the way. */}
+          <div className="guided-footer interactive">
+            <span className="guided-cover-state">
+              {isAr ? 'غطاء الخزان:' : 'Tank cover:'}{' '}
+              <span
+                data-bedo-cover-state={isCoverOpen ? 'open' : 'closed'}
+                style={{ color: isCoverOpen ? 'var(--accent-gold)' : 'var(--success-green)' }}
+              >
+                {isCoverOpen ? (isAr ? 'مفتوح' : 'Open') : isAr ? 'مغلق' : 'Closed'}
+              </span>
+            </span>
+            {/* Progress across the two readings — the one number the sidebar carried that
+                is genuinely about how far the experiment has got, so it belongs here. */}
+            <span className="guided-cover-state">
+              {isAr ? 'القراءات المسجلة:' : 'Recorded readings:'}{' '}
+              <span style={{ color: readingsTaken >= 2 ? 'var(--success-green)' : '#fff' }}>
+                {readingsTaken} / 2
+              </span>
+            </span>
+            <button className="guided-footer-btn" onClick={onCoverClick}>
+              {isCoverOpen
+                ? isAr
+                  ? 'إغلاق غطاء الخزان'
+                  : 'Close tank cover'
+                : isAr
+                  ? 'فتح غطاء الخزان'
+                  : 'Open tank cover'}
+            </button>
+            <button
+              className="guided-footer-btn"
+              onClick={() => {
+                setPanel('experiments');
+                setGuidedPanelOpen(true);
+              }}
+            >
+              {isAr ? 'التجارب' : 'Experiments'}
+            </button>
+            <button className="guided-footer-btn" onClick={() => setShowVideo(true)}>
+              {isAr ? 'فيديو' : 'Video'}
+            </button>
+            <button className="guided-footer-btn" onClick={() => onSetMode('free')}>
+              {isAr ? 'الوضع الحر' : 'Free Mode'}
+            </button>
+            <button className="guided-footer-btn" onClick={onReset}>
+              {isAr ? 'إعادة تشغيل المعمل' : 'Reset simulator'}
+            </button>
+            {/* Compact EN | AR, as requested: a footer control, not a panel. */}
+            <button
+              className="guided-footer-btn is-lang"
+              onClick={() => onSelectLanguage(isAr ? 'en' : 'ar')}
+            >
+              {isAr ? 'English' : 'العربية'}
+            </button>
+          </div>
+        </>
+      )}
+
 
       {showVideo && (
         <div

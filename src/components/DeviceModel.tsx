@@ -278,6 +278,18 @@ interface DeviceModelProps {
   glassIor: number;
 }
 
+/**
+ * The single colour for learner-facing guidance.
+ *
+ * The reference experience marks the part a step is about in yellow. The glow used a blue
+ * `#1e7fd6`, which on the red flow-valve handle composited to magenta and did not read as
+ * "look here" at all; the guide arrow was already amber. One token now drives both, so a
+ * cue cannot drift from the other by editing one site.
+ *
+ * Presentation only — nothing about which target is chosen changes.
+ */
+const GUIDANCE_HIGHLIGHT = '#ffc233';
+
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
   lesson,
@@ -680,7 +692,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // than the rgb(83, 90, 111) core the comment above sets as the target, before the
       // tone curve lifts it further. This is the value that arrives near the target once
       // ACES at exposure 1.3 and the room's environment have had their say.
-      color: new THREE.Color('#3a4f6c'),
+      //
+      // BEDO-UX-06C lifted this from `#3a4f6c` to `#48628c`. Measured at the guided camera
+      // distance, the lower column was rendering rgb(98, 97, 95) — a blue lift of MINUS 3,
+      // i.e. neutral grey, so a learner could not follow the jet from the nozzle to the
+      // deflector through the glass. The original BEDO experience shows a readable
+      // blue-grey column, and that readability is the educational point of the frame.
+      //
+      // This sits slightly above the MP4-sampled core on purpose: the sample stays the
+      // reference for character (blue-grey, translucent, not saturated), while the extra
+      // lift buys back legibility through this renderer's opacity-based glass. Colour is
+      // the only thing that changed — opacity, roughness, transmission, depth response,
+      // the shader, the authored geometry and every physics constant are untouched.
+      color: new THREE.Color('#48628c'),
       transparent: true,
       opacity: 0.86,
       roughness: 0.22,
@@ -2571,7 +2595,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         }
         const mat = child.material;
         if (mat.emissive) {
-          mat.emissive.set('#1e7fd6');
+          mat.emissive.set(GUIDANCE_HIGHLIGHT);
           mat.emissiveIntensity = intensity;
         }
       });
@@ -3138,7 +3162,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             <cylinderGeometry args={[0.006, 0.006, 0.07, 12]} />
             <meshStandardMaterial
               color="#f58220"
-              emissive="#ff9100"
+              emissive={GUIDANCE_HIGHLIGHT}
               emissiveIntensity={1.4}
               toneMapped={false}
             />
@@ -3147,7 +3171,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             <coneGeometry args={[0.017, 0.034, 14]} />
             <meshStandardMaterial
               color="#f58220"
-              emissive="#ff9100"
+              emissive={GUIDANCE_HIGHLIGHT}
               emissiveIntensity={1.4}
               toneMapped={false}
             />

@@ -17,7 +17,21 @@ export function stubConfigFetch(): void {
   );
 }
 
-export const renderApp = (): RenderResult => render(<App />);
+/**
+ * Renders the app and begins the experiment.
+ *
+ * BEDO-UX-06 puts an information panel in front of the experiment, so "the app is on
+ * screen" and "the experiment has started" are now two different states. The suite is
+ * about the experiment, so it presses Start exactly as a learner does rather than
+ * disabling the panel. `loading-screen.spec` renders `<App />` directly when it needs the
+ * pre-start state.
+ */
+export const renderApp = (): RenderResult => {
+  const result = render(<App />);
+  const start = screen.queryByRole('button', { name: /^(Start|ابدأ)$/ });
+  if (start) fireEvent.click(start);
+  return result;
+};
 
 export const sidebar = () => document.querySelector('.sidebar-panel') as HTMLElement;
 
@@ -76,16 +90,17 @@ export const coverState = (): 'Open' | 'Closed' => {
   // Read the state attribute, not the words. The old text match looked for the first div
   // whose text began "Tank cover:" and then asked whether it contained "Open" — which the
   // adjacent "Open tank cover" button also satisfies, so a closed cover reported as open.
-  const flag = sidebar().querySelector('[data-bedo-cover-state]');
+  // Document-scoped: the guided experience (BEDO-UX-06) renders this in the bottom footer
+  // rather than the sidebar, which only exists in free mode now.
+  const flag = document.querySelector('[data-bedo-cover-state]');
   return flag?.getAttribute('data-bedo-cover-state') === 'open' ? 'Open' : 'Closed';
 };
 
 export const loadedWeightG = (): number => {
-  const row = [...sidebar().querySelectorAll('div')].find((d) =>
-    d.textContent?.startsWith('Added weights:')
-  );
-  const match = row?.textContent?.match(/(\d+)\s*g/);
-  return match ? Number(match[1]) : 0;
+  // Reads the value attribute rather than the visible words: the row moved into the guided
+  // dock, and the English label never matched in Arabic anyway.
+  const flag = document.querySelector('[data-bedo-loaded-weight]');
+  return Number(flag?.getAttribute('data-bedo-loaded-weight') ?? 0);
 };
 
 /**

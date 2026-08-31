@@ -3,6 +3,7 @@ import type { SimulationView } from '../types/index';
 import type { ExperimentDef } from '../domain/experiments';
 import { X, RefreshCw, BarChart2, Calculator, Camera, Download, CheckCircle2 } from 'lucide-react';
 import { GRAVITY_MS2 } from '../domain/physics';
+import { DeflectorBoard } from './DeflectorBoard';
 import { csvFilename, toCsv } from '../lib/exportSchema';
 
 /**
@@ -450,6 +451,13 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             </div>
           )}
         </div>
+
+          {/*
+            The reference board's deflector area: the seven deflectors with the installed
+            one marked, and the four family diagrams. Informational — selection stays where
+            it already is, so there is no second deflector state.
+          */}
+          <DeflectorBoard installedDeflectorId={state.selectedDeflectorId} language={state.language} />
       </div>
     </div>
   );
