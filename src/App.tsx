@@ -12,6 +12,7 @@ import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparat
 import { DEFLECTORS, getDeflector } from './domain/apparatus';
 import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
 import { isReady, markReady, subscribeReady } from './lib/readiness';
+import { readLanguagePreference, writeLanguagePreference } from './lib/languagePreference';
 import { SCENE_CONFIG } from './lib/sceneConfig';
 import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
@@ -85,7 +86,18 @@ export default function App() {
   const simulation = useSimulationState(runtime);
   const runner = useLessonRunner();
   const lessonState = useLessonState(runner);
-  const [ui, setUi] = useState<LessonAndUiState>(() => initialLessonState());
+  /**
+   * The language is read synchronously here, in the initializer, rather than applied by an
+   * effect after mount. The loading overlay is the first thing rendered, so a returning
+   * Arabic user must get Arabic on the FIRST render — an effect would paint English first
+   * and then flip, which is exactly the flash this is meant to avoid.
+   *
+   * The default lives here, not in the helper: `null` from storage means "no preference
+   * yet", which is a different fact from "chose English".
+   */
+  const [ui, setUi] = useState<LessonAndUiState>(() =>
+    initialLessonState(readLanguagePreference() ?? 'en')
+  );
 
   // The language switch is document state, not only panel styling. Screen readers,
   // browser translation, punctuation order and native form controls all read these
@@ -620,7 +632,12 @@ export default function App() {
           lesson={lessonView}
           experiment={experiment}
           availableDeflectors={availableDeflectors}
-          onSelectLanguage={(lang) => setUi((prev) => ({ ...prev, language: lang }))}
+          onSelectLanguage={(lang) => {
+            // Persist only an explicit choice. Nothing is written on startup, so a user
+            // who never touches the control leaves no stored preference behind.
+            writeLanguagePreference(lang);
+            setUi((prev) => ({ ...prev, language: lang }));
+          }}
           onSetMode={handleSetMode}
           onSelectExperiment={handleSelectExperiment}
           onSetParams={handleSetParams}
