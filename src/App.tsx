@@ -664,6 +664,7 @@ export default function App() {
       <div style={{ display: 'contents' }} inert={overlayMounted && !revealed}>
         <Scene3D
           state={view}
+          isArabic={ui.language === 'ar'}
           lesson={lessonView}
           sceneConfig={SCENE_CONFIG}
           onCoverClick={handleCoverClick}

@@ -735,13 +735,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
   backdrop-filter: blur(10px);
   pointer-events: none;
 }
-.guided-chip-code { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent-blue); }
-.guided-chip-title { font-size: 12px; color: rgba(255, 255, 255, 0.72); }
+.guided-chip-code { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent-blue); }
+.guided-chip-title { font-size: 14px; color: rgba(255, 255, 255, 0.85); }
 
 /* Dock: contextual control, then the instruction, bottom centre. */
 .guided-dock {
   position: absolute;
-  bottom: 68px;
+  /* Clears the footer, which grew when BEDO-UX-09 raised the text size and can wrap to
+     two rows in Arabic. The card and the footer used to overlap at 1366x768. */
+  bottom: 116px;
   left: 50%;
   transform: translateX(-50%);
   width: min(880px, calc(100vw - 96px));
@@ -783,7 +785,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
   backdrop-filter: blur(14px);
 }
 .guided-controls .slider-label,
-.guided-controls .valve-slider-container span { color: rgba(255, 255, 255, 0.88); }
+.guided-controls .valve-slider-container span { color: rgba(255, 255, 255, 0.92); }
+/* Contextual controls carry real labels and hit targets, not caption-sized text. */
+.guided-controls,
+.guided-controls .glass-card { font-size: 14px; }
+.guided-controls button { font-size: 14px; padding: 9px 14px; }
+.guided-controls .weight-add-btn { font-size: 14px; padding: 10px 12px; min-width: 60px; }
 
 /* The instruction card itself. */
 .step-card {
@@ -791,8 +798,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 18px;
-  padding: 16px 20px;
+  gap: 20px;
+  padding: 20px 24px;
   border-radius: 14px;
   /* Translucent, so the apparatus stays readable behind it. */
   background: rgba(20, 21, 23, 0.82);
@@ -804,9 +811,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .step-card-number .step-badge {
   display: inline-block;
-  padding: 6px 12px;
-  border-radius: 8px;
-  font-size: 11px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  /* BEDO-UX-09: the guided text was reported as too small to use, Arabic especially.
+     Every size in this card and the footer below is raised; nothing else changed. */
+  font-size: 14px;
   font-weight: 700;
   white-space: nowrap;
   color: var(--accent-blue);
@@ -815,24 +824,35 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .step-card-body { min-width: 0; }
-.step-card-primary {
-  margin: 0;
+/* The step name. Previously an unstyled <h3> inheriting a browser default. */
+.step-card-title {
+  margin: 0 0 4px;
   font-size: 15px;
   font-weight: 600;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.95);
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.step-card-primary {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.97);
 }
 .step-card-secondary {
-  margin: 6px 0 0;
+  margin: 9px 0 0;
   display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: #8fa7ad;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 15px;
+  line-height: 1.55;
+  /* Lifted from #8fa7ad: the observation is instructional text, not a caption, and it
+     has to stay legible on the translucent card. */
+  color: #b8ccd2;
 }
-.step-card-secondary svg { flex: none; color: var(--accent-blue); }
-.step-card-complete { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--success-green); }
+.step-card-secondary svg { flex: none; margin-top: 3px; color: var(--accent-blue); }
+.step-card-complete { margin: 10px 0 0; font-size: 15px; font-weight: 600; color: var(--success-green); }
 
 .step-card-actions { display: flex; gap: 8px; }
 .step-card-actions:empty { display: none; }
@@ -840,15 +860,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
   background: #f58220;
   color: #fff;
   font-weight: 700;
-  min-width: 96px;
+  font-size: 16px;
+  padding: 12px 26px;
+  min-width: 112px;
   box-shadow: 0 0 12px rgba(245, 130, 32, 0.35);
 }
-.step-card-actions .answer-sheet-btn { background: var(--success-green); color: #fff; font-weight: 700; }
+.step-card-actions .answer-sheet-btn { background: var(--success-green); color: #fff; font-weight: 700; font-size: 15px; padding: 12px 22px; }
 
 /* Small global actions. Compact by requirement: not a panel. */
 .guided-footer {
   position: absolute;
-  bottom: 16px;
+  bottom: 14px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -856,15 +878,26 @@ input[type="range"]::-webkit-slider-thumb:hover {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: center;
-  font-size: 11px;
-  color: #7f9298;
+  font-size: 14px;
+  color: #a4b8be;
 }
-.guided-cover-state { opacity: 0.85; }
+/*
+  The status text sits directly over the apparatus, which is mostly bright white, so size
+  alone did not make it readable. It gets the same backing as the buttons beside it.
+*/
+.guided-cover-state {
+  padding: 9px 14px;
+  border-radius: 9px;
+  background: rgba(20, 21, 23, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(8px);
+  white-space: nowrap;
+}
 .guided-footer-btn {
-  padding: 5px 11px;
-  font-size: 11px;
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.82);
+  padding: 9px 16px;
+  font-size: 14px;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.92);
   background: rgba(20, 21, 23, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
@@ -926,7 +959,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @media (max-height: 800px) {
   .intro-panel { padding: 36px 40px; }
   .intro-title { font-size: 25px; }
-  .guided-dock { bottom: 60px; }
+  /* Still above the footer — never back under it. */
+  .guided-dock { bottom: 124px; }
+  .guided-controls .glass-card { padding: 12px 14px; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -996,4 +1031,55 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @media (max-width: 1500px) {
   .dfl-board { grid-template-columns: 1fr; }
   .dfl-grid { grid-template-columns: repeat(4, 1fr); }
+}
+
+/*
+  A part naming itself under the pointer.
+
+  `pointer-events: none` is load-bearing rather than cosmetic: the chip is drawn directly
+  over the proxy that triggered it, so anything but `none` would let the label eat the
+  click or drag meant for the part and flicker as the pointer crossed its own tooltip.
+*/
+.scene-tooltip {
+  padding: 8px 14px;
+  border-radius: 9px;
+  background: rgba(20, 21, 23, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  user-select: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+/*
+  Target-aware placement, for the weight steps only.
+
+  The tray discs project into the bottom-centre of the frame — measured at x 0.37-0.64 and
+  y 0.70-0.98 of the viewport, and within a percent of that at 1366x768, 1440x900,
+  1920x1080 and 2560x1440 alike. That is exactly where the guided dock and footer live, so
+  at the step that says "add weights" the HUD was sitting on top of the five things the
+  learner is being told to click.
+
+  So for that step, and only that step, the dock moves to the left margin and the global
+  actions to the right, leaving the centre channel clear. The widths are capped in `vw` so
+  the clearance holds at every size rather than at the one it was tuned on. Everywhere else
+  the reference-aligned bottom-centre layout is untouched.
+*/
+.guided-dock.is-aside {
+  left: 24px;
+  transform: none;
+  width: min(520px, 34vw - 32px);
+  align-items: stretch;
+}
+
+.guided-footer.is-aside {
+  left: auto;
+  right: 24px;
+  transform: none;
+  width: min(420px, 32vw - 32px);
+  justify-content: flex-end;
 }

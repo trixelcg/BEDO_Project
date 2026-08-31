@@ -21,6 +21,8 @@ import { assetUrl } from '../lib/assetUrl';
 interface Scene3DProps {
   state: SimulationView;
   lesson: LessonView;
+  /** Reaches only the hover labels — see `DeviceModel`'s own prop. */
+  isArabic: boolean;
   sceneConfig: SceneConfig;
   onCoverClick: () => void;
   /** Returns whether the gate accepted it — the scene animates the transfer only if so. */
@@ -571,6 +573,7 @@ const CameraRig: React.FC<{
 
 export const Scene3D: React.FC<Scene3DProps> = ({
   state,
+  isArabic,
   lesson,
   sceneConfig,
   onCoverClick,
@@ -659,6 +662,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         <Suspense fallback={<ModelLoadingPlaceholder />}>
           <DeviceModel
             state={state}
+            isArabic={isArabic}
             lesson={lesson}
             focusTarget={focusTarget}
             groupRef={apparatusRef}

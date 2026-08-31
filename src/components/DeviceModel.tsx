@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { useGLTF } from '@react-three/drei';
+import { Html, useGLTF } from '@react-three/drei';
 import { extendWithKTX2, setKTX2Renderer } from '../lib/ktx2';
 
 import { useFrame, useThree } from '@react-three/fiber';
@@ -41,7 +41,7 @@ import {
   type HolderAnchor,
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
-import { TOTAL_FLOW_L_MIN, flowRateLMin, jetState } from '../domain/physics';
+import { NOZZLE_AREA_M2, TOTAL_FLOW_L_MIN, flowRateLMin, jetState } from '../domain/physics';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
   commits,
@@ -94,16 +94,43 @@ type Action =
   | { kind: 'weight'; grams: number }
   | { kind: 'power' }
   | { kind: 'flowValve' }
-  | { kind: 'volumetricValve' };
+  | { kind: 'volumetricValve' }
+  /**
+   * The nozzle answers a question rather than taking an instruction.
+   *
+   * There is one nozzle and nothing to choose about it, so it is deliberately absent from
+   * `actionableKeys` and `handleHotspot` does nothing with it: the proxy exists only so
+   * the part can name itself and its bore on hover (`docs/48 §BEDO-UX-09`).
+   */
+  | { kind: 'nozzle' };
 
 /** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
 const QUARTER_TURN = Math.PI / 2;
 
-/** An invisible sphere placed and sized from a real mesh, so clicks land on the part. */
+/** No fitted hit proxy is thinner than this, so a 3 mm disc is still clickable. */
+const MIN_HOTSPOT_HALF = 0.01;
+
+/** An invisible proxy placed and sized from a real mesh, so clicks land on the part. */
 interface Hotspot {
   key: string;
   position: [number, number, number];
   radius: number;
+  /**
+   * Measured half-extents, for parts a sphere cannot stand in for.
+   *
+   * A sphere is sized from the part's *largest* dimension, so around a thin disc it is a
+   * ball roughly as wide as the disc is across — and the tray's five discs are a row that
+   * recedes almost straight away from the camera (their centres differ by 0.0847 local in
+   * x but only ~11 px on screen). The spheres never overlap each other, but the *view ray*
+   * aimed at a far disc passes well inside the nearer discs' spheres, and the raycaster
+   * returns the nearest hit. Measured: 50 g, 100 g and 200 g were unreachable and 500 g
+   * answered for the whole stack (`docs/48 §BEDO-UX-09`).
+   *
+   * A box hugging the disc is thin along the axis that separates them, so it cannot stand
+   * in front of its neighbours — the same reason `DropRegion` is measured boxes and not
+   * spheres.
+   */
+  half?: [number, number, number];
   action: Action;
 }
 
@@ -232,6 +259,8 @@ export interface WeightAvailability {
 
 interface DeviceModelProps {
   state: SimulationView;
+  /** Only the hover labels need it; nothing about the framing or the physics does. */
+  isArabic: boolean;
   lesson: LessonView;
   /** Part the current guided step is about — null in free mode. */
   focusTarget: AnchorKey | null;
@@ -292,6 +321,7 @@ const GUIDANCE_HIGHLIGHT = '#ffc233';
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
+  isArabic,
   lesson,
   focusTarget,
   groupRef,
@@ -336,6 +366,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const waterGltfs = Object.values(water);
 
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  /**
+   * Which part is naming itself right now.
+   *
+   * Deliberately not `hoveredKey`: that one drives the glow and so must stay restricted to
+   * parts the gate would accept, or a refused control would light up as if it were live
+   * (`BEDO-020 §24`). A label makes no such promise — the nozzle is never actionable and
+   * still has to be able to say what it is.
+   */
+  const [labelledKey, setLabelledKey] = useState<string | null>(null);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   /** Meshes currently carrying a highlight material, so they can be put back. */
   const highlighted = useRef<Set<string>>(new Set());
@@ -1555,14 +1594,27 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
 
-    const spot = (name: string, action: Action, minRadius: number): Hotspot | null => {
+    const spot = (
+      name: string,
+      action: Action,
+      minRadius: number,
+      /** Hug the part instead of ballooning to its longest side — see `Hotspot.half`. */
+      fitted = false
+    ): Hotspot | null => {
       if (!localBox([name])) return null;
       tmp.box.getCenter(tmp.center);
       tmp.box.getSize(tmp.size);
       const local = group.worldToLocal(tmp.center.clone());
       const worldRadius = Math.max(tmp.size.x, tmp.size.y, tmp.size.z) * 0.6;
       const radius = THREE.MathUtils.clamp(worldRadius / modelScale, minRadius, 0.18);
-      return { key: name, position: [local.x, local.y, local.z], radius, action };
+      if (!fitted) return { key: name, position: [local.x, local.y, local.z], radius, action };
+      // Half-extents in the group's own units, floored so a disc only 3 mm thick is still
+      // worth aiming at. The floor is well under the 0.0847 that separates two discs, so a
+      // fitted proxy stays clear of its neighbours in every axis.
+      const half = ([tmp.size.x, tmp.size.y, tmp.size.z] as const).map((v) =>
+        Math.max(v / modelScale / 2, MIN_HOTSPOT_HALF)
+      ) as [number, number, number];
+      return { key: name, position: [local.x, local.y, local.z], radius, half, action };
     };
 
     const list = [
@@ -1571,9 +1623,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       spot(MESH.flowValve, { kind: 'flowValve' }, 0.045),
       spot(MESH.volumetricValve, { kind: 'volumetricValve' }, 0.045),
       ...DEFLECTORS.map((d) => spot(d.shelf, { kind: 'deflector', id: d.id }, 0.022)),
+      // Fitted, not spherical: the tray row recedes from the camera, so a ball around one
+      // disc sits in front of the discs behind it. See `Hotspot.half`.
       ...WEIGHTS.filter((w) => w.mesh).map((w) =>
-        spot(w.mesh!, { kind: 'weight', grams: w.grams }, 0.022)
+        spot(w.mesh!, { kind: 'weight', grams: w.grams }, 0.022, true)
       ),
+      // Fitted for the same reason the discs are: it sits inside the tank among parts the
+      // learner does aim at, so it must not stand in front of them.
+      spot(MESH.nozzle, { kind: 'nozzle' }, 0.02, true),
     ];
 
     setHotspots(list.filter((h): h is Hotspot => h !== null));
@@ -1628,6 +1685,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * The set comes from the gate (`lesson.available`); this component does not work out
    * legality, it is only told the answer.
    */
+  /**
+   * What a part says when the pointer rests on it.
+   *
+   * Both labels are derived: the mass comes from `WEIGHTS`, and the bore is computed back
+   * out of `NOZZLE_AREA_M2` — the same constant the momentum equations use — so the label
+   * cannot drift away from the physics it is describing. Nothing here is a second source
+   * of truth for either number.
+   */
+  const labelFor = useCallback(
+    (action: Action): string | null => {
+      // `غ` in Arabic, matching the app's own localised mass strings — the removal control
+      // says `إزالة ${g} غ` and the balance indicator `الهدف ≈ ${n} غ`. The bare `g`
+      // elsewhere is in readouts that are not translated at all.
+      if (action.kind === 'weight') return isArabic ? `${action.grams} غ` : `${action.grams} g`;
+      if (action.kind === 'nozzle') {
+        const boreMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
+        return isArabic
+          ? `الفوهة — قطر ${boreMm.toFixed(0)} مم`
+          : `Nozzle — ${boreMm.toFixed(0)} mm bore`;
+      }
+      return null;
+    },
+    [isArabic]
+  );
+
   const actionableKeys = useMemo<Set<string>>(() => {
     if (state.showMonitor) return new Set();
     const parts: Record<string, string[]> = {
@@ -1710,6 +1792,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         return;
       case 'weight':
         return onAddWeight(action.grams);
+      // Labelled, never actuated. See the `nozzle` arm of `Action`.
+      case 'nozzle':
+        return;
       case 'power':
         return onPowerClick();
       case 'flowValve':
@@ -3202,6 +3287,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         const source: DragSource | null =
           h.action.kind === 'deflector' ? { kind: 'deflector', deflectorId: h.action.id } : null;
         const draggable = source !== null;
+        // A proxy that only names its part must not become an obstacle in front of one
+        // that does something. It takes no click and stops no event, so a press aimed at
+        // whatever sits behind it still gets there.
+        const labelOnly = h.action.kind === 'nozzle';
 
         return (
           <mesh
@@ -3210,19 +3299,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             position={h.position}
             {...(source ? drag.handlersFor(source) : {})}
             onPointerOver={(e) => {
-              e.stopPropagation();
+              if (!labelOnly) e.stopPropagation();
               // Actionability, not focus: a hotspot the gate would refuse must not offer
               // the same pointer as one it would accept (BEDO-020 §24).
               if (actionableKeys.has(h.key)) {
                 document.body.style.cursor = draggable ? 'grab' : 'pointer';
                 setHoveredKey(h.key);
               }
+              // Naming a part is not the same promise as offering it — see `labelledKey`.
+              if (labelFor(h.action)) setLabelledKey(h.key);
             }}
             onPointerOut={() => {
               if (!drag.current()) document.body.style.cursor = 'default';
               setHoveredKey((k) => (k === h.key ? null : k));
+              setLabelledKey((k) => (k === h.key ? null : k));
             }}
-            {...(draggable
+            {...(draggable || labelOnly
               ? {}
               : {
                   onClick: (e: { stopPropagation: () => void }) => {
@@ -3231,8 +3323,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                   },
                 })}
           >
-            <sphereGeometry args={[h.radius, 12, 10]} />
+            {h.half ? (
+              <boxGeometry args={[h.half[0] * 2, h.half[1] * 2, h.half[2] * 2]} />
+            ) : (
+              <sphereGeometry args={[h.radius, 12, 10]} />
+            )}
             <meshBasicMaterial visible={false} />
+            {labelledKey === h.key && (
+              // `pointer-events: none` is what keeps this a label and not an obstacle: the
+              // chip is drawn over the part it names, and a drag or a click has to reach
+              // the proxy underneath it. Without it the tooltip would swallow its own
+              // trigger and flicker as the pointer entered it.
+              <Html
+                center
+                position={[0, (h.half?.[1] ?? h.radius) + 0.035, 0]}
+                zIndexRange={[40, 0]}
+                style={{ pointerEvents: 'none' }}
+              >
+                <div className="scene-tooltip" dir={isArabic ? 'rtl' : 'ltr'}>
+                  {labelFor(h.action)}
+                </div>
+              </Html>
+            )}
           </mesh>
         );
       })}

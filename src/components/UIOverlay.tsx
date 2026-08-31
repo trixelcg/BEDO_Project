@@ -123,6 +123,18 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   const guided = lesson.isGuided;
   const activeStep = lesson.step;
 
+  /**
+   * The two steps that ask the learner to click the discs themselves.
+   *
+   * The tray projects into the bottom-centre of the frame at every supported size — 
+   * measured, x 0.37–0.64 and y 0.70–0.98 of the viewport at 1366x768, 1440x900,
+   * 1920x1080 and 2560x1440 alike — which is exactly where the reference-aligned dock and
+   * footer sit. At the one step whose instruction is *"add weights"*, that layout covers
+   * the things being pointed at, so the HUD steps aside for it and returns everywhere else
+   * (`docs/51`).
+   */
+  const asideForWeights = lesson.isGuided && lesson.target === 'weights';
+
   const totalLoadedWeight = loadedWeightsG.reduce((a, b) => a + b, 0);
   const flow = flowRateLMin(valveOpening, params.pumpFlowLMin);
 
@@ -738,7 +750,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             `show()` already gates each control on the lesson's `panelControls`, so the
             dock is empty on steps that ask for a purely physical action.
           */}
-          <div className="guided-dock interactive">
+          <div className={`guided-dock interactive${asideForWeights ? ' is-aside' : ''}`}>
             <div className="guided-controls">{apparatusControls}</div>
             {activeStep && (
               <StepInstructionCard
@@ -753,7 +765,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
           </div>
 
           {/* Global actions, deliberately small and out of the way. */}
-          <div className="guided-footer interactive">
+          <div className={`guided-footer interactive${asideForWeights ? ' is-aside' : ''}`}>
             <span className="guided-cover-state">
               {isAr ? 'غطاء الخزان:' : 'Tank cover:'}{' '}
               <span
