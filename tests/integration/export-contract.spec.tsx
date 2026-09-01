@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, screen } from '@testing-library/react';
+import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { click, renderApp, stubConfigFetch, walkLesson } from '../helpers/app-harness';
 
@@ -202,9 +202,25 @@ describe('the on-screen readings table', () => {
     expect(cells(1)[7]).toBe('—');
   });
 
-  it('prints the total loaded weight in grams and newtons', () => {
+  it('prints the mass on the tray, not the sum of the recorded rows', () => {
     walkLesson(1, 10);
-    expect(screen.getByText('340 g × g = 3.335 N')).toBeDefined();
+    /*
+      0 g, not 340 g.
+
+      This readout used to sum `loadedMassG` across every recorded row, so after both
+      readings it printed 80 + 260 = 340 g — a mass that was never on the pan at one time.
+      BEDO-UX-12 makes it what its label says: what is on the tray right now. By step 10
+      that is nothing, because a reading step ends with `REMOVE_ALL_WEIGHTS` — the lesson
+      tidying the pan between readings — so an empty pan is the honest reading. Each
+      reading's own mass is still carried by the table's Mass column.
+
+      That it tracks the tray while weights are going on and coming off is pinned
+      separately, in `monitor-live.spec.tsx`.
+    */
+    const card = Array.from(document.querySelectorAll('.indicator-card')).find((el) =>
+      el.textContent?.includes('Total Weight')
+    );
+    expect(card?.textContent).toContain('0 g × g = 0.000 N');
   });
 
   it('uses the Arabic headers when the lesson is in Arabic', () => {

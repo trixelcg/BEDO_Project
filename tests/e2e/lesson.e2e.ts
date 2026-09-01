@@ -103,7 +103,9 @@ test.describe('guided walkthrough', () => {
     // 9 — open the software monitor
     await expect(sidebar(page).getByText('2 / 2')).toBeVisible(); // both readings taken
     await button(page, 'Open Data Monitor').click();
-    await expect(page.locator('.monitor-fullscreen')).toBeVisible();
+    // Docked, not fullscreen: BEDO-UX-12C opens the board beside the apparatus so the
+    // learner can keep working while reading it. Fullscreen is opt-in from `Expand`.
+    await expect(page.locator('.monitor-docked')).toBeVisible();
     await expectStep(page, 10);
 
     // 10 — record the actual force

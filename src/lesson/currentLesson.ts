@@ -30,8 +30,17 @@ export const CURRENT_LESSON: Lesson = {
    * machine gives it a transition in every state, and it turns without changing anything —
    * but no experiment sheet instructs it, so it is an affordance rather than a step.
    * `docs/35 §3`.
+   *
+   * The software board joins it in BEDO-UX-12C, for the same reason and by the same rule.
+   * It is instrumentation, not a step: reading it changes nothing about the rig, and a
+   * learner turning the valve or loading the pan should be able to watch what that does.
+   * Putting it here rather than into each step's `panelControls` is the whole point —
+   * `panelControls` stays the one action the current step asks for, and this stays the
+   * short list of things reachable regardless of where the procedure has got to. Steps
+   * 9-11 still name the board as their own contextual control, so it is not listed twice
+   * on screen; the guided footer offers it only when they do not.
    */
-  alwaysAvailable: ['volumetricValve'],
+  alwaysAvailable: ['volumetricValve', 'monitor'],
   steps: [
     {
       id: 'unscrew-cover',

@@ -276,9 +276,28 @@ describe('presentation interactions', () => {
     }
   });
 
-  it('offers the monitor once the readings are taken', () => {
-    expect(ask({ kind: 'presentation', action: 'OPEN_MONITOR' }, 'open-monitor').allowed).toBe(true);
-    expect(ask({ kind: 'presentation', action: 'OPEN_MONITOR' }, 'unscrew-cover').allowed).toBe(false);
+  it('offers the monitor at every step, as instrumentation rather than a step', () => {
+    /*
+      This used to assert the board was refused before `open-monitor`.
+
+      BEDO-UX-12C changes that deliberately: the board is a live instrument, and a learner
+      turning the valve or loading the pan has to be able to watch what it does. It is now
+      in the lesson's `alwaysAvailable` list, beside the volumetric valve, for the same
+      reason — reachable at any point, and not a step. `panelControls` is untouched, so it
+      is still steps 9-11 that *ask* for it.
+    */
+    for (const s of CURRENT_LESSON.steps) {
+      expect(ask({ kind: 'presentation', action: 'OPEN_MONITOR' }, s.id).allowed, s.id).toBe(true);
+    }
+  });
+
+  it('still asks for the monitor at only the steps whose control it is', () => {
+    // Availability is not the same as being asked for: the arrow and the contextual dock
+    // follow `panelControls`, which BEDO-UX-12C did not touch.
+    const asksForIt = CURRENT_LESSON.steps
+      .filter((s) => s.panelControls.includes('monitor'))
+      .map((s) => s.id);
+    expect(asksForIt).toEqual(['open-monitor', 'record-actual-force', 'open-answer-sheet']);
   });
 
   it('does not put a screen through the apparatus state machine', () => {

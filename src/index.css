@@ -426,6 +426,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* Table grid styles */
 .data-table-container {
   overflow-x: auto;
+  /*
+    Keep its own height.
+
+    It is a flex item in the readings card's column, so it may shrink — and once the live
+    panel took space above it, it shrank to exactly 0 while the table inside stayed 200px
+    tall. The table was in the DOM, reachable by a text query, and invisible on screen.
+  */
+  flex: none;
 }
 
 .data-table {
@@ -1069,10 +1077,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
   the clearance holds at every size rather than at the one it was tuned on. Everywhere else
   the reference-aligned bottom-centre layout is untouched.
 */
+/*
+  Sized against the container, not the window.
+
+  These were `vw`, which is the whole window — and the docked board takes 30% of it, so at
+  1920 with the board open the card kept its full-width size inside a 1344px stage and
+  covered the 10 g disc the step asks the learner to click. `%` resolves against
+  `.ui-container`, which is exactly the stage the apparatus is drawn on, so the clearance
+  holds whether the board is docked or not.
+*/
 .guided-dock.is-aside {
   left: 24px;
   transform: none;
-  width: min(520px, 34vw - 32px);
+  width: min(520px, 28%);
   align-items: stretch;
 }
 
@@ -1080,6 +1097,207 @@ input[type="range"]::-webkit-slider-thumb:hover {
   left: auto;
   right: 24px;
   transform: none;
-  width: min(420px, 32vw - 32px);
+  width: min(420px, 26%);
   justify-content: flex-end;
 }
+
+/*
+  BEDO-UX-12 — the live half of the software board.
+
+  The results table is computed at the four fixed openings the procedure records at, so it
+  can never show what the learner is holding. This panel carries the current state, and it
+  is sized to be read at working distance rather than inspected: the values are 20px, the
+  labels 13px, and the whole block is separated from the recorded table so a live number is
+  never mistaken for a recorded one.
+
+  Values carry `direction: ltr; unicode-bidi: isolate` from NUMERIC_READOUT in the
+  component. That is what keeps "15.714 L/min" from being reordered into nonsense inside an
+  RTL document, which is the same defect the monitor readouts were fixed for earlier.
+*/
+.mon-live {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(0, 229, 255, 0.045);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+}
+
+.mon-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent-blue);
+}
+
+.mon-live-badge {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #0b1418;
+  background: var(--accent-blue);
+}
+
+.mon-live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.mon-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  min-width: 0;
+}
+
+.mon-cell-wide { grid-column: span 2; }
+.mon-cell-accent { border-color: rgba(0, 229, 255, 0.32); background: rgba(0, 229, 255, 0.08); }
+
+.mon-lbl {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.66);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The number itself: the thing being read across the room. */
+.mon-val {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.97);
+  font-variant-numeric: tabular-nums;
+}
+
+.mon-cell-accent .mon-val { color: var(--accent-blue); }
+.mon-sub { font-size: 12px; color: rgba(255, 255, 255, 0.55); font-variant-numeric: tabular-nums; }
+
+/* The two headline readouts beside it, raised to match. */
+.monitor-content .indicator-card > span { font-size: 15px; }
+.monitor-content .indicator-card > span:last-child { font-size: 17px; }
+
+/*
+  BEDO-UX-12B — the board beside the experiment, not on top of it.
+
+  The monitor was a 100vw x 100vh opaque overlay, so opening it hid the apparatus: the
+  learner could not watch Q move while turning the valve, which is what a live monitor is
+  for. Docked is now the default and fullscreen is opt-in.
+
+  The width is reserved on `.app-container`, not taken by the panel floating over things.
+  `.canvas-container` and `.ui-container` are both absolutely positioned at 100% width, so
+  narrowing them here does two jobs at once: R3F resizes the scene to the smaller viewport
+  (its own ResizeObserver — no second canvas, no new context), and the guided HUD, which
+  centres itself in `.ui-container`, re-centres inside what is left instead of sliding
+  under the dock. That is what keeps the step card, the flow slider and the tray clear.
+*/
+.app-container.has-docked-monitor {
+  /*
+    30% of the viewport, with a floor so the values stay legible on a small laptop and a
+    ceiling so the dock does not become a wall on a 27-inch screen.
+
+    The `100vw - 1050px` term is what stops the board starving the experiment. The guided
+    aside layout was measured against stages of 1366px and wider; at 1366 a flat 30% left
+    only 956px, and in that column the instruction card grew to 657px tall on a 768px
+    screen — the card, not the tray, was what no longer fitted. Reserving at least 1050px
+    for the apparatus keeps the stage inside the range that layout was proven at, and the
+    board simply takes a little less on the smallest screens.
+  */
+  --monitor-dock-w: clamp(300px, min(30vw, 100vw - 1050px), 760px);
+}
+
+.has-docked-monitor .canvas-container,
+.has-docked-monitor .ui-container {
+  width: calc(100% - var(--monitor-dock-w));
+}
+
+/* RTL docks on the other side, and the apparatus keeps the rest. */
+[dir='rtl'] .has-docked-monitor .canvas-container,
+[dir='rtl'] .has-docked-monitor .ui-container {
+  left: var(--monitor-dock-w);
+}
+
+.monitor-docked {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--monitor-dock-w, 30vw);
+  height: 100vh;
+  background: #141517;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+[dir='rtl'] .monitor-docked {
+  right: auto;
+  left: 0;
+  border-left: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* One column in the dock; the graph and the reference board belong to the expanded view. */
+.monitor-docked .monitor-content {
+  grid-template-columns: 1fr;
+  gap: 14px;
+  overflow-y: visible;
+}
+
+.monitor-docked .monitor-header { flex-wrap: wrap; gap: 10px; }
+.monitor-docked .monitor-title-group h1 { font-size: 17px; }
+.monitor-docked .monitor-title-group p { font-size: 12px; }
+.monitor-docked .btn-secondary,
+.monitor-docked .btn-primary { font-size: 12px; padding: 7px 10px; }
+
+/*
+  What the dock drops.
+
+  Not "everything that does not fit" — the live values and the current diagram stay at full
+  size, and what goes is the reference material the expanded board exists to show: the
+  force-vs-flow plot, the quiz, the seven-deflector list and the three families that are not
+  installed. Nothing live is hidden (BEDO-UX-12B §8).
+*/
+.monitor-docked .plot-header,
+.monitor-docked .plot-canvas,
+.monitor-docked .dfl-list-wrap,
+.monitor-docked .dfl-fig:not(.is-active) { display: none; }
+
+/*
+  The plot goes, the assessment stays.
+
+  Both live inside `.plot-container`, so hiding the container took the closing step's
+  question with it and the learner could not answer without expanding the board. The chart
+  is reference material; the question is part of the lesson.
+*/
+.monitor-docked .plot-container { background: none; border: none; padding: 0; }
+
+.monitor-docked .dfl-board { display: block; padding: 0; }
+.monitor-docked .dfl-grid { grid-template-columns: 1fr; }
+.monitor-docked .dfl-diagrams { margin: 0; }
+
+/* Live values keep their size in the dock — that is the point of the panel. */
+.monitor-docked .mon-live-grid { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); }
+.monitor-docked .mon-cell-wide { grid-column: 1 / -1; }
+.monitor-docked .mon-val { font-size: 19px; }
+.monitor-docked .mon-lbl { font-size: 12px; white-space: normal; }
+.monitor-docked .data-table { font-size: 11px; }
+.monitor-docked .data-table th,
+.monitor-docked .data-table td { padding: 5px 4px; }
+
+/* The dock is narrow; the readings table scrolls sideways rather than overflowing it. */
+.monitor-docked .data-table-container { max-width: 100%; }

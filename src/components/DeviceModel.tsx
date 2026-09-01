@@ -375,6 +375,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * still has to be able to say what it is.
    */
   const [labelledKey, setLabelledKey] = useState<string | null>(null);
+
+  /**
+   * The board is *covering* the apparatus, not merely open.
+   *
+   * These suppressions were written when the software board was a fullscreen overlay:
+   * with the rig invisible, highlighting a part or pointing an arrow at it was pointless.
+   * A docked board leaves the apparatus on screen and in use — the learner is meant to
+   * click the very discs this gate was hiding — so the affordances follow whether the
+   * scene is actually covered, not whether the board exists. `BEDO-UX-12C`.
+   *
+   * Hit-testing is untouched: a hotspot's geometry and its click path never consulted
+   * this, which is why clicks already worked while docked; what was missing was the
+   * cursor, the glow and the guide arrow.
+   */
+  const sceneHidden = state.showMonitor && state.monitorExpanded;
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   /** Meshes currently carrying a highlight material, so they can be put back. */
   const highlighted = useRef<Set<string>>(new Set());
@@ -1644,7 +1659,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * which is what the pulsing highlight and the pointer cursor key off.
    */
   const liveKeys = useMemo<Set<string>>(() => {
-    if (state.showMonitor) return new Set();
+    if (sceneHidden) return new Set();
 
     const trayDeflectors = DEFLECTORS.map((d) => d.shelf);
     const trayWeights = WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!);
@@ -1671,7 +1686,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       weights: trayWeights,
     };
     return new Set(lesson.highlight.flatMap((key) => parts[key] ?? []));
-  }, [lesson.isGuided, lesson.highlight, state.showMonitor]);
+  }, [lesson.isGuided, lesson.highlight, sceneHidden]);
 
   /**
    * Parts the interaction gate will actually accept a click on.
@@ -1711,7 +1726,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
 
   const actionableKeys = useMemo<Set<string>>(() => {
-    if (state.showMonitor) return new Set();
+    if (sceneHidden) return new Set();
     const parts: Record<string, string[]> = {
       cover: [MESH.tankCover],
       deflectors: DEFLECTORS.map((d) => d.shelf),
@@ -1731,10 +1746,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!lesson.selectableDeflectorIds.includes(d.id)) keys.delete(d.shelf);
     }
     return keys;
-  }, [lesson.available, lesson.selectableDeflectorIds, state.showMonitor]);
+  }, [lesson.available, lesson.selectableDeflectorIds, sceneHidden]);
 
   /** Whether the gate would accept a weight interaction — drives the discs' cursor. */
-  const weightsAreActionable = !state.showMonitor && lesson.available.includes('weights');
+  const weightsAreActionable = !sceneHidden && lesson.available.includes('weights');
 
   /**
    * Where the guide arrow floats — null in free mode, or once the step is satisfied.
@@ -1745,7 +1760,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * and each still produces exactly the behaviour it did before.
    */
   const arrowPos = useMemo<[number, number, number] | null>(() => {
-    if (state.showMonitor || !lesson.isGuided || !focusTarget) return null;
+    if (sceneHidden || !lesson.isGuided || !focusTarget) return null;
     if (lesson.isSatisfied) return null;
 
     const anchor = anchors[focusTarget];
@@ -1753,7 +1768,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     const off = ANCHOR_VIEW[focusTarget]?.arrowOffset ?? DEFAULT_ARROW_OFFSET;
     return [anchor[0] + off[0], anchor[1] + off[1], anchor[2] + off[2]];
-  }, [state.showMonitor, lesson.isGuided, lesson.isSatisfied, anchors, focusTarget]);
+  }, [sceneHidden, lesson.isGuided, lesson.isSatisfied, anchors, focusTarget]);
 
   const handleHotspot = (action: Action) => {
     switch (action.kind) {
@@ -2382,7 +2397,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // and BUG-05. A wrong-experiment deflector must be pickable precisely so that the gate
     // can refuse it and the learner can see why (`§7`).
     canDrag: (source) => {
-      if (state.showMonitor) return false;
+      if (sceneHidden) return false;
       if (source.kind === 'weight') return source.index < state.loadedWeightsG.length;
       const shelf = pick(getDeflector(source.deflectorId).shelf);
       return shelf?.visible === true;

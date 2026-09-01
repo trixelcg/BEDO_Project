@@ -801,6 +801,26 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
             >
               {isAr ? 'التجارب' : 'Experiments'}
             </button>
+            {/*
+              The board as a secondary utility, not a step's contextual control.
+
+              `panelControls` stays what it is — the one action the current step asks for —
+              and the board is reachable from the global row beside Experiments and Video,
+              throughout the run. It is hidden at the steps whose own contextual control is
+              already the board (9-11), so there is exactly one way to open it at any
+              moment. Opening it changes no simulation state and advances no step, except
+              at `open-monitor`, where opening the board has always been what completes it.
+            */}
+            {!show('monitor') && (
+              <button
+                className="guided-footer-btn"
+                onClick={onToggleMonitor}
+                aria-label={isAr ? 'فتح شاشة البيانات' : 'Open Data Monitor'}
+              >
+                <Monitor size={13} />
+                {isAr ? 'شاشة البيانات' : 'Monitor'}
+              </button>
+            )}
             <button className="guided-footer-btn" onClick={() => setShowVideo(true)}>
               {isAr ? 'فيديو' : 'Video'}
             </button>

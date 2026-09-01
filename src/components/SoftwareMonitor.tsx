@@ -1,8 +1,19 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import type { SimulationView } from '../types/index';
 import type { ExperimentDef } from '../domain/experiments';
-import { X, RefreshCw, BarChart2, Calculator, Camera, Download, CheckCircle2 } from 'lucide-react';
-import { GRAVITY_MS2 } from '../domain/physics';
+import {
+  X,
+  RefreshCw,
+  BarChart2,
+  Calculator,
+  Camera,
+  Download,
+  CheckCircle2,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
+import { GRAVITY_MS2, NOZZLE_AREA_M2 } from '../domain/physics';
+import { getDeflector } from '../domain/apparatus';
 import { DeflectorBoard } from './DeflectorBoard';
 import { csvFilename, toCsv } from '../lib/exportSchema';
 
@@ -30,6 +41,8 @@ interface SoftwareMonitorProps {
   onAnswerQuiz: (choice: number) => void;
   onClose: () => void;
   onReset: () => void;
+  /** Docked beside the apparatus, or expanded over it. */
+  onToggleExpand: () => void;
 }
 
 export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
@@ -40,9 +53,10 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   onAnswerQuiz,
   onClose,
   onReset,
+  onToggleExpand,
 }) => {
   const isAr = state.language === 'ar';
-  const { recordedRows, isCalculated, quizAnswer } = state;
+  const { recordedRows, isCalculated, quizAnswer, live } = state;
 
   // Only the rows the student actually balanced are readings.
   const rows = useMemo(
@@ -50,8 +64,20 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
     [recordedRows]
   );
 
-  const totalWeightG = recordedRows.reduce((sum, r) => sum + r.loadedMassG, 0);
-  const totalWeightN = (totalWeightG * GRAVITY_MS2) / 1000;
+  /*
+    The tray, not the table.
+
+    This used to sum `loadedMassG` across `recordedRows`, which answers a different
+    question and got both cases wrong: in free mode no row is being balanced, so a fully
+    loaded tray reported 0 g; and once both readings were committed it reported their sum
+    rather than what is on the pan. `state.live` follows the pan itself.
+  */
+  const totalWeightG = live.loadedMassG;
+  const totalWeightN = live.measuredForceN;
+
+  /** 10 mm, from the same constant the momentum equations and the nozzle tooltip use. */
+  const nozzleDiameterMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
+  const installed = getDeflector(state.selectedDeflectorId);
 
   // Scale the axes to the data rather than pinning them, which used to clip every reading.
   const niceCeil = (v: number) => {
@@ -119,12 +145,43 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
     a.click();
   };
 
+  /**
+   * Escape steps back one level rather than trapping the learner.
+   *
+   * Expanded returns to the dock — which is where the apparatus is usable — and from the
+   * dock it closes the board. Nothing else in the app claims Escape while the monitor is
+   * up, and the handler is removed with the panel.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      if (state.monitorExpanded) onToggleExpand();
+      else onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [state.monitorExpanded, onToggleExpand, onClose]);
+
   const question = experiment.quiz[0];
   const answered = quizAnswer !== null;
   const correct = answered && quizAnswer === question.answer;
 
   return (
-    <div className={`monitor-fullscreen interactive ${isAr ? 'rtl' : ''}`}>
+    <div
+      /*
+        Docked by default. The board used to be a 100vw x 100vh opaque overlay, so opening
+        it hid the apparatus — a learner could not watch a value move while turning the
+        valve, which is the whole point of a live monitor. Docked, it takes a column beside
+        the rig; `.app-container.has-docked-monitor` gives that column its width and the
+        canvas and the guided HUD shrink into what is left, so nothing is covered.
+      */
+      className={`${state.monitorExpanded ? 'monitor-fullscreen' : 'monitor-docked'} interactive ${
+        isAr ? 'rtl' : ''
+      }`}
+      role="region"
+      aria-label={isAr ? 'شاشة برنامج المراقبة' : 'Software Data Monitor'}
+    >
       <div className="monitor-header">
         <div className="monitor-title-group">
           <h1>{isAr ? 'شاشة برنامج المراقبة' : 'Software Data Monitor'}</h1>
@@ -133,6 +190,23 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          <button
+            className="btn-secondary"
+            onClick={onToggleExpand}
+            aria-expanded={state.monitorExpanded}
+            aria-label={
+              state.monitorExpanded
+                ? isAr
+                  ? 'تصغير شاشة المراقبة'
+                  : 'Collapse the monitor'
+                : isAr
+                  ? 'تكبير شاشة المراقبة'
+                  : 'Expand the monitor'
+            }
+          >
+            {state.monitorExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            {state.monitorExpanded ? (isAr ? 'تصغير' : 'Collapse') : isAr ? 'تكبير' : 'Expand'}
+          </button>
           <button className="btn-secondary" onClick={handleSaveScreen}>
             <Camera size={15} />
             {isAr ? 'حفظ الشاشة' : 'Save Screen'}
@@ -166,7 +240,18 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
         {/* Readings */}
         <div
           className="glass-card"
-          style={{ padding: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+          /*
+            No overflow clip on the card.
+
+            It used to be `overflow: hidden`, to stop a wide results table stretching the
+            column. Once the live panel was added above it that clipped the table out of
+            the card entirely. `overflow-x: hidden` is not a fix either: when one axis is
+            not `visible` the other computes to `auto`, so the card still scrolled
+            internally and still cut the table off below the header. Containing the wide
+            table is `.data-table-container`'s own job, and `.monitor-content` already
+            scrolls, so the card is simply allowed to be as tall as its contents.
+          */
+          style={{ padding: '20px', display: 'flex', flexDirection: 'column' }}
         >
           <h3
             className="section-title"
@@ -174,6 +259,83 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
           >
             {isAr ? 'جدول القراءات' : 'Recorded Readings'}
           </h3>
+
+          {/*
+            Live measurements.
+
+            The results table below is computed at the four fixed openings the procedure
+            records at, so it can never show what the learner is holding. This panel is
+            that missing half: the deflector on the rod, the nozzle it leaves, and the
+            flow, velocities and force at the current valve setting. Every value is read
+            from `state.live` — one `jetState` call in the selector layer — so nothing here
+            re-derives physics, and the board cannot disagree with the calculation.
+          */}
+          <div className="mon-live">
+            <div className="mon-live-head">
+              <span>{isAr ? 'القياسات الحية' : 'Live measurements'}</span>
+              <span className="mon-live-badge">{isAr ? 'مباشر' : 'LIVE'}</span>
+            </div>
+
+            <div className="mon-live-grid">
+              <div className="mon-cell mon-cell-wide">
+                <span className="mon-lbl">{isAr ? 'العاكس المركّب' : 'Installed deflector'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {installed.id}° · {isAr ? installed.nameAr : installed.nameEn}
+                </span>
+                <span className="mon-sub" style={NUMERIC_READOUT}>
+                  k = {installed.momentumFactor.toFixed(3)}
+                </span>
+              </div>
+
+              <div className="mon-cell">
+                <span className="mon-lbl">{isAr ? 'قطر الفوهة' : 'Nozzle diameter'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {nozzleDiameterMm.toFixed(0)} mm
+                </span>
+                <span className="mon-sub" style={NUMERIC_READOUT}>
+                  A = {NOZZLE_AREA_M2.toExponential(3)} m²
+                </span>
+              </div>
+
+              <div className="mon-cell">
+                <span className="mon-lbl">{isAr ? 'فتحة الصمام' : 'Valve opening'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {(live.valveOpening * 100).toFixed(0)} %
+                </span>
+              </div>
+
+              <div className="mon-cell">
+                <span className="mon-lbl">Q</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {live.flowRateLMin.toFixed(3)} L/min
+                </span>
+                <span className="mon-sub" style={NUMERIC_READOUT}>
+                  {live.flowRateM3S.toExponential(3)} m³/s
+                </span>
+              </div>
+
+              <div className="mon-cell">
+                <span className="mon-lbl">V₀ {isAr ? '(الفوهة)' : '(nozzle)'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {live.nozzleVelocityMS.toFixed(3)} m/s
+                </span>
+              </div>
+
+              <div className="mon-cell">
+                <span className="mon-lbl">V {isAr ? '(الاصطدام)' : '(impact)'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {live.impactVelocityMS.toFixed(3)} m/s
+                </span>
+              </div>
+
+              <div className="mon-cell mon-cell-accent">
+                <span className="mon-lbl">F_th {isAr ? '(النظرية)' : '(theoretical)'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {live.theoreticalForceN.toFixed(4)} N
+                </span>
+              </div>
+            </div>
+          </div>
 
           {/* Gravity readout. Storyboard sl. 23 lists it as its own display beside the
               total weight, with the unit symbol in a fixed position. The value is the same

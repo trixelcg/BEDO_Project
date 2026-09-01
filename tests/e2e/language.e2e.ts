@@ -138,9 +138,16 @@ test('the software monitor opens in Arabic', async ({ page }) => {
 
   await button(page, 'فتح شاشة البيانات').click();
 
-  const monitor = page.locator('.monitor-fullscreen');
+  // The board opens docked (BEDO-UX-12C), and in Arabic it docks on the other side.
+  const monitor = page.locator('.monitor-docked');
   await expect(monitor).toBeVisible();
   await expect(monitor).toHaveClass(/rtl/);
   await expect(page.getByRole('heading', { name: 'شاشة برنامج المراقبة' })).toBeVisible();
   await expect(page.locator('.data-table tbody tr')).toHaveCount(4);
+
+  // Expand still reaches the full board, and Collapse comes back to the dock.
+  await button(page, 'تكبير').click();
+  await expect(page.locator('.monitor-fullscreen')).toBeVisible();
+  await button(page, 'تصغير').click();
+  await expect(page.locator('.monitor-docked')).toBeVisible();
 });

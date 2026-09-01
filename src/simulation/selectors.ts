@@ -11,7 +11,14 @@
  * adapter) memoise on the state object, which only changes when something really did.
  */
 
-import { computeRow, jetState, type JetState, type RecordRow } from '../domain/physics';
+import {
+  GRAVITY_MS2,
+  computeRow,
+  jetState,
+  type JetState,
+  type RecordRow,
+} from '../domain/physics';
+import { gramsToNewtons } from '../domain/units';
 import { ROW_VALVE_SETTINGS } from '../domain/physics';
 import { getExperiment } from '../domain/experiments';
 import type { DeflectorDef } from '../domain/apparatus';
@@ -44,6 +51,38 @@ export function selectReadings(state: SimulationState): RecordRow[] {
     );
   });
 }
+
+/**
+ * The rig as it stands right now — what the software board reports live.
+ *
+ * Deliberately *not* a row of the results table. The table is computed at the four fixed
+ * `ROW_VALVE_SETTINGS` the procedure records at, so it can never show the opening the
+ * learner is actually holding; and its mass follows only the row being balanced, which is
+ * nothing at all in free mode. This is the other question: what is true of the apparatus
+ * at this instant.
+ *
+ * Every number is read from the same domain functions the physics and the results table
+ * use — `jetState` for the jet, `gramsToNewtons` for the tray — so the board cannot drift
+ * from the calculation it is displaying. No equation is repeated here or in the component.
+ */
+export interface LiveReadout extends JetState {
+  /** Valve opening n, 0..1. The board shows it as a percentage. */
+  valveOpening: number;
+  /** What is on the tray right now, in grams. */
+  loadedMassG: number;
+  /** The weight of that mass — F_ac as the pan measures it, before any recording. */
+  measuredForceN: number;
+}
+
+export const selectLiveReadout = (state: SimulationState): LiveReadout => {
+  const loadedMassG = selectLoadedMassG(state);
+  return {
+    ...selectJetState(state),
+    valveOpening: state.apparatus.valveOpening,
+    loadedMassG,
+    measuredForceN: gramsToNewtons(loadedMassG, GRAVITY_MS2),
+  };
+};
 
 /** The row the student is balancing right now, if any. */
 export const selectActiveReading = (state: SimulationState): RecordRow | undefined =>

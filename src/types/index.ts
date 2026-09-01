@@ -1,4 +1,5 @@
 import type { RecordRow } from '../domain/physics';
+import type { LiveReadout } from '../simulation/selectors';
 import type { ExperimentId, ExperimentStep, StepId } from '../domain/experiments';
 import type { AnchorKey } from '../domain/apparatus';
 import type { HighlightKey, PanelControl } from '../lesson/schema';
@@ -111,7 +112,17 @@ export interface SimulationView {
   loadedWeightsG: readonly number[];
   isVolumetricValveOpen: boolean; // volumetric valve open state
   recordedRows: RecordRow[];
+  /**
+   * The rig at this instant, for the software board.
+   *
+   * Separate from `recordedRows` on purpose: those are the four fixed openings the
+   * procedure records at, and this is the opening, deflector and tray the learner is
+   * holding right now. Derived, never stored — see `selectLiveReadout`.
+   */
+  live: LiveReadout;
   showMonitor: boolean;
+  /** Presentation only: the board is docked beside the apparatus, or expanded over it. */
+  monitorExpanded: boolean;
   /** F_ac is only recorded once the student presses Calculate (step 11). */
   isCalculated: boolean;
   /** Index into the experiment's quiz options, or null if unanswered. */

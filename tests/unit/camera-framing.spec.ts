@@ -245,8 +245,17 @@ describe('the rig that uses it', () => {
     expect(s).toMatch(/if \(progress\.current >= 1\) release\(\)/);
   });
 
-  it('leaves free mode alone', () => {
-    expect(scene()).toMatch(/if \(!guided \|\| showMonitor \|\| !installFraming\) return/);
+  it('leaves free mode alone, and stands down only when the board covers the scene', () => {
+    /*
+      `sceneHidden`, not `showMonitor`.
+
+      The guard used to stand the camera down whenever the board was open, which was right
+      while the board was a fullscreen overlay. BEDO-UX-12C docks it beside the apparatus,
+      so the rig stays visible and must keep reframing between steps — with the old guard,
+      advancing while docked left the previous step's framing and put the tray off screen.
+    */
+    expect(scene()).toMatch(/if \(!guided \|\| sceneHidden \|\| !installFraming\) return/);
+    expect(scene()).toMatch(/sceneHidden=\{state\.showMonitor && state\.monitorExpanded\}/);
   });
 
   it('derives the destination from bounds instead of a hard-coded pose', () => {

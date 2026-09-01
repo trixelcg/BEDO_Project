@@ -19,7 +19,7 @@ import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
 import type { LessonContext, LessonExpectation } from './lesson/schema';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
-import { selectExperiment, selectReadings } from './simulation/selectors';
+import { selectExperiment, selectLiveReadout, selectReadings } from './simulation/selectors';
 import {
   availableAffordances,
   deflectorsSelectableIn,
@@ -41,6 +41,14 @@ import './index.css';
 interface LessonAndUiState {
   language: Language;
   showMonitor: boolean;
+  /**
+   * The board is docked beside the apparatus by default and expands on request.
+   *
+   * Presentation only, and deliberately UI state rather than simulation state: which size
+   * the board is drawn at is not a fact about the rig, and nothing in the domain may
+   * depend on it.
+   */
+  monitorExpanded: boolean;
   /** The worksheet overlay, opened by the closing step. */
   showAnswerSheet: boolean;
   quizAnswer: number | null;
@@ -73,6 +81,7 @@ const initialLessonState = (
 ): LessonAndUiState => ({
   language,
   showMonitor: false,
+  monitorExpanded: false,
   showAnswerSheet: false,
   quizAnswer: null,
   customWeightG: 25,
@@ -285,6 +294,8 @@ export default function App() {
         warningMessage: null,
         notice,
         showMonitor: result.completedStepId === 'open-monitor' ? true : prev.showMonitor,
+        monitorExpanded:
+          result.completedStepId === 'open-monitor' ? false : prev.monitorExpanded,
       }));
     },
     [runtime, steps]
@@ -508,7 +519,13 @@ export default function App() {
   const handleToggleMonitor = () => {
     const opening = !ui.showMonitor;
     if (opening && !interact({ kind: 'presentation', action: 'OPEN_MONITOR' })) return;
-    setUi((prev) => ({ ...prev, warningMessage: null, showMonitor: opening }));
+    // Always opens docked, so the apparatus is never blocked by simply opening the board.
+    setUi((prev) => ({
+      ...prev,
+      warningMessage: null,
+      showMonitor: opening,
+      monitorExpanded: opening ? false : prev.monitorExpanded,
+    }));
     if (opening) applyAdvance(runner.notify('OPEN_MONITOR', context));
   };
 
@@ -641,7 +658,9 @@ export default function App() {
       loadedWeightsG: simulation.apparatus.loadedWeightsG,
       isVolumetricValveOpen: simulation.apparatus.isVolumetricValveOpen,
       recordedRows: readings,
+      live: selectLiveReadout(simulation),
       showMonitor: ui.showMonitor,
+      monitorExpanded: ui.monitorExpanded,
       isCalculated: simulation.isActualForceRecorded,
       quizAnswer: ui.quizAnswer,
       params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: ui.customWeightG },
@@ -655,7 +674,11 @@ export default function App() {
   const deflectorName = ui.language === 'ar' ? deflector.nameAr : deflector.nameEn;
 
   return (
-    <div className="app-container">
+    <div
+      className={`app-container${
+        view.showMonitor && !ui.monitorExpanded ? ' has-docked-monitor' : ''
+      }`}
+    >
       {/*
         `display: contents` keeps the existing layout exactly as it was while still giving
         the shell a node to mark inert. Without this the overlay would block the mouse but
@@ -727,6 +750,9 @@ export default function App() {
             onAnswerQuiz={handleAnswerQuiz}
             onClose={handleToggleMonitor}
             onReset={handleReset}
+            onToggleExpand={() =>
+              setUi((prev) => ({ ...prev, monitorExpanded: !prev.monitorExpanded }))
+            }
           />
         )}
       </div>

@@ -280,7 +280,16 @@ const overlayPanels = (): DOMRect[] =>
 const CameraRig: React.FC<{
   target: AnchorKey | null;
   coverLift: number;
-  showMonitor: boolean;
+  /**
+   * The board is *covering* the scene, not merely open.
+   *
+   * These suppressions exist because a fullscreen board made the 3D view pointless to
+   * animate behind. A docked board leaves the apparatus on screen and in use, so the
+   * camera must keep reframing between steps — otherwise advancing while docked leaves the
+   * previous step's framing, and the part the new step is about ends up off screen
+   * (measured: the tray at y = -224 at the weight step). `BEDO-UX-12C`.
+   */
+  sceneHidden: boolean;
   anchors: Anchors;
   groupRef: React.RefObject<THREE.Group | null>;
   /** Bounds of the deflector/rod/plate group, for the install flight to settle on. */
@@ -294,7 +303,7 @@ const CameraRig: React.FC<{
 }> = ({
   target,
   coverLift,
-  showMonitor,
+  sceneHidden,
   anchors,
   groupRef,
   installFraming,
@@ -352,7 +361,7 @@ const CameraRig: React.FC<{
   // flying on mount snapped the camera to a close-up of the plate and the student never
   // saw the bench they were standing at.
   useEffect(() => {
-    if (showMonitor) return;
+    if (sceneHidden) return;
     if (lastTarget.current === undefined) {
       lastTarget.current = target;
       return;
@@ -361,7 +370,7 @@ const CameraRig: React.FC<{
     lastTarget.current = target;
     if (!target || !anchors[target]) return;
     pending.current = true;
-  }, [target, showMonitor, anchors]);
+  }, [target, sceneHidden, anchors]);
 
   // A drag or scroll means the student wants to look somewhere else — stop fighting them.
   // Not during the install move: that one deliberately owns the camera, and OrbitControls
@@ -389,23 +398,23 @@ const CameraRig: React.FC<{
   useEffect(() => {
     if (installSignal === lastInstall.current) return;
     lastInstall.current = installSignal;
-    if (!guided || showMonitor || !installFraming) return;
+    if (!guided || sceneHidden || !installFraming) return;
     installFlight.current = installFlightPath;
     pendingInstall.current = true;
-  }, [installSignal, guided, showMonitor, installFraming, installFlightPath]);
+  }, [installSignal, guided, sceneHidden, installFraming, installFlightPath]);
 
   // Every cancellation path: a reset or experiment change takes the lesson off the install
   // step, the monitor takes the camera elsewhere, free mode hands the view back, and
   // unmount tears the whole rig down. None of them may leave the camera locked.
   useEffect(() => {
-    if (!guided || showMonitor) {
+    if (!guided || sceneHidden) {
       pendingInstall.current = false;
       if (owning.current) {
         progress.current = 1;
         release();
       }
     }
-  }, [guided, showMonitor, release]);
+  }, [guided, sceneHidden, release]);
 
   useEffect(() => release, [release]);
 
@@ -697,7 +706,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         <CameraRig
           target={cameraTarget}
           coverLift={state.isCoverOpen ? COVER_LIFT : 0}
-          showMonitor={state.showMonitor}
+          sceneHidden={state.showMonitor && state.monitorExpanded}
           anchors={anchors}
           groupRef={apparatusRef}
           installFraming={installFraming}
