@@ -66,92 +66,56 @@ export const NOZZLE_DIAMETER_MODEL_UNITS = NOZZLE_DIAMETER_M * MODEL_UNITS_PER_M
  * authored jet rather than one more plume — every other shipped shape has an aspect near
  * 1.3 and is a spray, not a column.
  *
- * The asset is therefore scaled by its full width: its silhouette *is* the visible water
- * body. What that body is scaled *to* is `bodyScale` below, not the bore — see there.
+ * Its silhouette *is* the visible water body. Nothing scales it to anything — see
+ * `WATER_MODEL_SCALE`.
  */
 export const JET_ASSET = 'low' as const;
 
-// --- The visible body, which is not the bore -------------------------------------------
+// --- The visible body is not the bore -------------------------------------------------
 //
-// ## Why these are two different things
-//
-// BEDO-017 scaled the *rendered* water to `NOZZLE_DIAMETER_M`. That fixed a real defect —
-// the water had been drawn at 95 % of the tank's diameter, 17 times too wide — but it
-// overshot, and `Bedo_Mesu_J.mp4` shows by how much.
-//
-// In the reference the water inside the tank is a broad translucent body that **envelops
-// the nozzle tube** and spans from the tank floor up to the deflector. Measured per row at
-// t = 60.63 s it is 27 px at the deflector, 48-54 px through its body and 74 px at the
-// flared foot. Using the deflector cone as an in-frame ruler — the one object visible in
-// both the low-flow and high-flow shots — that body is about **one deflector diameter**
-// across. It is emphatically not a 10 mm thread; at 10 mm it is invisible, which is what
-// the deployed build looked like and why it was reported as wrong.
-//
-// So the two concepts are separated:
+// Two separate concepts, and only one of them is physics:
 //
 //   * **physical bore** — `NOZZLE_DIAMETER_M`, derived from `NOZZLE_AREA_M2`. Feeds the
 //     force, velocity and momentum equations. Unchanged, and still asserted at 10.00 mm.
-//   * **visible body** — the authored Alembic silhouette, sized from the deflector the way
-//     the reference draws it. Presentation only; no equation reads it.
+//   * **visible body** — BEDO's authored Alembic silhouette, drawn at the size and place it
+//     was authored at. Presentation only; no equation reads it.
 //
-// `Water_low`'s own silhouette settles which of the two the asset represents: rendered at
-// its settled frame it is a tapered column, narrow at the top, widening downward to a
-// flared foot — which is exactly the shape in the video. BEDO authored the *visible body*,
-// not the bore.
+// BEDO-017 collapsed the two, scaling the rendered water to the 10 mm bore, which drew an
+// invisible thread. Later attempts sized it from the deflector or the tank instead. All of
+// them were solving a problem that did not exist: the artwork already knows how big it is.
 
 /**
- * What to scale the authored water body by — **one factor, applied to every axis**.
+ * The whole water transform: authored centimetres to model metres (BEDO-UX-18).
  *
- * ## Why this is uniform (BEDO-UX-17)
+ * ## The caches were already in the rig's coordinate system
  *
- * It used to be two: cross-flow from the deflector's diameter, along-flow from the span the
- * body has to cover. Two independent factors on one mesh is a stretch, and measured against
- * the shipped assets it was a severe one. `Water_low` is authored 5.083 wide by 17.481 long
- * — an aspect of 3.44:1 — and the apparatus puts a 32.5 mm deflector 230.8 mm above the tank
- * floor, so the pair rendered it at 7.10:1. The authored silhouette was stretched **2.06x**
- * along the flow, and the 32.5 mm result was 18 % of the tank's 181 mm bore: narrower than
- * the nozzle tube it is supposed to swallow, which is what put the tube in front of the
- * water instead of inside it.
+ * Every previous attempt at this measured each shape and fitted it — stand it upright if it
+ * looks like it is lying down, re-centre it on its own origin, scale it to the deflector or
+ * to the span. All of that was unnecessary, and it is what kept producing water that was the
+ * wrong width or in the wrong place.
  *
- * BEDO authored these caches as finished shapes. Their proportions are the asset, not a
- * parameter, so the only thing the runtime may choose is how big to draw them — hence a
- * single factor. The span is what sets it, because the span is the one dimension the
- * apparatus actually fixes: the body runs from the tank floor to the deflector's underside
- * in both reference frames. Width then follows from the artwork: 17.481 -> 230.8 mm implies
- * 5.083 -> **67.0 mm**, comfortably inside the 181 mm tank and wide enough to envelop the
- * nozzle, which is what the reference shows.
+ * Reading the **full node transform chain** out of the eight GLBs — not just the mesh node,
+ * which is what earlier measurements got wrong — every shape centres on the same point:
  *
- * This supersedes `BODY_WIDTH_IN_DEFLECTORS = 1.0`, which came from reading the low-flow
- * column and the deflector cone as equal widths in `Bedo_Mesu_J.mp4`. The authored geometry
- * disagrees with that reading, and the authored geometry is the stronger source: it is the
- * artwork itself rather than a measurement off a compressed frame.
+ *   Water_low  x 1.0002  z -22.9383      Water90_Flat   x 1.0105  z -22.9285
+ *   Water30    x 1.0251  z -22.9227      Water120_Hemi  x 1.0115  z -22.9366
+ *   Water45    x 1.0090  z -22.9303      Water135_Con   x 1.0243  z -22.9284
+ *   Water60    x 1.0232  z -22.9308      Water180_Hemi  x 1.0099  z -22.9285
  *
- * `assetHeight` is the shape's own measured extent, so this works whatever units the GLB was
- * authored in.
+ * The apparatus puts the nozzle, the tank and the deflector all on one axis at
+ * (0.0101, -0.2293). Dividing gives 0.010000 from z on all eight shapes, to five decimal
+ * places. They were authored in **centimetres, in the rig's own space**, so the model
+ * position they belong at is the position they already have.
+ *
+ * At this scale, measured against the apparatus (tank floor 1.0581, deflector underside
+ * 1.2889, bore 181 mm): the jet is 51 mm across, and the seven plumes are 109-170 mm — every
+ * one of them inside the tank, each sitting on the floor and reaching the deflector. Nothing
+ * needs fitting because nothing was ever out of place.
+ *
+ * So there is no `bodyScale`, no `plumeScale`, no `PLUME_SPREAD` and no measured `waterFit`
+ * any more. There is this number, and it is not a tuning knob: it is a unit conversion.
  */
-export function bodyScale(spanModelUnits: number, assetHeight: number): number {
-  return Math.max(spanModelUnits, 1e-6) / Math.max(assetHeight, 1e-9);
-}
-
-
-/**
- * What to scale an after-impact plume by.
- *
- * BEDO says the shape forms "according to the deflector shape", so it is sized from the
- * **deflector** it forms on — measured from that mesh at runtime — and never from the tank
- * it happens to sit inside. Uniform, so the authored silhouette is preserved: these shapes
- * are the deflector's signature and squashing one would be inventing fluid behaviour no
- * source describes.
- *
- * `spread` is the one presentation number here: the water leaves a deflector wider than
- * the deflector itself, and no BEDO source gives a figure. Documented as an exaggeration
- * rather than smuggled in as geometry — see `docs/41`.
- */
-export const PLUME_SPREAD = 1.6;
-
-export function plumeScale(deflectorDiameterModelUnits: number, assetWidth: number): number {
-  return (deflectorDiameterModelUnits * PLUME_SPREAD) / Math.max(assetWidth, 1e-9);
-}
+export const WATER_MODEL_SCALE = 0.01;
 
 
 /**

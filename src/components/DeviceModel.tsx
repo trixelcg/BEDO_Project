@@ -61,8 +61,7 @@ import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
 import {
   JET_ASSET,
   STARTUP_VALVE_OPENING,
-  bodyScale,
-  plumeScale,
+  WATER_MODEL_SCALE,
 } from '../lib/waterJet';
 import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
 import {
@@ -74,7 +73,6 @@ import {
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
-  basePoseBox,
   createCacheClock,
   prepareCacheMesh,
 } from '../lib/waterCache';
@@ -400,8 +398,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   /** Meshes currently carrying a highlight material, so they can be put back. */
   const highlighted = useRef<Set<string>>(new Set());
-  /** Nozzle exit, in the apparatus's local space. */
-  const [nozzleLip, setNozzleLip] = useState<[number, number, number] | null>(null);
   /**
    * The weight pan, measured from the rod's own geometry (BEDO-016).
    *
@@ -1221,60 +1217,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     return mat;
   }, [tankHeightUniform, tankRadiusUniform, tankLevelUniform, tankInflowUniform, waterTime, waterTex]);
 
-  /**
-   * Each jet shape's own offset and height, measured off a detached clone.
-   *
-   * The files don't sit at their origin — Water90_Flat is parked at y = +117.9 — and
-   * two of them are rotated a quarter turn, so their listed heights were wrong. Both
-   * facts have to be cancelled out or the jet renders far above the tank at the wrong
-   * length. Cloning keeps the measurement free of whatever parent it gets mounted under.
-   */
-  const waterFit = useMemo(() => {
-    const fit = {} as Record<
-      WaterShapeKey,
-      { center: THREE.Vector3; height: number; width: number; upright: boolean }
-    >;
-
-    const measure = (source: THREE.Object3D, upright: boolean) => {
-      const holder = new THREE.Group();
-      const inner = new THREE.Group();
-      // A quarter turn about X maps the mesh's Z axis onto Y, standing the jet up.
-      if (upright) inner.rotation.x = -Math.PI / 2;
-      inner.add(source.clone(true));
-      holder.add(inner);
-      holder.updateWorldMatrix(true, true);
-      // Base pose only. `Box3.setFromObject` would expand the box over all 80 morph
-      // targets — and for relative targets it adds the most negative delta found anywhere
-      // to the overall minimum, which is a wildly loose bound. That inflated width divided
-      // into the nozzle bore would shrink the jet and undo BEDO-017. See `waterCache.ts`.
-      const box = basePoseBox(holder);
-      if (box.isEmpty()) return null;
-      return { box, size: box.getSize(new THREE.Vector3()) };
-    };
-
-    (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
-      const source = (water as any)[key]?.scene;
-      if (!source) return;
-
-      const asIs = measure(source, false);
-      if (!asIs) return;
-
-      // A jet is long along the flow. If the mesh is longer across Z than up Y it was
-      // authored lying down (Water30/120/135 all are), so stand it up and measure again.
-      const upright = asIs.size.z > asIs.size.y * 1.15;
-      const final = upright ? measure(source, true) : asIs;
-      if (!final) return;
-
-      fit[key] = {
-        center: final.box.getCenter(new THREE.Vector3()),
-        height: Math.max(final.size.y, 1e-6),
-        width: Math.max(final.size.x, final.size.z, 1e-6),
-        upright,
-      };
-    });
-    return fit;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...waterGltfs]);
 
   /**
    * Let the valves and the switch turn on the spot.
@@ -1610,13 +1552,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
 
     onAnchors(nextAnchors);
-
-    // The jet leaves the nozzle's lip, not its centre.
-    if (localBox([MESH.nozzle])) {
-      tmp.box.getCenter(tmp.center);
-      const lip = group.worldToLocal(new THREE.Vector3(tmp.center.x, tmp.box.max.y, tmp.center.z));
-      setNozzleLip([lip.x, lip.y, lip.z]);
-    }
 
 
     const spot = (
@@ -3075,56 +3010,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // See `src/lib/waterJet.ts` and `docs/41`.
     const group = groupRef.current;
     const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
-    const jetFit = waterFit[JET_ASSET];
 
-    if (flowing && group && activeDef && nozzleLip && jetFit && jetGroupRef.current) {
-      // Where the water starts and where it lands, both measured: the nozzle's own lip
-      // (`setNozzleLip`, the top of the nozzle mesh) and the deflector's underside.
-      tmp.box.setFromObject(activeDef);
-      tmp.box.getSize(tmp.size);
-      tmp.box.getCenter(tmp.defPos);
-      tmp.defPos.setY(tmp.box.min.y);
-      group.worldToLocal(tmp.defPos);
-      const deflectorDiameter = Math.max(tmp.size.x, tmp.size.z) / modelScale;
-
-      tmp.nozzlePos.set(nozzleLip[0], nozzleLip[1], nozzleLip[2]);
-
-      // The jet climbs out of the nozzle as the valve opens, and reaches the deflector at
-      // the same setpoint the plume starts at. Implementation behaviour: no BEDO source
-      // describes the startup, only that the water "forms" when the valve is opened.
-      const reach = Math.min(1, state.valveOpening / STARTUP_VALVE_OPENING);
-
-      // The visible body spans from the **tank floor** to the deflector, not from the
-      // nozzle lip: in the reference it swallows the nozzle tube entirely, and starting it
-      // at the lip is what left a bare thread hanging above a visible pipe. Falls back to
-      // the lip if the tank has not been measured.
-      const bodyFootY = tankInterior ? tankInterior.floorY : tmp.nozzlePos.y;
-      const span = Math.max(tmp.defPos.y - bodyFootY, 1e-4) * reach;
-      // One factor on every axis: the authored proportions are the asset, not a parameter.
-      // See `bodyScale` — the old cross-flow/along-flow pair stretched it 2.06x.
-      const body = bodyScale(span, jetFit.height);
-
-      // On the nozzle axis, not the tank's: X and Z come from the lip, and only Y spans
-      // the gap. A body that started anywhere else would be a magic offset.
+    if (flowing && group && activeDef && jetGroupRef.current) {
+      // Nothing is fitted, placed or sized here any more: the caches are already in the
+      // apparatus's own coordinate system, a hundred times over. `WATER_MODEL_SCALE` is the
+      // whole transform — see `src/lib/waterJet.ts` for how that was measured.
+      //
+      // The groups carry that scale from the JSX below and never move, so the only thing
+      // left to decide each frame is which shape is visible and where its cache has got to.
       jetGroupRef.current.visible = true;
-      jetGroupRef.current.position.set(
-        tmp.nozzlePos.x,
-        bodyFootY + span / 2,
-        tmp.nozzlePos.z
-      );
-      jetGroupRef.current.scale.setScalar(body);
 
-      // The plume forms once the jet actually arrives.
+      // The plume forms once the jet actually arrives. Implementation behaviour: no BEDO
+      // source describes the startup, only that the water "forms" when the valve opens.
       const impacting = state.valveOpening > STARTUP_VALVE_OPENING;
-      const plumeFit = waterFit[deflector.water];
-      if (impacting && plumeFit && plumeGroupRef.current) {
-        const spread = plumeScale(deflectorDiameter, plumeFit.width);
-        plumeGroupRef.current.visible = true;
-        plumeGroupRef.current.position.set(tmp.defPos.x, tmp.defPos.y, tmp.defPos.z);
-        plumeGroupRef.current.scale.setScalar(spread);
-      } else if (plumeGroupRef.current) {
-        plumeGroupRef.current.visible = false;
-      }
+      if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
 
       // Ripple with the flow, but gently — see the material for the amplitude.
       waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
@@ -3326,36 +3225,29 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         deflector. They were one group sized at 95% of the tank's diameter — see
         `src/lib/waterJet.ts`.
 
-        Each shape is stood upright if it was authored lying down, then re-centred on its
-        own origin, so the group that holds it can simply be parked where the water starts.
+        Neither shape is fitted, rotated or re-centred. BEDO authored all eight caches in
+        the apparatus's own coordinate system, in centimetres — every one of them centres on
+        x = 1.01, z = -22.93, which is the nozzle axis at (0.0101, -0.2293) times a hundred.
+        So the entire transform is `WATER_MODEL_SCALE`, and the authored position is already
+        the right position. See `src/lib/waterJet.ts`.
       */}
       {(() => {
         const shape = (key: WaterShapeKey) => {
-          const fit = waterFit[key];
           const source = (water as any)[key]?.scene;
           if (!source) return null;
-          return (
-            <group
-              key={key}
-              position={fit ? [-fit.center.x, -fit.center.y, -fit.center.z] : [0, 0, 0]}
-            >
-              <group rotation={fit?.upright ? [-Math.PI / 2, 0, 0] : [0, 0, 0]}>
-                <primitive object={source} />
-              </group>
-            </group>
-          );
+          return <primitive key={key} object={source} />;
         };
         const plumes = (Object.keys(WATER_SHAPES) as WaterShapeKey[]).filter(
           (k) => k !== JET_ASSET
         );
         return (
           <>
-            {/* Before impact — parked on the nozzle lip, scaled to the bore. */}
-            <group ref={jetGroupRef} visible={false}>
+            {/* Before impact — the authored column, at its authored place and size. */}
+            <group ref={jetGroupRef} visible={false} scale={WATER_MODEL_SCALE}>
               {shape(JET_ASSET)}
             </group>
-            {/* After impact — parked on the deflector, scaled from the deflector. */}
-            <group ref={plumeGroupRef} visible={false}>
+            {/* After impact — the authored spray, likewise. */}
+            <group ref={plumeGroupRef} visible={false} scale={WATER_MODEL_SCALE}>
               {plumes.map(shape)}
             </group>
             {/*

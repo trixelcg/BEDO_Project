@@ -6,11 +6,8 @@ import {
   JET_ASSET,
   NOZZLE_DIAMETER_M,
   NOZZLE_DIAMETER_MODEL_UNITS,
-  PLUME_SPREAD,
-  STARTUP_VALVE_OPENING,
+  WATER_MODEL_SCALE,
   diameterOfArea,
-  bodyScale,
-  plumeScale,
 } from '../../src/lib/waterJet';
 import { NOZZLE_AREA_M2, TRAVEL_HEIGHT_M } from '../../src/domain/physics';
 import { MODEL_UNITS_PER_METRE } from '../../src/lib/apparatusView';
@@ -42,7 +39,10 @@ import { basePoseBox } from '../../src/lib/waterCache';
  * rather than written down, so a re-export cannot silently invalidate them. See `docs/44`.
  */
 
-const shapes = {} as Record<WaterShapeKey, { width: number; height: number; uvSets: string[] }>;
+const shapes = {} as Record<
+  WaterShapeKey,
+  { width: number; height: number; centre: THREE.Vector3; minY: number; maxY: number; uvSets: string[] }
+>;
 
 
 // `loadWater` lives in tests/helpers/model.ts: the assets are meshopt-compressed, so the
@@ -56,13 +56,14 @@ beforeAll(async () => {
     // box over all 80 morph targets — and for relative targets by a bound so loose that
     // the jet's aspect comes out at 5.6 instead of 3.44 — which is precisely the mistake
     // this file exists to catch. See `src/lib/waterCache.ts`.
-    const size = basePoseBox(scene).getSize(new THREE.Vector3());
+    const box = basePoseBox(scene);
+    const size = box.getSize(new THREE.Vector3());
+    const centre = box.getCenter(new THREE.Vector3());
 
-    // Some shapes are authored lying down — their long axis is Z with no rotation node —
-    // so the scene stands those up. Measure the same way, or a jet's "width" is its length.
-    const upright = size.z > size.y * 1.15;
-    const width = upright ? Math.max(size.x, size.y) : Math.max(size.x, size.z);
-    const height = upright ? size.z : size.y;
+    // As loaded, through the full node chain — which is how the runtime draws them, and the
+    // measurement that shows they were all authored in the rig's own space (BEDO-UX-18).
+    const width = Math.max(size.x, size.z);
+    const height = size.y;
 
     const uvSets = new Set<string>();
     scene.traverse((o) => {
@@ -72,7 +73,7 @@ beforeAll(async () => {
         .filter((a) => a.startsWith('uv'))
         .forEach((a) => uvSets.add(a));
     });
-    shapes[key] = { width, height, uvSets: [...uvSets].sort() };
+    shapes[key] = { width, height, centre, minY: box.min.y, maxY: box.max.y, uvSets: [...uvSets].sort() };
   }
 });
 
@@ -119,80 +120,62 @@ describe('the physical bore is untouched by presentation', () => {
     // to the bore, which rendered as an invisible thread — see `docs/44`. The bore stays;
     // what changed is that it no longer decides how wide the water looks.
     const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
-    expect(source).toMatch(/bodyScale\(/);
+    expect(source).toMatch(/WATER_MODEL_SCALE/);
     expect(source).not.toMatch(/jetScale\(/);
   });
 });
 
-describe('the visible water body keeps the proportions BEDO authored', () => {
-  it('is scaled by one factor on every axis, so the silhouette is never stretched', () => {
-    // BEDO-UX-17. The scale used to be a cross-flow/along-flow pair: width from the
-    // deflector, height from the span. Measured against the shipped asset and the real
-    // apparatus, that stretched the authored shape 2.06x along the flow.
-    const { width, height } = shapes[JET_ASSET];
-    const s = bodyScale(0.2308, height);
-    expect((height * s) / (width * s)).toBeCloseTo(height / width, 9);
+describe('the water is drawn where and how BEDO authored it', () => {
+  it('is one unit conversion, not a fit — centimetres to metres', () => {
+    // BEDO-UX-18. Not a tuning knob: the caches are authored in the rig's own space, in
+    // centimetres, and the model is in metres.
+    expect(WATER_MODEL_SCALE).toBe(0.01);
   });
 
-  it('renders the authored 3.44:1 column at the size the apparatus implies', () => {
-    // The apparatus, measured from Bedo_baked_v2.glb: a 32.5 mm deflector whose underside
-    // sits 230.8 mm above the tank floor, inside a 181 mm tank.
-    const { width, height } = shapes[JET_ASSET];
-    expect(height / width).toBeCloseTo(3.44, 2);
-    const s = bodyScale(0.2308, height);
-    expect(height * s).toBeCloseTo(0.2308, 9);
-    // 67 mm: wide enough to swallow the nozzle tube, and well inside the 181 mm tank.
-    expect(width * s).toBeCloseTo(0.067, 3);
-    expect(width * s).toBeLessThan(0.181);
+  it('puts all eight shapes on the apparatus axis, which is what makes 0.01 correct', () => {
+    // Read from the shipped GLBs through the full node transform chain. Every shape shares
+    // one centre in x/z; the apparatus puts the nozzle, tank and deflector on (0.0101,
+    // -0.2293). That ratio is the scale, and it agrees on all eight to five decimals.
+    const AXIS_Z = -0.2293;
+    for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
+      const { centre } = shapes[key];
+      expect(centre.x, `${key} x`).toBeCloseTo(1.01, 1);
+      expect(centre.z, `${key} z`).toBeCloseTo(-22.93, 1);
+      // The implied scale, per shape, from the axis the apparatus actually has.
+      expect(AXIS_Z / centre.z, `${key} implied scale`).toBeCloseTo(WATER_MODEL_SCALE, 4);
+    }
   });
 
-  it('is far wider than the bore — the original BEDO-017 correction, kept', () => {
-    const { width, height } = shapes[JET_ASSET];
-    expect(width * bodyScale(0.2308, height)).toBeGreaterThan(NOZZLE_DIAMETER_MODEL_UNITS * 2);
+  it('lands every shape inside the tank, on the floor, reaching the deflector', () => {
+    // The apparatus, measured from Bedo_baked_v2.glb.
+    const TANK_FLOOR = 1.05808, TANK_TOP = 1.37490, TANK_DIA = 0.1810, DEFLECTOR = 1.28890;
+    for (const key of Object.keys(WATER_SHAPES) as WaterShapeKey[]) {
+      const s = shapes[key];
+      const width = s.width * WATER_MODEL_SCALE;
+      const y0 = s.minY * WATER_MODEL_SCALE, y1 = s.maxY * WATER_MODEL_SCALE;
+      expect(width, `${key} must fit the bore`).toBeLessThan(TANK_DIA);
+      expect(y0, `${key} must not start below the tank floor by more than a hair`)
+        .toBeGreaterThan(TANK_FLOOR - 0.01);
+      expect(y1, `${key} must not overflow the tank`).toBeLessThan(TANK_TOP);
+      expect(y1, `${key} must reach the deflector region`).toBeGreaterThan(DEFLECTOR - 0.05);
+    }
   });
 
-  it('spans whatever it is given', () => {
-    const { height } = shapes[JET_ASSET];
-    expect(height * bodyScale(0.25, height)).toBeCloseTo(0.25, 9);
-    expect(height * bodyScale(0.05, height)).toBeCloseTo(0.05, 9);
+  it('draws the jet narrow and the plumes wide, as authored', () => {
+    // 51 mm column; 109-170 mm sprays. The ratio is the artwork's, not a chosen spread.
+    expect(shapes[JET_ASSET].width * WATER_MODEL_SCALE).toBeCloseTo(0.051, 3);
+    for (const key of (Object.keys(WATER_SHAPES) as WaterShapeKey[]).filter((k) => k !== JET_ASSET)) {
+      const w = shapes[key].width * WATER_MODEL_SCALE;
+      expect(w, `${key}`).toBeGreaterThan(0.10);
+      expect(w, `${key}`).toBeLessThan(0.181);
+    }
   });
 
-  it('takes its size from the span alone, never from the flow rate directly', () => {
-    // Velocity may drive animation; it may never be read as a size on its own. The span
-    // already carries the startup ramp, so an identical span must give an identical body.
-    const { height } = shapes[JET_ASSET];
-    const repeats = [0.05, 0.1, 0.4, 0.5, 1.0].map(() => bodyScale(0.2308, height));
-    expect(new Set(repeats.map((s) => s.toFixed(12))).size).toBe(1);
-    // The ramp still shortens the body while the jet is climbing.
-    const climbing = bodyScale(0.2308 * (0.1 / STARTUP_VALVE_OPENING), height);
-    expect(climbing).toBeLessThan(bodyScale(0.2308, height));
-  });
-
-  it('degrades safely rather than dividing by zero', () => {
-    expect(Number.isFinite(bodyScale(0, 0))).toBe(true);
-  });
-});
-
-describe('the plume is scaled from the deflector, never the tank', () => {
-  it('grows with the deflector it forms on', () => {
-    const asset = shapes.d90.width;
-    const small = plumeScale(0.02, asset);
-    const large = plumeScale(0.04, asset);
-    expect(large).toBeCloseTo(small * 2, 9);
-    expect(asset * plumeScale(0.0325, asset)).toBeCloseTo(0.0325 * PLUME_SPREAD, 9);
-  });
-
-  it('spreads wider than the deflector, and says so', () => {
-    // The one presentation number in the water mapping. No BEDO source gives a figure, so
-    // it is named, exported and testable rather than buried in the frame loop.
-    expect(PLUME_SPREAD).toBeGreaterThan(1);
-    expect(PLUME_SPREAD).toBeLessThan(3);
-  });
-
-  it('is wider than the jet — the two are different objects', () => {
-    // §9. Forcing the plume to the bore would be as wrong as sizing the jet from the tank.
-    const plume = shapes.d90.width * plumeScale(0.0325, shapes.d90.width);
-    expect(plume).toBeGreaterThan(NOZZLE_DIAMETER_MODEL_UNITS * 3);
+  it('nothing measures, rotates or re-centres the shapes any more', () => {
+    const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
+    expect(source).not.toMatch(/waterFit/);
+    expect(source).not.toMatch(/bodyScale|plumeScale/);
+    expect(source).toMatch(/WATER_MODEL_SCALE/);
   });
 });
 
