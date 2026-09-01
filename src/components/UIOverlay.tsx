@@ -14,6 +14,7 @@ import {
   RefreshCw,
   AlertTriangle,
   Monitor,
+  ClipboardList,
   Info,
   FlaskConical,
   SlidersHorizontal,
@@ -57,6 +58,9 @@ interface UIOverlayProps {
   /** False while the intro panel is up: the guided dock must not show behind it. */
   started: boolean;
   onToggleMonitor: () => void;
+  /** The camera is parked at the printed board. */
+  boardView: boolean;
+  onToggleBoardView: () => void;
   onReset: () => void;
   clearWarning: () => void;
   clearNotice: () => void;
@@ -86,6 +90,8 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onCoverClick,
   started,
   onToggleMonitor,
+  boardView,
+  onToggleBoardView,
   onReset,
   clearWarning,
   clearNotice,
@@ -372,7 +378,15 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   );
 
   return (
-    <div className={`ui-container ${isAr ? 'rtl' : ''}`}>
+    /*
+      `is-board-view` clears the stage.
+
+      While the camera is parked at the printed board, the contextual dock and the step
+      card sit directly over the panel being read — the Total Weight circle, the nozzle
+      box and the live figures are all behind them. The global row stays, because that is
+      where `Back to Step` lives.
+    */
+    <div className={`ui-container ${isAr ? 'rtl' : ''}${boardView ? ' is-board-view' : ''}`}>
       {/* Blocking guard from the state machine */}
       {warningMessage && (
         // `role="alert"` because this is the interlock's only feedback. A refused action —
@@ -811,6 +825,27 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               moment. Opening it changes no simulation state and advances no step, except
               at `open-monitor`, where opening the board has always been what completes it.
             */}
+            {/*
+              The printed board, brought into view.
+
+              The guided step framings are composed around the apparatus, so the wall board
+              is out of shot at every working step — measured. Rather than widen those
+              compositions, this parks the camera at the board and puts it back. It is a
+              utility beside Monitor, not a step's control, and it advances nothing.
+            */}
+            <button
+              className={`guided-footer-btn${boardView ? ' is-active' : ''}`}
+              onClick={onToggleBoardView}
+            >
+              <ClipboardList size={13} />
+              {boardView
+                ? isAr
+                  ? 'العودة للخطوة'
+                  : 'Back to Step'
+                : isAr
+                  ? 'اللوحة'
+                  : 'Board'}
+            </button>
             {!show('monitor') && (
               <button
                 className="guided-footer-btn"

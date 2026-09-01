@@ -1301,3 +1301,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* The dock is narrow; the readings table scrolls sideways rather than overflowing it. */
 .monitor-docked .data-table-container { max-width: 100%; }
+
+/* The Board utility while the camera is parked at the printed board. */
+.guided-footer-btn.is-active {
+  color: var(--accent-blue);
+  border-color: rgba(245, 130, 32, 0.5);
+  background: rgba(245, 130, 32, 0.14);
+}
+
+/*
+  Board view clears the stage.
+
+  The contextual dock and the step card are composed for the apparatus, and at the board
+  they land squarely on the values being read. They are hidden for the duration; the global
+  row stays, because `Back to Step` is in it and leaving must always be one click away.
+*/
+.ui-container.is-board-view .guided-dock { display: none; }

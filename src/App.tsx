@@ -49,6 +49,15 @@ interface LessonAndUiState {
    * depend on it.
    */
   monitorExpanded: boolean;
+  /**
+   * The camera is parked at the printed board rather than at the current step's own view.
+   *
+   * Camera and interface only: the lesson does not move, nothing about the rig changes,
+   * and the step's framing is restored exactly on the way back (`BEDO-UX-14B`).
+   */
+  boardView: boolean;
+  /** Whether the docked board was open before the Board view took the screen. */
+  monitorBeforeBoardView: boolean;
   /** The worksheet overlay, opened by the closing step. */
   showAnswerSheet: boolean;
   quizAnswer: number | null;
@@ -82,6 +91,8 @@ const initialLessonState = (
   language,
   showMonitor: false,
   monitorExpanded: false,
+  boardView: false,
+  monitorBeforeBoardView: false,
   showAnswerSheet: false,
   quizAnswer: null,
   customWeightG: 25,
@@ -516,6 +527,39 @@ export default function App() {
    * an overlay you cannot dismiss is the shape of the video-modal defect, and BEDO-019
    * went to some trouble not to reproduce it.
    */
+  /**
+   * Park the camera at the printed board, and come back to exactly where we were.
+   *
+   * No domain action and no lesson notification: the step, the valve, the tray, the
+   * deflector and the recorded readings are all untouched, and the step's own framing
+   * returns because `cameraView` simply stops being overridden.
+   *
+   * The docked board would sit over the very panel being read, so it is closed on the way
+   * in and restored to whatever it was on the way out (`BEDO-UX-14B §10`).
+   */
+  const handleToggleBoardView = () => {
+    setUi((prev) => {
+      const entering = !prev.boardView;
+      return {
+        ...prev,
+        boardView: entering,
+        monitorBeforeBoardView: entering ? prev.showMonitor : prev.monitorBeforeBoardView,
+        showMonitor: entering ? false : prev.monitorBeforeBoardView,
+        monitorExpanded: entering ? false : prev.monitorExpanded,
+      };
+    });
+  };
+
+  /** Escape leaves the board view for the current step, rather than trapping the learner. */
+  useEffect(() => {
+    if (!ui.boardView) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') handleToggleBoardView();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const handleToggleMonitor = () => {
     const opening = !ui.showMonitor;
     if (opening && !interact({ kind: 'presentation', action: 'OPEN_MONITOR' })) return;
@@ -603,7 +647,11 @@ export default function App() {
       totalSteps: CURRENT_LESSON_STEP_COUNT,
       step: steps.find((step) => step.stepId === currentStep.id),
       target: isGuided ? currentStep.target : null,
-      cameraView: isGuided ? (currentStep.cameraView ?? currentStep.target) : null,
+      cameraView: ui.boardView
+        ? 'board'
+        : isGuided
+          ? (currentStep.cameraView ?? currentStep.target)
+          : null,
       isSatisfied: runner.isSatisfied(context),
       canConfirm: runner.canConfirm(context),
       highlight: currentStep.highlight,
@@ -634,6 +682,9 @@ export default function App() {
       context,
       ui.deflectorInstalled,
       ui.runId,
+      // The Board view overrides `cameraView`; without this the memo keeps handing the
+      // rig the step's own framing and the camera never leaves it.
+      ui.boardView,
       simulation.activeReadingIndex,
       simulation.experimentId,
       lessonState.isComplete,
@@ -705,6 +756,8 @@ export default function App() {
           lesson={lessonView}
           experiment={experiment}
           availableDeflectors={availableDeflectors}
+          boardView={ui.boardView}
+          onToggleBoardView={handleToggleBoardView}
           onSelectLanguage={(lang) => {
             // Persist only an explicit choice. Nothing is written on startup, so a user
             // who never touches the control leaves no stored preference behind.

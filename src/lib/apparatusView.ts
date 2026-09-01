@@ -63,6 +63,16 @@ export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
   pointer: { offset: [-0.42, 0.24, 0.30] },
   pan: { offset: [-0.42, 0.24, 0.30] },
   overview: { offset: [-1.45, 0.70, 0.45] },
+  /**
+   * Head-on at the printed board, for the Board view.
+   *
+   * Straight out along the panel's own normal, which was measured rather than guessed:
+   * the quad's face normal is (-0.9397, 0, -0.3420) in model space, so standing back along
+   * it puts the camera square to the artwork and keeps the printed values free of skew.
+   * 1.6 model units back frames the whole 1.94 x 1.11 panel with room around it — the
+   * board is 3.49 m wide and the group is scaled 1.8.
+   */
+  board: { offset: [-1.503, 0, -0.547] },
 };
 
 // --- The spring's travel, in model terms -------------------------------------------

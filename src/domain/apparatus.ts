@@ -221,4 +221,12 @@ export type AnchorKey =
   | 'power'
   | 'flowValve'
   | 'volumetricValve'
-  | 'overview';
+  | 'overview'
+  /**
+   * The printed wall board, framed head-on.
+   *
+   * Not a step's target and never in `panelControls`: it is where the *Board* utility
+   * takes the camera so the learner can read the instrument, and it is restored to the
+   * current step's own anchor on the way back (`BEDO-UX-14B`).
+   */
+  | 'board';

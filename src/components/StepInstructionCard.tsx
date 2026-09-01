@@ -40,6 +40,9 @@ const TARGET_LABEL: Record<AnchorKey, { en: string; ar: string }> = {
   flowValve: { en: 'Flow control valve', ar: 'صمام التحكم في التدفق' },
   volumetricValve: { en: 'Volumetric valve', ar: 'الصمام الحجمي' },
   overview: { en: 'Apparatus', ar: 'الجهاز' },
+  // No step targets the board; it is where the Board utility looks. Labelled for
+  // completeness so the map stays total over AnchorKey.
+  board: { en: 'Board', ar: 'اللوحة' },
 };
 
 export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({

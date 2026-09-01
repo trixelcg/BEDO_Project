@@ -156,6 +156,8 @@ describe('anchors and geometry', () => {
     'flowValve',
     'volumetricValve',
     'overview',
+    // BEDO-UX-14B: where the Board utility parks the camera. Not a step's target.
+    'board',
   ];
 
   it('gives every anchor a camera framing', () => {

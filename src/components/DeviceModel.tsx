@@ -42,6 +42,7 @@ import {
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
 import { NOZZLE_AREA_M2, TOTAL_FLOW_L_MIN, flowRateLMin, jetState } from '../domain/physics';
+import { attachBoardReadout, type BoardValues } from './boardReadout';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
   commits,
@@ -106,6 +107,12 @@ type Action =
 
 /** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
 const QUARTER_TURN = Math.PI / 2;
+
+/** The printed wall chart the live values are drawn onto. */
+const BOARD_MESH = 'Pitot';
+
+/** Dev switch: draw a labelled grid on the board instead of values, to place the fields. */
+const BOARD_CALIBRATE = false;
 
 /** No fitted hit proxy is thinner than this, so a 3 mm disc is still clickable. */
 const MIN_HOTSPOT_HALF = 0.01;
@@ -1493,6 +1500,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     assign('flowValve', [MESH.flowValve]);
     assign('volumetricValve', [MESH.volumetricValve]);
     assign('overview', [MESH.tankCover, MESH.flowValve, MESH.powerSwitch, ...trayDeflectors]);
+    // The printed board, for the Board view. Measured like every other anchor rather than
+    // written down, so a re-export moves the camera with it.
+    assign('board', [BOARD_MESH]);
 
     // The weight pan, from the rod's own vertices (BEDO-016).
     //
@@ -1937,6 +1947,69 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, []);
 
   /** Apparatus-local centre of a part's bounds. */
+  /**
+   * The printed board, made live.
+   *
+   * Attached once, to the board object itself, so the values ride its transform. Fed from
+   * the same `state.live` and `state.recordedRows` the software monitor reads — this
+   * formats, it derives nothing.
+   */
+  const boardReadout = useRef<ReturnType<typeof attachBoardReadout>>(null);
+  useEffect(() => {
+    if (!scene) return;
+    boardReadout.current = attachBoardReadout(pick(BOARD_MESH));
+    return () => {
+      boardReadout.current?.dispose();
+      boardReadout.current = null;
+    };
+  }, [scene, pick]);
+
+  useEffect(() => {
+    const installed = getDeflector(state.selectedDeflectorId);
+    const values: BoardValues = {
+      deflectorAngle: installed.id,
+      deflectorName: isArabic ? installed.nameAr : installed.nameEn,
+      momentumFactor: installed.momentumFactor,
+      nozzleMm: 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000,
+      nozzleAreaM2: NOZZLE_AREA_M2,
+      valvePct: state.live.valveOpening * 100,
+      flowLMin: state.live.flowRateLMin,
+      flowM3S: state.live.flowRateM3S,
+      nozzleVelocity: state.live.nozzleVelocityMS,
+      impactVelocity: state.live.impactVelocityMS,
+      theoreticalForceN: state.live.theoreticalForceN,
+      loadedMassG: state.live.loadedMassG,
+      measuredForceN: state.live.measuredForceN,
+      // Rows 1 and 2 of the printed table are the two student readings; the results
+      // array's index 0 is the zero-flow baseline the procedure does not record.
+      rows: state.recordedRows.slice(1, 3).map((r) => ({
+        // The reading exists once the learner has balanced it — the same test the software
+        // board's own row filter uses.
+        recorded: r.loadedMassG > 0,
+        flowLMin: r.flowRateLMin,
+        flowM3S: r.flowRateM3S,
+        nozzleVelocity: r.nozzleVelocityMS,
+        impactVelocity: r.impactVelocityMS,
+        theoreticalForceN: r.theoreticalForceN,
+        measuredForceN: state.isCalculated ? r.measuredForceN : null,
+      })),
+    };
+    boardReadout.current?.update(values, { calibrate: BOARD_CALIBRATE });
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__bedoBoard = {
+        deflector: `${values.deflectorAngle}° k=${values.momentumFactor.toFixed(3)}`,
+        nozzleMm: values.nozzleMm.toFixed(0),
+        Q: values.flowLMin.toFixed(3),
+        V0: values.nozzleVelocity.toFixed(3),
+        V: values.impactVelocity.toFixed(3),
+        Fth: values.theoreticalForceN.toFixed(4),
+        totalWeightG: values.loadedMassG,
+        mg: values.measuredForceN.toFixed(3),
+        rows: values.rows.map((r) => (r.recorded ? `${r.flowLMin.toFixed(3)}|Fac=${r.measuredForceN?.toFixed(4) ?? '—'}` : 'blank')),
+      };
+    }
+  }, [state.live, state.recordedRows, state.selectedDeflectorId, state.isCalculated, isArabic]);
+
   const localCentreOf = useCallback(
     (name: string): THREE.Vector3 | null => {
       const group = groupRef.current;
@@ -2272,6 +2345,51 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               at: world(g.wrapper.position),
               to: world(g.to),
             })),
+      },
+      /**
+       * What the physical board is currently showing.
+       *
+       * Dev-only, like the rest of this adapter. The board is a texture, so the browser
+       * suite cannot read a value off it the way it reads the DOM — this reports the same
+       * numbers that were drawn, which is what makes "the board is live" assertable.
+       */
+      boardValues: () => (window as unknown as Record<string, unknown>).__bedoBoard ?? null,
+      /** Board repaints so far, and what the renderer is doing — for the perf audit. */
+      perf: () => ({
+        repaints: (window as unknown as Record<string, number>).__bedoBoardRepaints ?? 0,
+        calls: gl?.info.render.calls ?? 0,
+        triangles: gl?.info.render.triangles ?? 0,
+        programs: gl?.info.programs?.length ?? 0,
+        textures: gl?.info.memory.textures ?? 0,
+        geometries: gl?.info.memory.geometries ?? 0,
+      }),
+      cameraNow: () => ({
+        pos: camera.position.toArray().map((n) => +n.toFixed(3)),
+        anchors: Object.keys(anchors),
+      }),
+      boardAnchor: () => {
+        const o = pick(BOARD_MESH) as THREE.Mesh | undefined;
+        const g = groupRef.current;
+        if (!o || !g) return null;
+        o.updateWorldMatrix(true, true);
+        const a = o.geometry.attributes.position;
+        const w = (i: number) =>
+          o.localToWorld(new THREE.Vector3(a.getX(i), a.getY(i), a.getZ(i)));
+        const p0 = w(0), p1 = w(1), p3 = w(3);
+        const normal = new THREE.Vector3()
+          .crossVectors(p1.clone().sub(p0), p3.clone().sub(p0))
+          .normalize();
+        const centre = localCentreOf(BOARD_MESH);
+        const localNormal = g
+          .worldToLocal(p0.clone().add(normal))
+          .sub(g.worldToLocal(p0.clone()))
+          .normalize();
+        return {
+          localCentre: centre?.toArray(),
+          localNormal: localNormal.toArray(),
+          worldNormal: normal.toArray(),
+          groupScale: g.scale.toArray(),
+        };
       },
       dragProbe: {
         deflectorPoint: (id: number) => project(localCentreOf(getDeflector(id).shelf)),

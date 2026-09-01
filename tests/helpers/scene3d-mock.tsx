@@ -28,6 +28,13 @@ import { markReady } from '../../src/lib/readiness';
  */
 interface MockProps {
   state: { loadedWeightsG: readonly number[] };
+  /**
+   * The lesson view, so a spec can read where the camera has been sent.
+   *
+   * `cameraView` is the only camera fact the app owns — the rig turns it into a flight —
+   * so asserting on it is how a jsdom spec checks the Board view without a GPU.
+   */
+  lesson: { cameraView: string | null };
   onCoverClick: () => void;
   onSelectDeflector: (id: number) => void;
   onPowerClick: () => void;
@@ -38,6 +45,7 @@ interface MockProps {
 }
 
 export const Scene3D: React.FC<MockProps> = ({
+  lesson,
   state,
   onCoverClick,
   onSelectDeflector,
@@ -55,6 +63,7 @@ export const Scene3D: React.FC<MockProps> = ({
 
   return (
   <div data-testid="scene-3d">
+      <span data-bedo-camera-view={lesson.cameraView ?? 'none'} />
     <button data-testid="scene-cover" onClick={onCoverClick}>
       cover
     </button>
