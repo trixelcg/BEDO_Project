@@ -3100,7 +3100,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // the lip if the tank has not been measured.
       const bodyFootY = tankInterior ? tankInterior.floorY : tmp.nozzlePos.y;
       const span = Math.max(tmp.defPos.y - bodyFootY, 1e-4) * reach;
-      const body = bodyScale(deflectorDiameter, jetFit.width, span, jetFit.height);
+      // One factor on every axis: the authored proportions are the asset, not a parameter.
+      // See `bodyScale` — the old cross-flow/along-flow pair stretched it 2.06x.
+      const body = bodyScale(span, jetFit.height);
 
       // On the nozzle axis, not the tank's: X and Z come from the lip, and only Y spans
       // the gap. A body that started anywhere else would be a magic offset.
@@ -3110,7 +3112,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         bodyFootY + span / 2,
         tmp.nozzlePos.z
       );
-      jetGroupRef.current.scale.set(body.crossFlow, body.alongFlow, body.crossFlow);
+      jetGroupRef.current.scale.setScalar(body);
 
       // The plume forms once the jet actually arrives.
       const impacting = state.valveOpening > STARTUP_VALVE_OPENING;

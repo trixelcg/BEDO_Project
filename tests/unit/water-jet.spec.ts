@@ -9,7 +9,6 @@ import {
   PLUME_SPREAD,
   STARTUP_VALVE_OPENING,
   diameterOfArea,
-  BODY_WIDTH_IN_DEFLECTORS,
   bodyScale,
   plumeScale,
 } from '../../src/lib/waterJet';
@@ -125,46 +124,52 @@ describe('the physical bore is untouched by presentation', () => {
   });
 });
 
-describe('the visible water body is scaled from the reference, not the bore', () => {
-  it('reads about one deflector diameter across, as the video shows', () => {
-    // Measured with the deflector cone as an in-frame ruler — the one object visible in
-    // both the low-flow and high-flow shots of `Bedo_Mesu_J.mp4`.
-    expect(BODY_WIDTH_IN_DEFLECTORS).toBeCloseTo(1.0, 6);
+describe('the visible water body keeps the proportions BEDO authored', () => {
+  it('is scaled by one factor on every axis, so the silhouette is never stretched', () => {
+    // BEDO-UX-17. The scale used to be a cross-flow/along-flow pair: width from the
+    // deflector, height from the span. Measured against the shipped asset and the real
+    // apparatus, that stretched the authored shape 2.06x along the flow.
     const { width, height } = shapes[JET_ASSET];
-    const deflector = 0.0325;
-    const s = bodyScale(deflector, width, 0.25, height);
-    expect(width * s.crossFlow).toBeCloseTo(deflector * BODY_WIDTH_IN_DEFLECTORS, 9);
+    const s = bodyScale(0.2308, height);
+    expect((height * s) / (width * s)).toBeCloseTo(height / width, 9);
   });
 
-  it('is far wider than the bore — that is the whole correction', () => {
+  it('renders the authored 3.44:1 column at the size the apparatus implies', () => {
+    // The apparatus, measured from Bedo_baked_v2.glb: a 32.5 mm deflector whose underside
+    // sits 230.8 mm above the tank floor, inside a 181 mm tank.
     const { width, height } = shapes[JET_ASSET];
-    const rendered = width * bodyScale(0.0325, width, 0.25, height).crossFlow;
-    expect(rendered).toBeGreaterThan(NOZZLE_DIAMETER_MODEL_UNITS * 2);
+    expect(height / width).toBeCloseTo(3.44, 2);
+    const s = bodyScale(0.2308, height);
+    expect(height * s).toBeCloseTo(0.2308, 9);
+    // 67 mm: wide enough to swallow the nozzle tube, and well inside the 181 mm tank.
+    expect(width * s).toBeCloseTo(0.067, 3);
+    expect(width * s).toBeLessThan(0.181);
   });
 
-  it('spans whatever it is given, and only along the flow', () => {
+  it('is far wider than the bore — the original BEDO-017 correction, kept', () => {
     const { width, height } = shapes[JET_ASSET];
-    const short = bodyScale(0.0325, width, 0.05, height);
-    const long = bodyScale(0.0325, width, 0.25, height);
-    expect(height * long.alongFlow).toBeCloseTo(0.25, 9);
-    expect(height * short.alongFlow).toBeCloseTo(0.05, 9);
-    // How far the water has to travel says nothing about how wide it is.
-    expect(short.crossFlow).toBe(long.crossFlow);
+    expect(width * bodyScale(0.2308, height)).toBeGreaterThan(NOZZLE_DIAMETER_MODEL_UNITS * 2);
   });
 
-  it('is the same width at every flow state', () => {
-    // Velocity may drive animation; it may never drive the body's width, and it certainly
-    // may never drive the bore.
-    const { width, height } = shapes[JET_ASSET];
-    const widths = [0.05, 0.1, 0.4, 0.5, 1.0].map(
-      (n) => width * bodyScale(0.0325, width, 0.25 * Math.min(1, n / STARTUP_VALVE_OPENING), height).crossFlow
-    );
-    expect(new Set(widths.map((w) => w.toFixed(12))).size).toBe(1);
+  it('spans whatever it is given', () => {
+    const { height } = shapes[JET_ASSET];
+    expect(height * bodyScale(0.25, height)).toBeCloseTo(0.25, 9);
+    expect(height * bodyScale(0.05, height)).toBeCloseTo(0.05, 9);
+  });
+
+  it('takes its size from the span alone, never from the flow rate directly', () => {
+    // Velocity may drive animation; it may never be read as a size on its own. The span
+    // already carries the startup ramp, so an identical span must give an identical body.
+    const { height } = shapes[JET_ASSET];
+    const repeats = [0.05, 0.1, 0.4, 0.5, 1.0].map(() => bodyScale(0.2308, height));
+    expect(new Set(repeats.map((s) => s.toFixed(12))).size).toBe(1);
+    // The ramp still shortens the body while the jet is climbing.
+    const climbing = bodyScale(0.2308 * (0.1 / STARTUP_VALVE_OPENING), height);
+    expect(climbing).toBeLessThan(bodyScale(0.2308, height));
   });
 
   it('degrades safely rather than dividing by zero', () => {
-    expect(Number.isFinite(bodyScale(0, 0, 0, 0).crossFlow)).toBe(true);
-    expect(Number.isFinite(bodyScale(0, 0, 0, 0).alongFlow)).toBe(true);
+    expect(Number.isFinite(bodyScale(0, 0))).toBe(true);
   });
 });
 

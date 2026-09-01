@@ -100,32 +100,37 @@ export const JET_ASSET = 'low' as const;
 // not the bore.
 
 /**
- * How wide the authored water body reads, in deflector diameters.
+ * What to scale the authored water body by — **one factor, applied to every axis**.
  *
- * Measured from the reference rather than chosen: the low-flow column and the deflector
- * cone are the same width to within the precision of the frame. See `docs/44`.
- */
-export const BODY_WIDTH_IN_DEFLECTORS = 1.0;
-
-/**
- * What to scale the authored water body by so it reads like the reference.
+ * ## Why this is uniform (BEDO-UX-17)
  *
- * Cross-flow comes from the deflector, along-flow from the span it has to cover — the same
- * two-independent-facts structure the old bore-based scale used, but sized from the video
- * rather than from the bore. `assetWidth`/`assetHeight` are the shape's own measured
- * extents, so this works whatever units the GLB was authored in.
+ * It used to be two: cross-flow from the deflector's diameter, along-flow from the span the
+ * body has to cover. Two independent factors on one mesh is a stretch, and measured against
+ * the shipped assets it was a severe one. `Water_low` is authored 5.083 wide by 17.481 long
+ * — an aspect of 3.44:1 — and the apparatus puts a 32.5 mm deflector 230.8 mm above the tank
+ * floor, so the pair rendered it at 7.10:1. The authored silhouette was stretched **2.06x**
+ * along the flow, and the 32.5 mm result was 18 % of the tank's 181 mm bore: narrower than
+ * the nozzle tube it is supposed to swallow, which is what put the tube in front of the
+ * water instead of inside it.
+ *
+ * BEDO authored these caches as finished shapes. Their proportions are the asset, not a
+ * parameter, so the only thing the runtime may choose is how big to draw them — hence a
+ * single factor. The span is what sets it, because the span is the one dimension the
+ * apparatus actually fixes: the body runs from the tank floor to the deflector's underside
+ * in both reference frames. Width then follows from the artwork: 17.481 -> 230.8 mm implies
+ * 5.083 -> **67.0 mm**, comfortably inside the 181 mm tank and wide enough to envelop the
+ * nozzle, which is what the reference shows.
+ *
+ * This supersedes `BODY_WIDTH_IN_DEFLECTORS = 1.0`, which came from reading the low-flow
+ * column and the deflector cone as equal widths in `Bedo_Mesu_J.mp4`. The authored geometry
+ * disagrees with that reading, and the authored geometry is the stronger source: it is the
+ * artwork itself rather than a measurement off a compressed frame.
+ *
+ * `assetHeight` is the shape's own measured extent, so this works whatever units the GLB was
+ * authored in.
  */
-export function bodyScale(
-  deflectorDiameterModelUnits: number,
-  assetWidth: number,
-  spanModelUnits: number,
-  assetHeight: number
-): { crossFlow: number; alongFlow: number } {
-  return {
-    crossFlow:
-      (deflectorDiameterModelUnits * BODY_WIDTH_IN_DEFLECTORS) / Math.max(assetWidth, 1e-9),
-    alongFlow: Math.max(spanModelUnits, 1e-6) / Math.max(assetHeight, 1e-9),
-  };
+export function bodyScale(spanModelUnits: number, assetHeight: number): number {
+  return Math.max(spanModelUnits, 1e-6) / Math.max(assetHeight, 1e-9);
 }
 
 
