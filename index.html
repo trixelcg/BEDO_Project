@@ -2,7 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!--
+      Favicon set, generated from assets-source/brand/FAV_Icon.png by
+      scripts/brand/build-icons.py. `sizes="any"` marks the .ico as the multi-resolution
+      fallback (16/32/48) so it does not compete with the two exact-size PNGs below;
+      browsers that understand `sizes` pick the PNG that matches their slot, and the rest
+      fall back to the .ico. These are stable-name assets — see the note in
+      scripts/release/asset-manifest.mjs on why the favicon is not content-addressed.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Measurement of Jet Forces - Interactive 3D Fluid Mechanics Vocational Training Simulator. Study the reaction forces exerted by water jets on flat, conical, and hemispherical deflectors." />
     <title>Measurement of Jet Forces | 3D Laboratory Simulator</title>
@@ -21,11 +32,18 @@
 
         Deliberately wordless: the language preference is not known until the bundle runs,
         and showing English here would reintroduce the EN->AR flash BEDO-UX-02 removed.
+        The logo is the brand mark, not copy, so it is language-neutral and stays.
+
+        The sizing here is duplicated in `.loading-mark` (src/index.css) on purpose: React
+        swaps this frame for its own and the two marks must land on the same pixels, or the
+        handover reads as a jump.
       */
       #boot { position: fixed; inset: 0; display: flex; align-items: center;
               justify-content: center; background: #141517; }
-      #boot .mark { font: 700 34px/1 'Inter', system-ui, sans-serif; letter-spacing: .34em;
-                    color: #f58220; text-indent: .34em; }
+      /* Square by declaration as well as by attribute, so the row is reserved at its final
+         height before the PNG arrives and the bar below it never shifts. */
+      #boot .mark { display: block; width: clamp(84px, 18vmin, 128px); height: auto;
+                    aspect-ratio: 1 / 1; }
       #boot .bar { width: 260px; height: 4px; margin-top: 26px; border-radius: 3px;
                    background: rgba(255,255,255,.08); overflow: hidden; }
       #boot .bar i { display: block; width: 38%; height: 100%; border-radius: 3px;
@@ -39,7 +57,8 @@
     <div id="root">
       <div id="boot">
         <div style="display:flex;flex-direction:column;align-items:center">
-          <div class="mark">BEDO</div>
+          <img class="mark" src="/bedo-logo-dark.png" alt="BEDO" width="447" height="447"
+               fetchpriority="high" decoding="async" />
           <div class="bar"><i></i></div>
         </div>
       </div>

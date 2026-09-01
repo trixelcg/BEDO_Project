@@ -45,7 +45,14 @@ test('the loading screen reaches a painted frame before the experience is reveal
         area: box.width * box.height,
         opacity: Number(getComputedStyle(el).opacity),
         coversCentre: !!centre?.closest('.loading-screen'),
-        mark: el.querySelector('.loading-mark')?.textContent ?? null,
+        // The mark is an image now, so "is it painted" is `complete` plus a non-zero
+        // intrinsic width — an <img> whose src 404s is still in the DOM and still has an
+        // alt, and that must not read as branded.
+        mark: (() => {
+          const img = el.querySelector('.loading-mark') as HTMLImageElement | null;
+          if (!img) return null;
+          return `${img.alt}:${img.complete && img.naturalWidth > 0 ? 'loaded' : 'broken'}`;
+        })(),
         hasTitle: !!el.querySelector('.loading-title')?.textContent,
         segments: el.querySelectorAll('.loading-seg').length,
         showsPercent: /\d+%/.test(el.textContent ?? ''),
@@ -60,7 +67,7 @@ test('the loading screen reaches a painted frame before the experience is reveal
       opacity: 1,
       coversCentre: true,
       // The branding is what makes this read as a loading state rather than a blank page.
-      mark: 'BEDO',
+      mark: 'BEDO:loaded',
       hasTitle: true,
       // Progress is by phase, and no percentage is ever claimed.
       segments: 2,

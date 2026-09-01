@@ -620,17 +620,27 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 /*
-  Typographic mark. There is no BEDO logo file in the repository — `favicon.svg` is a
-  purple template asset, not the brand — so rather than invent one this uses the brand
-  accent and the same letterform treatment as the boot shell in index.html, which keeps
-  the two frames identical as React takes over.
+  BEDO's logo — the dark-background derivative, because half the authored artwork is a dark
+  neutral that all but disappears on the field behind it. See `LoadingScreen.tsx`.
+
+  The same declarations appear on `#boot .mark` in index.html, and the duplication is the
+  point: the static boot shell and this overlay must draw the mark at identical pixels or
+  React taking over reads as a jump.
+
+  Sized from `vmin` so the mark answers to the shorter axis — a 1366x768 laptop and a
+  360x640 phone are both bounded by height here, and the clamp keeps it from dominating a
+  2560x1440 display or crowding a small one. `height: auto` with the intrinsic 447x447 on
+  the element preserves the aspect ratio unconditionally: the artwork is never stretched,
+  and `aspect-ratio` reserves the row before the PNG arrives so nothing below it shifts.
+
+  The artwork has straight alpha and no baked matte, so it composites cleanly on the
+  --brand-bg field behind it; no plate or backdrop is needed.
 */
 .loading-mark {
-  font-size: 34px;
-  font-weight: 700;
-  letter-spacing: 0.34em;
-  text-indent: 0.34em;
-  color: var(--accent-blue);
+  display: block;
+  width: clamp(84px, 18vmin, 128px);
+  height: auto;
+  aspect-ratio: 1 / 1;
 }
 
 .loading-rule {

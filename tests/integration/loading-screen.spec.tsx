@@ -46,7 +46,13 @@ describe('the loading overlay, as a component', () => {
     expect(overlay()?.hasAttribute('inert'), 'must accept its own retry focus').toBe(false);
     expect(screen.getByText('Preparing application…')).toBeTruthy();
     // The brand mark is what makes this read as a loading state rather than a blank page.
-    expect(screen.getByText('BEDO')).toBeTruthy();
+    // It is BEDO's logo now rather than a typographic stand-in, but its accessible name is
+    // deliberately unchanged, so a screen reader still hears exactly "BEDO".
+    const mark = screen.getByAltText('BEDO') as HTMLImageElement;
+    expect(mark.getAttribute('src')).toBe('/bedo-logo-dark.png');
+    // Intrinsic dimensions must be declared, or the card reflows when the PNG arrives.
+    expect(mark.getAttribute('width')).toBe('447');
+    expect(mark.getAttribute('height')).toBe('447');
   });
 
   it('hides and goes inert once ready, so nothing behind it is blocked', () => {

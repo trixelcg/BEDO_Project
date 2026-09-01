@@ -62,8 +62,16 @@ const COPY = {
  * — measured, it was on screen for ~3.7 s, so the defect was perceptual, not timing. This
  * is the same contract with a presence that reads as a deliberate loading state.
  *
- * There is no BEDO logo file in the repository, so the mark here is typographic and uses
- * the existing brand accent rather than a newly invented image.
+ * The mark is BEDO's own logo, replacing the typographic stand-in that stood here while the
+ * repository had no logo file. The boot shell in `index.html` carries the same file at the
+ * same size, so React's handover is invisible.
+ *
+ * It is the *dark-background* derivative (`public/bedo-logo-dark.png`), not the authored
+ * artwork: half of BEDO's logo is a dark neutral that measures 1.77:1 against this screen's
+ * #141517 and effectively vanished, leaving the mark reading as "B" plus grey shapes. The
+ * derivative lifts only those neutrals to 7.99:1 — the readability the orange already had —
+ * and leaves the brand colour bit-identical. `scripts/brand/build-icons.py` derives it from
+ * the untouched original in `assets-source/brand/` and asserts both properties.
  */
 export const LoadingScreen: React.FC<LoadingScreenProps> = ({
   visible,
@@ -85,7 +93,20 @@ export const LoadingScreen: React.FC<LoadingScreenProps> = ({
       data-bedo-loading-phase={phase}
     >
       <div className="loading-card">
-        <div className="loading-mark">BEDO</div>
+        {/*
+          `alt` is the brand name and nothing else: the div this replaced read as "BEDO"
+          to a screen reader, and the accessible output is unchanged. Nothing else on the
+          card names the brand, so this is not a duplicate announcement. The intrinsic
+          dimensions are declared so the card's height is reserved before the PNG loads.
+        */}
+        <img
+          className="loading-mark"
+          src="/bedo-logo-dark.png"
+          alt="BEDO"
+          width={447}
+          height={447}
+          decoding="async"
+        />
         <div className="loading-rule" />
         <div className="loading-code">{t.code}</div>
         <h1 className="loading-title">{t.title}</h1>

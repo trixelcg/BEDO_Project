@@ -142,7 +142,7 @@ describeBuilt('the production bundle', () => {
       expect(shipped, `${gone} is back in dist/`).not.toContain(gone);
     }
 
-    // The whole shipped set, pinned: 12 assets + the shell, one JS chunk, one stylesheet,
+    // The whole shipped set, pinned: 15 assets + the shell, one JS chunk, one stylesheet,
     // the two self-hosted Basis transcoder files KTX2Loader fetches at runtime, and the
     // generated runtime manifest server.ts reads at boot (PERF-06).
     expect(shipped.sort()).toEqual(
@@ -165,7 +165,12 @@ describeBuilt('the production bundle', () => {
         'answer-sheets/flat.pdf',
         'answer-sheets/oblique.pdf',
         'answer-sheets/semi.pdf',
-        'favicon.svg',
+        // Branding: the loading logo and the favicon set (BEDO-UX-16).
+        'apple-touch-icon.png',
+        'bedo-logo-dark.png',
+        'favicon-16x16.png',
+        'favicon-32x32.png',
+        'favicon.ico',
         'index.html',
         'rosendal_plains_2_4k.webp',
         'runtime-manifest.json',
