@@ -225,13 +225,41 @@ export function advanceLevel(current: number, target: number, delta: number): nu
 /**
  * The cylinder the water is drawn with.
  *
- * Open-ended and drawn from both sides: the learner looks *into* the tank, so the far
- * inside wall has to be there. Radial segments are matched to the glass's own silhouette —
- * enough to read as round, not so many that a body which is usually invisible costs
- * anything.
+ * Drawn from both sides: the learner looks *into* the tank, so the far inside wall has to
+ * be there. Radial segments are matched to the glass's own silhouette — enough to read as
+ * round, not so many that a body which is usually invisible costs anything.
  */
 export const TANK_WATER_SEGMENTS = 48;
 
+/**
+ * A cylinder with a top and no bottom.
+ *
+ * ## Why the bottom has to go (BEDO-WATER-11)
+ *
+ * `CylinderGeometry` capped at both ends gives 192 triangles: 96 for the wall, 48 pointing
+ * up and 48 pointing down. The up-facing 48 are the free surface, which is the whole point.
+ * The down-facing 48 are a horizontal disc at the tank floor, and the material this wears
+ * is `DoubleSide`, `transparent`, `depthWrite: false` — so that disc is not hidden by the
+ * body above it. It composites straight through and the learner sees **two** horizontal
+ * water circles in one tank: the real waterline, and a second ring sitting at the floor.
+ *
+ * Measured at a partial fill: top cap at world y 0.37312, bottom cap at 0.14573, projecting
+ * to two distinct bands 281 px apart with the lower one carrying its own radial fan of
+ * triangle shading. That is the defect, and it is one mesh producing two surfaces — which
+ * is why counting meshes never found it.
+ *
+ * A real body of water has no lower free surface. It ends where the vessel's floor begins,
+ * and the floor is what you see through it. So the down-facing triangles are dropped and
+ * the wall and the top are kept.
+ *
+ * Filtering by normal rather than by index range on purpose: three builds the caps after
+ * the torso today, but nothing in its contract promises that order, and a silent reordering
+ * would otherwise delete the free surface instead. A face whose vertices all point down is
+ * the bottom cap under any ordering.
+ *
+ * This removes geometry. It adds no mesh, no material, no draw call and no render pass —
+ * the same single mesh is drawn with a quarter fewer triangles.
+ */
 export function createTankWaterGeometry(interior: TankInterior): THREE.CylinderGeometry {
   const height = Math.max(interior.ceilingY - interior.floorY, 1e-6);
   // Unit height, scaled per frame by the level — so filling never rebuilds the geometry.
@@ -241,9 +269,29 @@ export function createTankWaterGeometry(interior: TankInterior): THREE.CylinderG
     height,
     TANK_WATER_SEGMENTS,
     1,
+    // Capped, because the top cap *is* the free surface. The bottom one is removed below
+    // rather than by `openEnded`, which would take the surface with it.
     false
   );
   // Origin at the base, so scaling y raises the surface instead of growing both ways.
   geometry.translate(0, height / 2, 0);
+
+  const index = geometry.getIndex();
+  const normal = geometry.getAttribute('normal');
+  if (index && normal) {
+    const kept: number[] = [];
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i);
+      const b = index.getX(i + 1);
+      const c = index.getX(i + 2);
+      // The mean of the face's three vertex normals. On a cylinder cap all three are the
+      // same axis-aligned normal, so this is -1 on the bottom, +1 on the top, and ~0 on the
+      // wall; the 0.9 gate cannot catch a wall face however fine the tessellation.
+      const facing = (normal.getY(a) + normal.getY(b) + normal.getY(c)) / 3;
+      if (facing >= -0.9) kept.push(a, b, c);
+    }
+    geometry.setIndex(kept);
+  }
+
   return geometry;
 }

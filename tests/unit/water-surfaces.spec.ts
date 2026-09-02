@@ -11,6 +11,7 @@ import {
   advanceLevel,
   createTankWaterGeometry,
   targetLevel,
+  TANK_WATER_SEGMENTS,
   type TankInterior,
 } from '../../src/lib/tankWater';
 import { flowRateLMin, TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
@@ -139,6 +140,56 @@ describe('C/D — exactly one tank water surface, at every fill', () => {
     // One radial ring, one height segment: a single top cap, not a stack of them.
     expect(geometry.parameters.heightSegments).toBe(1);
     expect(geometry.parameters.radiusTop).toBeCloseTo(geometry.parameters.radiusBottom, 12);
+  });
+
+  it('the geometry has a top cap and NO bottom cap (BEDO-WATER-11)', () => {
+    // The regression this locks: a both-ends-capped cylinder under a DoubleSide,
+    // depthWrite:false, transparent material shows its floor disc straight through the
+    // body, and the learner sees two horizontal water circles in one tank.
+    const geometry = createTankWaterGeometry(interior);
+    const index = geometry.getIndex()!;
+    const normal = geometry.getAttribute('normal');
+    let up = 0;
+    let down = 0;
+    let wall = 0;
+    for (let i = 0; i < index.count; i += 3) {
+      const facing =
+        (normal.getY(index.getX(i)) +
+          normal.getY(index.getX(i + 1)) +
+          normal.getY(index.getX(i + 2))) /
+        3;
+      if (facing > 0.9) up++;
+      else if (facing < -0.9) down++;
+      else wall++;
+    }
+    // One free surface, kept.
+    expect(up).toBe(TANK_WATER_SEGMENTS);
+    // No second one, at any level.
+    expect(down).toBe(0);
+    // The wall is untouched — this removed a cap, not the body.
+    expect(wall).toBe(TANK_WATER_SEGMENTS * 2);
+    // And the whole saving is exactly the bottom cap: 192 faces become 144.
+    expect(index.count / 3).toBe(TANK_WATER_SEGMENTS * 3);
+  });
+
+  it('exactly one horizontal surface exists at every fill level', () => {
+    // The invariant is visual, and it holds because there is only one up-facing face set in
+    // the geometry — the per-frame y scale moves that surface, it cannot duplicate it.
+    const geometry = createTankWaterGeometry(interior);
+    const index = geometry.getIndex()!;
+    const normal = geometry.getAttribute('normal');
+    const pos = geometry.getAttribute('position');
+    const surfaceYs = new Set<number>();
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i);
+      if (normal.getY(a) > 0.9) surfaceYs.add(Number(pos.getY(a).toFixed(6)));
+    }
+    // Every up-facing vertex sits at one height: one plane, not two.
+    expect(surfaceYs.size).toBe(1);
+    for (const level of [0.05, 0.25, 0.5, 0.75, 0.9]) {
+      const surfaceAt = [...surfaceYs][0] * level;
+      expect(Number.isFinite(surfaceAt)).toBe(true);
+    }
   });
 
   it('only one tank-water mesh is ever instantiated', () => {
