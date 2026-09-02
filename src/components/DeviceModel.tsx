@@ -461,6 +461,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   // agitated. See the free-surface block in `tankWaterMaterial`.
   const tankLevelUniform = useRef({ value: 0 });
   const tankInflowUniform = useRef({ value: 0 });
+
+  /**
+   * World height of the tank's free surface, for the *jet* material to read.
+   *
+   * The tank body and the authored plume are two separate meshes that occupy the same
+   * glass, and each was drawing its own free surface: once the tank filled past the plume's
+   * crown the frame showed the tank's waterline near the cover **and** the plume's own foam
+   * band a third of the way down, with clear water between them — two stacked surfaces in
+   * one vessel (BEDO-WATER-07 defect B, measured in `water-surfaces.spec.ts`).
+   *
+   * A submerged body has no free surface: the foam, the crest glint and the surface-opacity
+   * lift all belong to water meeting air, and below the waterline there is no air to meet.
+   * So the jet shader fades those cues out under this height and the plume becomes part of
+   * the one volume instead of a second one inside it.
+   *
+   * Presentation only, and strictly downstream: it is the level the tank mesh was *just*
+   * given this frame, converted to world units. Nothing reads it back, no equation sees it,
+   * and the plume's geometry, scale, morph playback and visibility are untouched.
+   *
+   * Parked below the rig when the tank is empty, so nothing is ever considered submerged.
+   */
+  const waterlineUniform = useRef({ value: -1e9 });
   const tankWaterRef = useRef<THREE.Mesh>(null);
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
@@ -530,6 +552,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       box: new THREE.Box3(),
       center: new THREE.Vector3(),
       size: new THREE.Vector3(),
+      // Where the tank's free surface has got to, in world units, for the jet material.
+      tankSurfacePos: new THREE.Vector3(),
+      tankSurfaceScale: new THREE.Vector3(),
     }),
     []
   );
@@ -840,6 +865,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
       shader.uniforms.uFlow = waterFlow.current;
+      shader.uniforms.uWaterline = waterlineUniform.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
       const tiles = {
@@ -896,7 +922,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nuniform float uFlow;\nuniform sampler2D uWaterTex;\n' +
+        'uniform float uTime;\nuniform float uFlow;\nuniform float uWaterline;\n' +
+        'uniform sampler2D uWaterTex;\n' +
         'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
         'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.fragmentShader
@@ -955,6 +982,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                vec3 N = normalize(vWNorm);
                float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
                float flow = clamp(uFlow * 1.6, 0.0, 1.0);
+
+               // How far under the tank's free surface this fragment sits, 0..1.
+               //
+               // The band is deliberately wide — about 90 mm of world height, a fifth of the
+               // tank's interior. A narrow one is worse than none: at +/-4 mm the cues
+               // switched off across six pixels and measured as a single 27.8-level step
+               // down the column, trading the old soft double band (8.8 and 7.3 levels) for
+               // one hard line. Surface agitation dies away with depth rather than stopping,
+               // so fading it over a real depth is both the softer and the truer answer.
+               //
+               // uWaterline is parked far below the rig while the tank is empty, so this is
+               // 0 for the whole plume until the tank actually holds water.
+               float submerged = smoothstep(uWaterline + 0.045, uWaterline - 0.045, vWPos.y);
 
                vec2 hUvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.13, -vFlow * uTime * 0.70);
                vec2 hUvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.09, -vFlow * uTime * 0.95);
@@ -1024,7 +1064,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // poly mesh's own static striations dominated what was left. The floor is
                // raised and the grazing end left exactly where it was.
                float glint = smoothstep(0.66, 0.97, crest) * (0.45 + 0.55 * fres);
-               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92) * (glint * 0.22 + edge * 0.18);
+               // A crest catches the room because it is a water/air boundary; submerged it
+               // is a water/water one, where the index step — and so the whole reflection —
+               // is gone. The rim term goes the same way for the same reason. Both are only
+               // damped, not cut: a little is kept so the plume still reads as a body inside
+               // the water rather than dissolving into it.
+               float airside = 1.0 - 0.60 * submerged;
+               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92)
+                                 * (glint * 0.22 + edge * 0.18) * airside;
 
                // 6. Aeration.
                //
@@ -1043,6 +1090,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // the upper fifth of every plume wholesale.
                float foam = clamp((impact * 0.95 + foot * 0.55) * (0.08 + 1.05 * churn)
                                   + torn * churn * 0.16, 0.0, 1.0) * flow;
+               // Aeration is air carried *into* water at a free surface. Below the tank's
+               // waterline the plume is inside the body rather than falling through air, so
+               // the entrained white goes with the surface it belonged to. Without this the
+               // plume kept a bright foam band a third of the way down a full tank, which is
+               // the second "waterline" the frame was reading (BEDO-WATER-07 defect B).
+               foam *= 1.0 - submerged;
                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.78, 0.85, 0.93), foam * 0.45);
 
                // 7. Opacity, from the same path length as the colour.
@@ -1050,11 +1103,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // Thin at the silhouette so the glass and the rod behind read through it,
                // thick through the core so the body has substance, and firmer again where
                // it is aerated — foam is the one part of water you cannot see through.
+               // The silhouette lift is what keeps the plume readable against the dark tank
+               // *through air*. Submerged, that same lift draws its outline as a distinct
+               // second body inside the fill, so it is damped along with the rest — the
+               // plume then shows through the tank water at its own depth rather than
+               // sitting on top of it as a separate sheet.
                gl_FragColor.a = clamp(
-                 gl_FragColor.a * (0.40 + 0.85 * thick) + edge * 0.22 + foam * 0.30,
+                 gl_FragColor.a * (0.40 + 0.85 * thick)
+                   + (edge * 0.22 + foam * 0.30) * airside,
                  0.06,
                  0.97
                );
+
+               // Finally, thin the whole body where it is submerged.
+               //
+               // Damping only the surface cues left the plume's crown standing as a 27.8-
+               // level density step inside the fill — the foam had been masking an edge
+               // rather than being it. Two bodies of water in contact have no such step, so
+               // the submerged part composites lighter and the tank volume carries the
+               // colour there. What survives is a soft change in shade where faster, more
+               // aerated water sits inside the standing water, which is what the reference
+               // shows; what goes is the hard rim that read as a second surface.
+               gl_FragColor.a *= 1.0 - 0.70 * submerged;
              }`
           );
     };
@@ -3224,6 +3294,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // target. Nothing downstream of them writes back.
       tankLevelUniform.current.value = Math.max(tankLevel.current, 1e-4);
       tankInflowUniform.current.value = inflow;
+
+      // Hand the jet material the waterline it has to defer to, in the world units its own
+      // shader works in. The mesh was just positioned and scaled above, so this reads that
+      // surface rather than predicting it.
+      //
+      // The geometry is the full interior height with its origin at the base, so the
+      // surface is `height` up the mesh's own y axis. `getWorldScale` already carries the
+      // level — it is the mesh's `scale.y` — so the level must not be applied twice here.
+      //
+      // Parked far below the rig while the tank is empty, so an empty tank can never make
+      // the plume look submerged.
+      tankWater.getWorldPosition(tmp.tankSurfacePos);
+      tankWater.getWorldScale(tmp.tankSurfaceScale);
+      waterlineUniform.current.value = tankWater.visible
+        ? tmp.tankSurfacePos.y + height * tmp.tankSurfaceScale.y
+        : -1e9;
+    } else {
+      // No tank body this frame — measured interior missing, or the mesh not mounted yet.
+      // Nothing is submerged, so the plume keeps its full free-surface treatment.
+      waterlineUniform.current.value = -1e9;
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
