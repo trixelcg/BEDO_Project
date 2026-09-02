@@ -20,6 +20,8 @@ import {
   getDeflector,
   type AnchorKey,
   type WaterShapeKey,
+  MISMATERIALLED_HOSE,
+  HOSE_MATERIAL_DONOR,
 } from '../domain/apparatus';
 import { gltfName } from '../lib/gltfNames';
 import {
@@ -592,6 +594,47 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const mounted = new Set(DEFLECTORS.map((d) => gltfName(d.installed)));
     const liquidName = gltfName(MESH.liquid);
 
+    /**
+     * `Line010` is a hose, and it was being drawn as glass (MODEL-01).
+     *
+     * `Galss_Material` has exactly two users in the GLB: the tank cylinder
+     * `JET Force 2_205`, which is genuinely the glass vessel, and this. Both inherit its
+     * `baseColorFactor` alpha of 0.10 and `alphaMode: BLEND`, so this rendered as a large,
+     * soft, near-invisible body — and because it is a swept tube seen close to edge-on, it
+     * read on screen as a faint elliptical ghost lying across the white bench panel to the
+     * left of the tank. Hiding it in a debug run removed that ghost completely and changed
+     * nothing else, which is what established ownership.
+     *
+     * It is not glass, and the evidence is not the name:
+     *
+     *  - Rendered in isolation it is a **J-shaped bent tube** — a hose run, not a ring, a
+     *    pane or a vessel.
+     *  - It is 239 x 620 x 311 mm centred at (-0.143, 0.007, -0.652): about 288 mm to the
+     *    side of the tank axis (0.018, -0.413) and hanging 408 mm below the tank floor. It
+     *    is nowhere near the glass it was grouped with.
+     *  - Its vertices sweep a radius of 42 to 190 mm about its own centre, which is a path,
+     *    not a cylinder wall.
+     *  - Alone among `Galss_Material`'s users it carries **no UVs** — `POSITION` and
+     *    `NORMAL` only, where the tank also has `TEXCOORD_0`. A surface authored to be seen
+     *    through was UV-mapped; this one was not.
+     *
+     * So the material is corrected here rather than the model. The GLB stays frozen, the
+     * geometry, transform and scale are untouched, and no new material is introduced: the
+     * mesh is handed the instance already used by `Object297`, the bench pipe run it belongs
+     * with. That material is `16 - Default.001` — opaque, metalness 0, roughness 0.9, and
+     * **texture-free**, which matters because a UV-less mesh cannot sample a map.
+     *
+     * The swap is per-mesh and not per-material on purpose: the loader shares one instance
+     * across both users, so editing the material would turn the tank glass opaque too.
+     */
+    const hoseName = gltfName(MISMATERIALLED_HOSE);
+    const donorName = gltfName(HOSE_MATERIAL_DONOR);
+    let hoseMaterial: THREE.Material | null = null;
+    scene.traverse((child: any) => {
+      if (hoseMaterial || !child.isMesh || child.name !== donorName) return;
+      hoseMaterial = Array.isArray(child.material) ? child.material[0] : child.material;
+    });
+
     // Only things that move, or that the learner brings close to the camera, are worth a
     // real-time shadow. Everything else is a static room surface whose lighting is already
     // baked into its albedo — a dynamic shadow there is cost with nothing to show for it.
@@ -627,6 +670,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
+
+      // Before anything reads the material: give the hose the bench's, not the glass's.
+      if (child.name === hoseName && hoseMaterial) child.material = hoseMaterial;
 
       child.castShadow = casters.has(child.name) || roomShadow(child.name);
       child.receiveShadow =

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import * as THREE from 'three';
 import {
   APPARATUS_ENV,
@@ -17,6 +19,7 @@ import {
   classifyMaterial,
   neutraliseConductorTint,
 } from '../../src/lib/materialFamilies';
+import { MISMATERIALLED_HOSE, HOSE_MATERIAL_DONOR } from '../../src/domain/apparatus';
 
 /**
  * The physical invariants the apparatus is rendered under (Stage B).
@@ -333,5 +336,62 @@ describe('glass is not touched by any of this', () => {
     expect(physical.transmission).toBe(0.95);
     expect(physical.roughness).toBe(0.02);
     expect(physical.ior).toBe(1.52);
+  });
+});
+
+describe('the bench hose does not wear the tank glass (MODEL-01)', () => {
+  const REPO_ROOT = path.resolve(__dirname, '../..');
+  const deviceModel = readFileSync(
+    path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'),
+    'utf8'
+  );
+
+  /**
+   * `Galss_Material` has two users in the GLB and only one of them is glass.
+   *
+   * `JET Force 2_205` is the tank cylinder. `Line010` is a J-shaped hose in the bench
+   * plumbing — measured 288 mm off the tank axis, 408 mm below its floor, and alone among
+   * the material's users it carries no UVs. Sharing the material meant sharing its
+   * `baseColorFactor` alpha of 0.10, so the hose rendered as a large faint ellipse lying
+   * across the white bench panel; hiding it in a debug run removed that ghost and nothing
+   * else.
+   *
+   * The GLB is frozen, so the correction is at runtime and per-mesh. These lock the two
+   * properties that make it safe.
+   */
+  it('the classifier still sends the material itself to the glass family', () => {
+    // The fix must not weaken the rule the tank depends on — the tank is genuinely glass,
+    // and it is the same material instance.
+    expect(classifyMaterial(authored('Galss_Material', {}))).toBe('glass');
+  });
+
+  it('the hose is reassigned per-mesh, never by editing the shared material', () => {
+    // The loader hands both meshes one instance, so mutating it would turn the tank opaque.
+    // The correction has to replace the mesh's material reference and nothing else.
+    expect(deviceModel).toMatch(
+      /if \(child\.name === hoseName && hoseMaterial\) child\.material = hoseMaterial;/
+    );
+    // And it must not reach for the glass material's own fields.
+    const block = deviceModel.slice(
+      deviceModel.indexOf('const hoseName'),
+      deviceModel.indexOf('child.castShadow =')
+    );
+    expect(block).not.toMatch(/Galss|\.opacity\s*=|\.transparent\s*=/);
+  });
+
+  it('it borrows an existing material rather than creating one', () => {
+    // Reuse keeps the draw-call and material count unchanged. The donor is looked up in the
+    // scene by mesh name; nothing is constructed.
+    expect(deviceModel).toMatch(/const donorName = gltfName\(HOSE_MATERIAL_DONOR\)/);
+    const block = deviceModel.slice(
+      deviceModel.indexOf('const hoseName'),
+      deviceModel.indexOf('child.castShadow =')
+    );
+    expect(block).not.toMatch(/new THREE\.[A-Za-z]*Material/);
+  });
+
+  it('names the two meshes in the domain rather than inline', () => {
+    expect(MISMATERIALLED_HOSE).toBe('Line010');
+    expect(HOSE_MATERIAL_DONOR).toBe('Object297');
   });
 });

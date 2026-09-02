@@ -47,6 +47,22 @@ export const MESH = {
 } as const;
 
 /**
+ * A hose in the bench plumbing that the GLB assigns the tank's glass material (MODEL-01).
+ *
+ * Named here rather than inline so the correction in `DeviceModel` says what it is acting
+ * on. See that call site for the measurements that show it is a bent tube standing well
+ * clear of the tank, not part of the vessel.
+ */
+export const MISMATERIALLED_HOSE = 'Line010';
+
+/**
+ * The bench pipe whose material the hose above borrows: `16 - Default.001`, opaque and
+ * carrying no texture, so a mesh with no UVs can wear it safely. Reused rather than
+ * recreated, so the correction adds no material to the scene.
+ */
+export const HOSE_MATERIAL_DONOR = 'Object297';
+
+/**
  * Water jet silhouettes shipped in /public/WaterShapes — one simulated plume per deflector,
  * plus the startup trickle.
  *
