@@ -185,10 +185,13 @@ describe('the tank fills only when more arrives than the drain can carry', () =>
     const block = source
       .slice(source.indexOf('The tank fills once more arrives'))
       .slice(0, 1200);
-    // Flow-driven, because that is what the recording shows changing...
-    expect(block).toMatch(/flowRateLMin\(state\.valveOpening\)/);
-    // ...normalised so `tankWater` never sees a unit it would have to know about...
-    expect(block).toMatch(/TOTAL_FLOW_L_MIN/);
+    // Flow-driven, because that is what the recording shows changing — and read from the
+    // domain's own figure rather than recomputed here, so the fill and the shape selection
+    // above it can never straddle `DRAIN_CAPACITY_FRACTION` differently (BEDO-WATER-05).
+    expect(block).toMatch(/state\.live\.flowRateLMin/);
+    // ...normalised against the pump capacity actually in force, including a customised one,
+    // so `tankWater` never sees a unit it would have to know about...
+    expect(block).toMatch(/state\.params\.pumpFlowLMin/);
     // ...and the drain still empties it.
     expect(block).toMatch(/state\.isVolumetricValveOpen/);
   });

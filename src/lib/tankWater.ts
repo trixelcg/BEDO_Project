@@ -99,21 +99,43 @@ export const DRAIN_SECONDS = 6;
  */
 export function measureTankInterior(
   tank: THREE.Object3D,
-  toLocal: (v: THREE.Vector3) => THREE.Vector3
+  toLocal: (v: THREE.Vector3) => THREE.Vector3,
+  /**
+   * What actually closes the tank, top and bottom (BEDO-WATER-01).
+   *
+   * The glass alone cannot say where the water sits. Measured on the shipped apparatus, the
+   * tube runs y 1.05808..1.37491 — but its lower 23 mm is sunk into the base assembly and
+   * its top 19 mm disappears into the cover. Taking the floor and ceiling from the glass's
+   * own bbox therefore put the water's base **22.9 mm below the visible floor**, inside an
+   * opaque plate, and overstated the interior height by 42.1 mm (15.3 %). Every fill level
+   * was scaled from that wrong height.
+   *
+   * So the two closing surfaces are measured from the parts that actually close it: the
+   * base plate presents a 161 mm disc across the bore topping out at y = 1.08096, and the
+   * cover's underside sits at y = 1.35565. Both are read here, inside the bore, rather than
+   * assumed — pass them and the interior is the real one; omit them and this falls back to
+   * the glass, which is what it did before.
+   */
+  closures?: { floor?: THREE.Object3D | null; ceiling?: THREE.Object3D | null }
 ): TankInterior | null {
-  const points: THREE.Vector3[] = [];
-  const vertex = new THREE.Vector3();
-  tank.updateWorldMatrix(true, true);
-  tank.traverse((child) => {
-    const mesh = child as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    const position = mesh.geometry?.getAttribute('position');
-    if (!position) return;
-    for (let i = 0; i < position.count; i++) {
-      vertex.fromBufferAttribute(position as THREE.BufferAttribute, i);
-      points.push(toLocal(vertex.applyMatrix4(mesh.matrixWorld)).clone());
-    }
-  });
+  const gather = (root: THREE.Object3D): THREE.Vector3[] => {
+    const out: THREE.Vector3[] = [];
+    const vertex = new THREE.Vector3();
+    root.updateWorldMatrix(true, true);
+    root.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const position = mesh.geometry?.getAttribute('position');
+      if (!position) return;
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position as THREE.BufferAttribute, i);
+        out.push(toLocal(vertex.applyMatrix4(mesh.matrixWorld)).clone());
+      }
+    });
+    return out;
+  };
+
+  const points = gather(tank);
   if (points.length < 8) return null;
 
   const box = new THREE.Box3().setFromPoints(points);
@@ -125,11 +147,33 @@ export function measureTankInterior(
   const inner = radii[Math.floor(0.25 * (radii.length - 1))];
   if (!(inner > 0)) return null;
 
+  /** Points of `part` that lie inside the bore and within the glass's own height. */
+  const inBore = (part: THREE.Object3D | null | undefined) =>
+    part
+      ? gather(part).filter(
+          (p) =>
+            Math.hypot(p.x - axis.x, p.z - axis.y) < inner &&
+            p.y >= box.min.y - 1e-6 &&
+            p.y <= box.max.y + 1e-6
+        )
+      : [];
+
+  // The floor is the highest thing the base presents across the bore; the ceiling is the
+  // lowest thing the cover presents. Anything narrow — the nozzle tube, a deflector — is
+  // furniture standing in the water, not a surface that bounds it, so only parts that span
+  // a real fraction of the bore are allowed to set a level.
+  const SPANS_BORE = 0.5;
+  const spanning = (pts: THREE.Vector3[]) =>
+    pts.filter((p) => Math.hypot(p.x - axis.x, p.z - axis.y) > inner * SPANS_BORE);
+
+  const floorPts = spanning(inBore(closures?.floor));
+  const ceilPts = spanning(inBore(closures?.ceiling));
+
   return {
     axis,
     radius: inner * (1 - WALL_CLEARANCE),
-    floorY: box.min.y,
-    ceilingY: box.max.y,
+    floorY: floorPts.length ? Math.max(...floorPts.map((p) => p.y)) : box.min.y,
+    ceilingY: ceilPts.length ? Math.min(...ceilPts.map((p) => p.y)) : box.max.y,
   };
 }
 

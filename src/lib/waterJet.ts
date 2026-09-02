@@ -33,7 +33,9 @@
 // implementation had collapsed them into one and sized that one from the tank.
 
 import { NOZZLE_AREA_M2 } from '../domain/physics';
+import type { WaterShapeKey } from '../domain/apparatus';
 import { MODEL_UNITS_PER_METRE } from './apparatusView';
+import { DRAIN_CAPACITY_FRACTION } from './tankWater';
 
 /**
  * The bore a cross-sectional area implies: `d = 2 sqrt(A / pi)`.
@@ -119,12 +121,70 @@ export const WATER_MODEL_SCALE = 0.01;
 
 
 /**
- * The valve opening at which the jet is treated as reaching the deflector.
+ * Select the one authored cache that represents the current water state.
  *
- * **Implementation behaviour, not source truth.** BEDO says only that the water "forms"
- * when the valve is opened and gives no startup curve, so this is the threshold the scene
- * has always used, kept at its existing value: below it the jet is still climbing and no
- * plume has formed, above it the water is striking the deflector. Moving it changes when
- * the spray appears and nothing else — no physics reads it.
+ * ## What the two shapes actually are (BEDO-WATER-05)
+ *
+ * `Jetforce_Storyboard.pptx` sl. 18 names them "water shape before impact" and "water shape
+ * after impact", and the caches say what those mean far more precisely than the words do.
+ * Playing each one against the measured apparatus (tank floor 1.08096, nozzle mouth 1.26176,
+ * deflector underside 1.28455):
+ *
+ * | frame | `Water_low` y-span      | `Water90_Flat` y-span   |
+ * |-------|-------------------------|-------------------------|
+ * | 0     | 1.22874 .. 1.23790      | 1.25460 .. 1.26789      |
+ * | 10    | 1.22874 .. 1.26354      | 1.25460 .. 1.27622      |
+ * | 20    | 1.22874 .. **1.26520**  | 1.25460 .. **1.28170**  |
+ * | 80    | 1.09046 .. 1.26527      | 1.06208 .. 1.28202      |
+ *
+ * Both emerge at the nozzle as a ~10 mm nub and climb. The plume's top reaches 1.28202 —
+ * the deflector's underside — and then spreads to 168 mm across. `Water_low`'s top stops at
+ * **1.26527, the nozzle mouth**, 19 mm short of the plate, and instead of spreading it falls:
+ * its floor descends to 1.09046 and it flares to 51 mm.
+ *
+ * So `Water_low` is not a startup transient and not a thin jet in the mouth-to-plate gap. It
+ * is **the low-flow state**: water that leaves the nozzle, never reaches the deflector, and
+ * runs back down around the tube to pool on the floor. `docs/44` describes the same thing in
+ * the reference recording — "55.5 - 65.5 s | Low flow. Tank **empty**, jet column only" —
+ * and measures that column as 27 px at the deflector widening to 48-54 px below, a taper
+ * that matches this silhouette.
+ *
+ * ## Why the old selector could never show it
+ *
+ * The condition was `impactVelocityMS > 0`, and `jetState` computes
+ * `impactVelocityMS = sqrt(max(0, v0^2 - 2*g*s))` with `s = TRAVEL_HEIGHT_M`. That is zero
+ * only while `v0 <= sqrt(2 * 9.81 * 0.035) = 0.8287 m/s`, i.e. while
+ * `Q <= 0.8287 * NOZZLE_AREA_M2 = 3.90 L/min`, i.e. below **n = 0.0617**. The water is not
+ * drawn at all until `n > 0.05`, so the pre-impact shape was reachable only inside a
+ * 0.05..0.0617 sliver — 1.2 % of the valve's travel, below every setpoint the experiment
+ * uses (`ROW_VALVE_SETTINGS` is 0.4 / 0.5 / 0.6). In practice it never rendered.
+ *
+ * The defect was that a *presentation* question — has the water reached the plate yet? — was
+ * being answered by a *physics* scalar that asks something else: how fast would it be going
+ * if it got there. Nothing about the physics is wrong; it was the wrong quantity to ask.
+ *
+ * ## What decides it now
+ *
+ * `DRAIN_CAPACITY_FRACTION`, which already exists and already draws exactly this line. It is
+ * the presentation threshold `lib/tankWater.ts` calibrated against the same two reference
+ * intervals: below it the tank stays empty (the 55.5-65.5 s low-flow window), above it the
+ * tank fills (72.0-78.4 s). The recording shows the column in the first and the spread in
+ * the second, so one number governs both halves of the same observation — and no new
+ * threshold is invented here. Against the canonical setpoints:
+ *
+ *   n = 0.40  ->  Q/Q_total = 0.131  <=  0.178  ->  `Water_low`   (first reading)
+ *   n = 0.50  ->  Q/Q_total = 0.225  >   0.178  ->  the deflector's plume (second reading)
+ *   n = 0.60  ->  Q/Q_total = 0.362  >   0.178  ->  the deflector's plume
+ *
+ * The crossover sits at n = 0.4565, so the column now owns the lower half of the valve's
+ * travel rather than a sliver of it.
+ *
+ * This is presentation mapping only. It reads the flow the domain already computed and
+ * writes nothing back: no equation, pump curve, valve semantic or state-machine rule is
+ * touched, and `impactVelocityMS` keeps its meaning and its consumers.
  */
-export const STARTUP_VALVE_OPENING = 0.22;
+export const waterShapeForFlow = (
+  inflowFraction: number,
+  deflectorShape: WaterShapeKey
+): WaterShapeKey =>
+  inflowFraction > DRAIN_CAPACITY_FRACTION ? deflectorShape : JET_ASSET;

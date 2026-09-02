@@ -55,6 +55,21 @@ export interface WaterUvResult {
   readonly flowAxis: FlowAxis;
   /** That axis's extent, for the record. */
   readonly flowLength: number;
+  /**
+   * The shape's mean radius about its own flow axis.
+   *
+   * The one number a *shared* material needs in order to ripple every shape by the same
+   * visual amount. The eight caches are authored at their true sizes and differ by more
+   * than three to one across the flow — `Water_low` is 5.08 units across, the plumes are
+   * 16.4 to 17.0 — so a fixed object-space amplitude is either invisible on one or a
+   * convulsion on the other. It was the former: 0.022 units on a 17-unit body is a tenth
+   * of a per cent, which is why the "ripple that keeps the stream alive" could not be
+   * seen in any capture (BEDO-WATER-03).
+   *
+   * Mean rather than maximum, so one stray vertex thrown wide by the splash cannot set the
+   * amplitude for the whole shape.
+   */
+  readonly crossRadius: number;
 }
 
 /**
@@ -101,7 +116,7 @@ export function flowAxisOf(positions: ArrayLike<number>): FlowAxis {
 export function buildWaterUv(positions: ArrayLike<number>): WaterUvResult {
   const count = Math.floor(positions.length / 3);
   const uv = new Float32Array(count * 2);
-  if (count === 0) return { uv, flowAxis: 1, flowLength: 0 };
+  if (count === 0) return { uv, flowAxis: 1, flowLength: 0, crossRadius: 0 };
 
   const flowAxis = flowAxisOf(positions);
   // The two axes across the flow, in order, so the angle is measured consistently.
@@ -126,14 +141,16 @@ export function buildWaterUv(positions: ArrayLike<number>): WaterUvResult {
   const span = hi - lo;
   const scale = span > 1e-9 ? 1 / span : 0;
 
+  let radiusSum = 0;
   for (let i = 0; i < count; i++) {
     const da = positions[i * 3 + a] - centreA;
     const db = positions[i * 3 + b] - centreB;
     // atan2 in -PI..PI, mapped to 0..1 and continuous around the wrap.
     uv[i * 2] = Math.atan2(db, da) / (Math.PI * 2) + 0.5;
     uv[i * 2 + 1] = (positions[i * 3 + flowAxis] - lo) * scale;
+    radiusSum += Math.hypot(da, db);
   }
-  return { uv, flowAxis, flowLength: span };
+  return { uv, flowAxis, flowLength: span, crossRadius: radiusSum / count };
 }
 
 /**
@@ -162,7 +179,112 @@ export const RIPPLE_TILES = {
   normal: { around: 2, along: 3 },
   /** The faster highlight/foam layer. */
   highlight: { around: 3, along: 4 },
+  /**
+   * A third, finer layer, added once the coordinate was correct (BEDO-WATER-03).
+   *
+   * The two above were sized against the *old* world-space projection, and they are the
+   * right coarse structure: two to four repeats over the whole body. But over a plume 105 mm
+   * in mean radius that is a wavelength of roughly 150 mm — a swell, not a water surface,
+   * and it was all there was once the geometry stopped supplying detail of its own.
+   *
+   * Seven and eleven put a repeat every 40 to 60 mm, which is the scale at which a
+   * disturbed surface actually breaks up. Coprime with each other and with both pairs
+   * above, so the three layers never beat into a pattern.
+   */
+  detail: { around: 7, along: 11 },
 } as const;
+
+/**
+ * A vertex's x, y, z, tightly packed, whatever the attribute is actually stored as.
+ *
+ * ## The defect this exists to close
+ *
+ * The eight caches ship through gltfpack, which quantises positions to `Uint16` and packs
+ * the base mesh and all eighty morph targets into **one interleaved buffer with a stride of
+ * four** — x, y, z and a pad component. three.js models that as an
+ * `InterleavedBufferAttribute`, so `attribute.array` is the entire 4,368-element buffer, not
+ * this mesh's 1,092 xyz triples.
+ *
+ * `buildWaterUv(position.array)` therefore read quads as triples. Measured on
+ * `Water_low.glb`, one vertex in four came out right and the other three were slices across
+ * the boundary — `(pad, x, y)`, `(z, pad, x)`, `(y, z, pad)` — so the surface coordinate was
+ * a four-vertex sawtooth of nonsense, and it was 1,456 entries long against a geometry of
+ * 1,092. Everything downstream of it was reading that: the ripple, the along-flow depth
+ * term, the contact darkening at both ends and the aeration mask.
+ *
+ * `getX`/`getY`/`getZ` respect the stride and the offset, so this is correct for a plain
+ * attribute and for an interleaved one alike, and it is the only thing that should ever be
+ * handed to `buildWaterUv` from a loaded asset.
+ */
+export interface VertexSource {
+  readonly count: number;
+  getX(index: number): number;
+  getY(index: number): number;
+  getZ(index: number): number;
+}
+
+export function packPositions(attribute: VertexSource): Float32Array {
+  const out = new Float32Array(attribute.count * 3);
+  for (let i = 0; i < attribute.count; i++) {
+    out[i * 3] = attribute.getX(i);
+    out[i * 3 + 1] = attribute.getY(i);
+    out[i * 3 + 2] = attribute.getZ(i);
+  }
+  return out;
+}
 
 /** The attribute name the water shader reads its surface coordinate from. */
 export const WATER_UV_ATTRIBUTE = 'aWaterUv';
+
+/**
+ * The attribute carrying `crossRadius`, so the shared material can size its ripple — and,
+ * in its **sign**, which way that shape's water is running.
+ *
+ * A per-vertex copy of one per-mesh constant, which is the cheapest way to hand a value to
+ * a material eight meshes share: a uniform would have to be rewritten between draw calls,
+ * and a per-mesh material clone would multiply the programs and the draw state. At 300 to
+ * 1,900 vertices per shape this is at most 7.7 kB across the whole set.
+ *
+ * ## Why the sign carries the flow sense (BEDO-WATER-04)
+ *
+ * `aWaterUv.y` runs 0 at the bottom of a shape and 1 at the top, and the top is the
+ * deflector on all eight. That means the *same* coordinate describes two opposite flows:
+ *
+ *   * the pre-impact column climbs from the nozzle to the plate, so its surface detail
+ *     travels toward v = 1;
+ *   * every after-impact plume leaves the plate and runs down and outward to the tank
+ *     floor, so its detail travels toward v = 0.
+ *
+ * One scroll direction was used for both, and measured on the rendered frames it was the
+ * column's: correlating consecutive difference images put the moving structure 19 to 72 px
+ * per 0.2 s *up* the screen in every state, toward the impact rather than away from it —
+ * the four plumes were running backwards. The magnitude and the sense are one number per
+ * shape, so they travel in one attribute rather than two.
+ *
+ * `WATER_FLOW_SENSE` names the two values; the shader reads `abs()` for the amplitude and
+ * `sign()` for the direction.
+ */
+export const WATER_AMPLITUDE_ATTRIBUTE = 'aWaterAmp';
+
+/**
+ * Which way a shape's water runs along its own `aWaterUv.y`.
+ *
+ * `toward` is +1: the flow climbs the surface coordinate, which is the pre-impact column.
+ * `away` is -1: the flow descends it, which is every plume spreading off a deflector.
+ *
+ * A plume cache also contains the column that feeds it, and one sign cannot describe both
+ * halves of a shape. The sheet is what the learner sees — the column inside a plume is
+ * enclosed by it — so the sheet's sense is the one the shape carries.
+ */
+export const WATER_FLOW_SENSE = { toward: 1, away: -1 } as const;
+
+/**
+ * How much of its own cross-section a shape ripples by.
+ *
+ * Derived from what the reference shows rather than chosen: between 60 s and 64 s the
+ * water region of `Bedo_Mesu_J.mp4` changes by 0.65/255 per frame against 0.05 for a
+ * static background — a surface that shimmers rather than boils. Four and a half per cent
+ * of the cross-section is the displacement that reads at the guided camera distance
+ * without disturbing the authored silhouette, which the morph cache owns.
+ */
+export const RIPPLE_AMPLITUDE = 0.030;

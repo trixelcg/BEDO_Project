@@ -41,7 +41,7 @@ import {
   type HolderAnchor,
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
-import { NOZZLE_AREA_M2, TOTAL_FLOW_L_MIN, flowRateLMin, jetState } from '../domain/physics';
+import { NOZZLE_AREA_M2, jetState } from '../domain/physics';
 import { attachBoardReadout, type BoardValues } from './boardReadout';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
@@ -60,10 +60,18 @@ import {
 import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
 import {
   JET_ASSET,
-  STARTUP_VALVE_OPENING,
   WATER_MODEL_SCALE,
+  waterShapeForFlow,
 } from '../lib/waterJet';
-import { RIPPLE_TILES, WATER_UV_ATTRIBUTE, buildWaterUv } from '../lib/waterUv';
+import {
+  RIPPLE_AMPLITUDE,
+  RIPPLE_TILES,
+  WATER_AMPLITUDE_ATTRIBUTE,
+  WATER_FLOW_SENSE,
+  WATER_UV_ATTRIBUTE,
+  buildWaterUv,
+  packPositions,
+} from '../lib/waterUv';
 import {
   applyFamily,
   applyGlass,
@@ -649,6 +657,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const waterTime = useRef({ value: 0 });
 
   /**
+   * How hard the water is being driven, 0..1, for the material to read.
+   *
+   * Presentation only, and read-only with respect to the simulation: it is the valve
+   * opening the learner has already set, zeroed when nothing is flowing. Aeration, ripple
+   * strength and impact roughness are all state-dependent per the brief, and a uniform is
+   * how a shared material learns that without any per-frame React state.
+   */
+  const waterFlow = useRef({ value: 0 });
+
+  /**
    * Tileable animated-water texture, generated at runtime — the project ships none.
    *
    * One RGBA map carries everything: RG is the surface normal of a fractal ripple field,
@@ -731,133 +749,145 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, []);
 
   const waterMaterial = useMemo(() => {
-    // Tuned against `Bedo_Mesu_J.mp4`, not against generic PBR water.
+    // Water, and not a coloured mesh (BEDO-WATER-03).
     //
-    // The reference draws a *readable* body: sampled across the column at t = 60.63 s its
-    // core is about rgb(83, 90, 111) — a dark, desaturated blue-grey — and the nozzle and
-    // deflector stay visible through it. It is not glass. The previous settings
-    // (transmission 0.3 with clearcoat 1.0 and envMapIntensity 1.6) made a 10 mm thread of
-    // mirror, which against the dark tank read as nothing at all; that, together with the
-    // width, is why the deployed water was reported as not looking like the simulation.
+    // ## What the previous settings actually rendered
     //
-    // So: a solid-reading body colour close to the sampled core, restrained transmission
-    // and environment response so the tank behind does not overwhelm it, and a soft
-    // clearcoat instead of a hard one. Opacity is high enough to read and low enough that
-    // the apparatus still shows through, as it does in the video.
+    // Measured, not recalled: `scripts/render/water-review.mjs` photographs each state from
+    // three azimuths. Every plume came back as a near-white milky solid filling the glass —
+    // no visible surface motion, no highlight travel, no aeration, and no gradient across the
+    // body. The two complaints in the brief are one defect seen twice.
+    //
+    // Three things produced it, and all three are fixed here.
+    //
+    //  1. **The body colour was a paint pass, not an optical one.** The fragment stage ended
+    //     with `mix(lit, deep, 0.60 + depth * 0.34)`, so between 60 % and 83 % of the lit
+    //     colour was replaced by one constant. Whatever the lighting did, the result was
+    //     that constant plus a fifth of a highlight. That is the definition of a flat mesh.
+    //
+    //  2. **Its one gradient ran the wrong way.** `depth` came from `vRise`, which is
+    //     distance *along* the flow axis. Every horizontal slice of the column therefore had
+    //     one single value across its whole width: from the nozzle to the deflector the body
+    //     shaded, and across its 170 mm diameter it did not shade at all. A round column with
+    //     no cross-sectional gradient photographs exactly like a flat ribbon, which is why
+    //     the shape reads as squashed in depth even though it is measurably round (see
+    //     `tests/unit/water-shape.spec.ts`: X and Z agree to 0.08 % on all seven
+    //     axisymmetric shapes, and every node in the transform chain is uniformly scaled).
+    //
+    //  3. **The ripple could not be seen.** The vertex displacement was 0.022 *object* units
+    //     on bodies 17 to 28 units long — one tenth of one per cent — and it displaced along
+    //     fixed x and z, which for five of the eight shapes is partly along the flow rather
+    //     than across it.
+    //
+    // ## What replaces it
+    //
+    // Absorption instead of tinting. The lit colour is carried through Beer-Lambert
+    // extinction over a path length taken from `abs(dot(N, V))` — the eye looks through the
+    // most water where it faces the surface square on and through almost none at the
+    // silhouette. That gives the body a gradient *across* itself, makes the rim thin and
+    // bright and the core deep, and pins the colour to water's own absorption ratio however
+    // bright the room gets: no amount of environment can turn it white, because white light
+    // through 1.35 units of water is blue-grey by construction.
+    //
+    // #48628c stays, as §8 asks — it is the albedo the absorption acts on, and the settled
+    // core still lands on the recording's rgb(83, 90, 111). What changes is that it is no
+    // longer the answer on its own.
     const mat = new THREE.MeshPhysicalMaterial({
-      // rgb(58, 79, 108). The authored #6d84a6 is rgb(109, 132, 166) — already lighter
-      // than the rgb(83, 90, 111) core the comment above sets as the target, before the
-      // tone curve lifts it further. This is the value that arrives near the target once
-      // ACES at exposure 1.3 and the room's environment have had their say.
-      //
-      // BEDO-UX-06C lifted this from `#3a4f6c` to `#48628c`. Measured at the guided camera
-      // distance, the lower column was rendering rgb(98, 97, 95) — a blue lift of MINUS 3,
-      // i.e. neutral grey, so a learner could not follow the jet from the nozzle to the
-      // deflector through the glass. The original BEDO experience shows a readable
-      // blue-grey column, and that readability is the educational point of the frame.
-      //
-      // This sits slightly above the MP4-sampled core on purpose: the sample stays the
-      // reference for character (blue-grey, translucent, not saturated), while the extra
-      // lift buys back legibility through this renderer's opacity-based glass. Colour is
-      // the only thing that changed — opacity, roughness, transmission, depth response,
-      // the shader, the authored geometry and every physics constant are untouched.
+      // The approved base presentation, kept: rgb(72, 98, 140).
       color: new THREE.Color('#48628c'),
       transparent: true,
-      opacity: 0.86,
-      roughness: 0.22,
+      // Lower than the 0.86 this held, because alpha is no longer one number for the whole
+      // body: the shader drives it from the same path length the colour uses, so the core
+      // ends up *more* opaque than 0.86 and the silhouette considerably less. A single high
+      // value is what made the previous body read as a solid.
+      opacity: 0.56,
+      // Clean water is smooth, but not mirror-smooth here. These are splash meshes of 663
+      // to 1,922 vertices with long thin triangles, and at 0.13 the interpolated normals
+      // drew hard white striations along every one of them. 0.20 keeps the sheen and lets
+      // the striations read as flow rather than as scratches; the impact region is
+      // roughened further in the shader, which is where the aeration actually is.
+      roughness: 0.20,
       metalness: 0.0,
-      // No transmission, deliberately.
-      //
-      // `transmission` routes this material through three's transmission resolve — the same
-      // subsystem that forced Stage C-safe on the glass. Inside that now-approved glass it
-      // rendered the geometry behind the water as hard-edged axis-aligned blocks, worst
-      // across the tank floor and around the nozzle. Measured by rendering the identical
-      // frame with it on and off: the blocks disappear completely, the rod behind the water
-      // reads *better* rather than worse, and the frame gives back 79 draw calls and 31,428
-      // triangles that the pass was spending to re-render every opaque object.
-      //
-      // Nothing in `Bedo_Mesu_J.mp4` asks for it either. The reference water is a coloured
-      // translucent body with a strong surface, not a refractive one — it displaces nothing
-      // behind it. The translucency it was providing is carried by `opacity` and by the
-      // depth shader below, which is where it can be controlled.
-      //
-      // `thickness` and `attenuation*` are gone with it: three applies both only through the
-      // transmission path, so they were inert the moment this reached 0. `ior` stays — it
-      // still sets the dielectric F0.
-      ior: 1.33, // water
-      // Both cut hard, because together they were turning blue water white.
-      //
-      // Measured against the recording: its jet is *darker* than what surrounds it
-      // (luminance 63.5 against 78.3) and strongly blue (saturation 0.335, blue bias
-      // +42%). The shipped splash was the opposite on every count — brighter than its
-      // surround (172.5 against 148.2) and achromatic, saturation 0.006, blue bias +0.4%.
-      // A body colour of #6d84a6 cannot produce that on its own, so the blue was being
-      // buried rather than missing.
-      //
-      // The mechanism is additive and doubled. At opacity 0.86 the body is nearly opaque,
-      // and `DoubleSide` with `depthWrite: false` lets the front and the back face of the
-      // same shape each lay down a broad `clearcoat` lobe plus a `specularIntensity` one,
-      // neither of which is tinted by the body colour. Two stacked achromatic sheets over
-      // a nearly opaque base is white, whatever is underneath.
-      clearcoat: 0.08,
-      clearcoatRoughness: 0.30,
-      specularIntensity: 0.18,
-      // Back to the 0.45 this was originally authored at.
-      //
-      // The reasoning for holding 1.0 was that the appearance at 1.0 had been validated, so
-      // dropping to 0.45 would silently retune something already signed off. Stage D's
-      // measurements retire that argument: the appearance at 1.0 is the one that renders
-      // the splash at saturation 0.006 against the recording's 0.335, so it is not an
-      // appearance worth preserving. The room probe holds albedo at unity and the jet is a
-      // thin body — at full strength the environment simply overwhelms its own colour.
-      envMapIntensity: 0.45,
-      emissive: new THREE.Color('#16324f'),
-      emissiveIntensity: 0.18,
+      // No transmission, deliberately — unchanged, and for the reason recorded at BEDO-UX:
+      // three's transmission resolve rendered the geometry behind the water as hard-edged
+      // axis-aligned blocks inside the approved glass, and cost 79 draw calls and 31,428
+      // triangles re-rendering every opaque object. The translucency is carried by the
+      // absorption below, where it can be controlled. `ior` still sets the dielectric F0.
+      ior: 1.33,
+      // Raised, but no longer able to whiten the body: every specular term now lands
+      // *before* absorption is applied to the diffuse path and is itself Fresnel-weighted,
+      // so it brightens the rim and the crests and leaves the core alone. The earlier cuts
+      // to 0.08 / 0.18 / 0.45 were the right answer to a stage that mixed toward white with
+      // no absorption to hold the colour; that stage is gone.
+      clearcoat: 0.26,
+      clearcoatRoughness: 0.24,
+      specularIntensity: 0.60,
+      envMapIntensity: 0.70,
+      // Nearly off. An emissive floor is unlit by definition, so it is a constant added to
+      // every fragment — the one thing a body that already reads flat does not need.
+      emissive: new THREE.Color('#0d2136'),
+      emissiveIntensity: 0.05,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
 
-    // The classic dual-scroll water: two copies of one tileable ripple map drift over the
-    // surface at different scales and directions — one across the surface plane, one down
-    // the column so the pattern climbs with the flow. Their normals bend the lighting, so
-    // the glints and the environment reflection shimmer; their heights drive soft caustic
-    // sparkle and a little foam where crests coincide near the churning top.
+    // Two copies of one tileable ripple map drift across the surface at different scales and
+    // speeds. Their gradients bend the shading normal, so highlights and the environment
+    // reflection travel; their heights drive the glint and the aeration mask.
     //
-    // Sampling is planar in world space, not by UV — these baked simulation meshes carry
-    // no usable UVs.
+    // Sampled on the water's own cylindrical coordinate (`src/lib/waterUv.ts`), not in world
+    // space, so the pattern is welded to the water and wraps around the column.
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
+      shader.uniforms.uFlow = waterFlow.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
+      const tiles = {
+        a: `vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})`,
+        b: `vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})`,
+        c: `vec2(${RIPPLE_TILES.detail.around.toFixed(1)}, ${RIPPLE_TILES.detail.along.toFixed(1)})`,
+      };
+
       shader.vertexShader =
-        'uniform float uTime;\nattribute vec2 aWaterUv;\n' +
-        'varying float vRise;\nvarying vec2 vWaterUv;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        'uniform float uTime;\nuniform float uFlow;\n' +
+        'attribute vec2 aWaterUv;\nattribute float aWaterAmp;\n' +
+        'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
+        'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.vertexShader.replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           // aWaterUv.y is distance along this mesh's own flow axis, already 0 at the
-           // nozzle end and 1 at the far end, so the ripple can build toward the surface
-           // without guessing at the authored scale. The old code used
-           // clamp(position.y * 0.05 + 0.5, ...), which assumed every shape was ~20 units
-           // tall and centred on the origin; most are not (Water90_Flat sits at y 106.9 to
-           // 128.9) and it sat pinned at 1 for them.
-           // Amplitude and speed measured, not chosen. Between 60 s and 64 s the
-           // reference's water region changes by 0.65/255 per frame on average against
-           // 0.05 for a static background — real, continuous motion, but a thirtieth of
-           // what the old 0.16 displacement produced. The authored morph now carries the
-           // shape; the ripple only has to keep the surface alive.
+           // Along the surface normal, and scaled by this shape's own cross-section, so one
+           // amplitude reads the same on a 51 mm column and a 170 mm plume. objectNormal
+           // is available here: beginnormal_vertex and morphnormal_vertex both run before
+           // begin_vertex, so it is already the morph-adjusted normal.
+           //
+           // Two waves at coprime rates, so nothing repeats visibly. The angular term is
+           // multiplied by whole turns of 2*PI, which is what keeps the wave continuous
+           // across the seam where aWaterUv.x wraps from 1 back to 0.
+           //
+           // Both rates are kept low on purpose. These meshes carry 663 to 1,922 vertices;
+           // a wave the ring of vertices around the rim cannot sample turns into a sawtooth
+           // of facets rather than a ripple, which is exactly what one and two turns per
+           // revolution avoid and what four did not.
+           // Magnitude and direction ride in one attribute — see WATER_AMPLITUDE_ATTRIBUTE.
+           float sense = sign(aWaterAmp);
            float rise = aWaterUv.y;
-           float amp = 0.022 * rise;
-           transformed.x += sin(aWaterUv.y * 18.0 + uTime * 1.7) * amp;
-           transformed.z += cos(aWaterUv.y * 14.0 + uTime * 1.3) * amp;
+           float amp = abs(aWaterAmp) * ${RIPPLE_AMPLITUDE.toFixed(3)}
+                     * (0.30 + 0.70 * rise) * (0.45 + 0.55 * uFlow);
+           // A crest of sin(N*rise + phi) sits where N*rise + phi is constant, so it travels
+           // toward increasing rise only while phi decreases: the phase has to carry -sense,
+           // or the vertex wave runs against the scroll below rather than with it. It did.
+           float wave = sin(rise * 6.0 + aWaterUv.x * 6.283 - sense * uTime * 2.1)
+                      + 0.55 * sin(rise * 11.0 - aWaterUv.x * 12.566 - sense * uTime * 3.3);
+           transformed += objectNormal * (wave * amp);
            vRise = rise;
+           vFlow = sense;
            vWaterUv = aWaterUv;`
         )
-        // The world position the rim term needs has to be read *after* the morph cache has
+        // The world position the optics need has to be read *after* the morph cache has
         // moved the vertex, or the view vector would describe the settled pose throughout
-        // the 3.3 s the water is still growing. `<begin_vertex>` runs before
+        // the 1.15 s the water is still growing. `<begin_vertex>` runs before
         // `<morphtarget_vertex>`, so it cannot be computed alongside the ripple above.
-        // `objectNormal` needs no such care: `<morphnormal_vertex>` has already run by then.
         .replace(
           '#include <morphtarget_vertex>',
           `#include <morphtarget_vertex>
@@ -866,27 +896,55 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nuniform sampler2D uWaterTex;\n' +
-        'varying float vRise;\nvarying vec2 vWaterUv;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
+        'uniform float uTime;\nuniform float uFlow;\nuniform sampler2D uWaterTex;\n' +
+        'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
+        'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.fragmentShader
+          // Clean water is smooth; aerated water is not. Roughening the last fifth of the
+          // flow axis is what makes the impact region scatter rather than mirror, and it is
+          // the same region the foam mask below whitens — one physical story, told twice.
+          .replace(
+            '#include <roughnessmap_fragment>',
+            `#include <roughnessmap_fragment>
+             roughnessFactor = mix(roughnessFactor, 0.55,
+               smoothstep(0.74, 1.0, vRise) * clamp(uFlow * 1.6, 0.0, 1.0));`
+          )
           .replace(
             '#include <normal_fragment_maps>',
             `#include <normal_fragment_maps>
              {
-               // Two ripple layers on the water's own surface. x wraps around the column,
-               // y runs along the flow, and both vary — which is the whole correction: the
-               // world-space projection this replaces barely changed across the jet's 10 mm
-               // width, so its lookup collapsed to a function of height and drew stripes.
-               vec2 uvA = vWaterUv * vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})
-                        + vec2(uTime * 0.10, -uTime * 0.55);
-               vec2 uvB = vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
-                        + vec2(-uTime * 0.07, -uTime * 0.85);
-               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 0.6
-                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.7;
-               // Gentle. The reference's surface shimmers rather than boils: its water
-               // region changes 0.65/255 per frame against 0.05 for a static background.
-               vec3 bump = (viewMatrix * vec4(grad.x, 0.0, grad.y, 0.0)).xyz;
-               normal = normalize(normal + bump * 0.45);
+               // Two ripple layers on the water's own surface. x wraps around the body, y
+               // runs along the flow, and both vary — which is the correction the world-space
+               // projection this replaces could not make: across a narrow cross-section xz
+               // barely changes, so its lookup collapsed to a function of height and drew
+               // stripes (docs/43).
+               // The v offset carries the shape's own flow sense: a sample coordinate of
+               // v*N - r*t puts a fixed feature at v = (c + r*t)/N, so it climbs toward the
+               // deflector — right for the column, backwards for every plume running off one.
+               vec2 uvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.10, -vFlow * uTime * 0.55);
+               vec2 uvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.07, -vFlow * uTime * 0.85);
+               vec2 uvC = vWaterUv * ${tiles.c} + vec2(uTime * 0.16, -vFlow * uTime * 1.25);
+               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 0.55
+                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.65
+                         + (texture2D(uWaterTex, uvC).rg - 0.5) * 0.45;
+               // A tangent frame built from the surface itself, so the perturbation is
+               // across the surface whichever way the shape is oriented. The world-space
+               // (x, ., z) vector this replaces assumed a roughly horizontal surface and
+               // therefore did almost nothing on a vertical column.
+               vec3 nW = normalize(vWNorm);
+               vec3 tW = normalize(cross(nW, abs(nW.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+               vec3 bW = cross(nW, tW);
+               vec3 bump = (viewMatrix * vec4(tW * grad.x + bW * grad.y, 0.0)).xyz;
+               // Stronger where the flow is stronger, so a barely-open valve gives a calm
+               // surface and a full one gives a broken one.
+               //
+               // Kept modest for a measured reason. A shading normal scattered far off the
+               // surface's own catches the room environment from every direction at once,
+               // and on a body this smooth that averages to a milky white haze rather than
+               // to ripple: at 0.40 with three full-strength gradient layers the plume came
+               // back as cloud. The three layers give the *pattern*; this decides how much
+               // of it the lighting is allowed to believe.
+               normal = normalize(normal + bump * (0.26 + 0.34 * clamp(uFlow * 1.6, 0.0, 1.0)));
              }`
           )
           .replace(
@@ -895,74 +953,108 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
              {
                vec3 V = normalize(cameraPosition - vWPos);
                vec3 N = normalize(vWNorm);
+               float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
+               float flow = clamp(uFlow * 1.6, 0.0, 1.0);
 
-               float hTop = texture2D(uWaterTex,
-                 vWaterUv * vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})
-                 + vec2(uTime * 0.13, -uTime * 0.70)).b;
-               float hSide = texture2D(uWaterTex,
-                 vWaterUv * vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})
-                 + vec2(-uTime * 0.09, -uTime * 0.95)).b;
+               vec2 hUvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.13, -vFlow * uTime * 0.70);
+               vec2 hUvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.09, -vFlow * uTime * 0.95);
+               vec2 hUvC = vWaterUv * ${tiles.c} + vec2(uTime * 0.18, -vFlow * uTime * 1.30);
+               float hTop = texture2D(uWaterTex, hUvA).b;
+               float hSide = texture2D(uWaterTex, hUvB).b;
+               float hFine = texture2D(uWaterTex, hUvC).b;
+               float crest = hTop * 0.38 + hSide * 0.32 + hFine * 0.30;
 
-               // Optics, in the order light actually meets the column.
+               // 1. How much water the eye is looking through.
                //
-               // Everything here changes only how the body *reads*. The silhouette, the
-               // scale, the morph playback and the 1.15 s startup are untouched: this
-               // stage runs entirely after the fragment's colour is resolved.
+               // For a closed body the path is longest where the surface faces the camera
+               // and vanishes at the silhouette, so this varies **across** the shape — the
+               // axis the term it replaces had nothing on. A little more of it further from
+               // the nozzle, where the flow has thickened.
+               float thick = pow(cosView, 0.75);
+               float along = 1.0 - exp(-vRise * 0.9);
+               // The 0.16 floor is not a fudge: a fragment at the silhouette is still
+               // looking through *some* water, and without it the thin upper surfaces
+               // absorbed nothing at all and composited as a colourless film over whatever
+               // was behind them. Measured across the six states, the top band came back at
+               // luminance 137 and saturation 0.11 — milk — while the body it belonged to
+               // sat at 93 and 0.27.
+               // Surface relief changes how much water the eye looks through, so the crest
+               // field belongs in the path length and not only in the highlight. This is the
+               // one motion term that acts on a surface facing the camera square on, where
+               // Fresnel is 0.02 and every specular cue is nearly switched off.
+               float relief = (crest - 0.5) * 2.0;
+               float path = clamp((0.16 + 0.84 * thick) * (0.60 + 0.40 * along), 0.0, 1.0)
+                          * 1.55 * (1.0 + 0.20 * relief * flow);
+
+               // 2. Beer-Lambert, at water's own ratio: red is absorbed roughly four times
+               // faster than blue, which is the whole reason deep water is blue and a
+               // glassful is not. This is what holds the colour: white light through this
+               // much water arrives blue-grey whatever the room does, so the body can carry
+               // a real specular response without going white the way it did before.
+               vec3 absorb = exp(-vec3(2.95, 1.50, 0.74) * path);
+               vec3 scattered = vec3(0.016, 0.042, 0.070);
+               gl_FragColor.rgb = gl_FragColor.rgb * absorb + scattered * (1.0 - absorb);
+
+               // 3. Fresnel. Water reflects 2 % face-on and everything at grazing — the
+               // reason a glass of water is transparent looking down and a mirror looking
+               // along. Schlick, honest at F0 and scaled back at the top end, because a
+               // full-strength edge on a 170 mm plume reads as a chrome shell.
+               float fres = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
+               float edge = fres * 0.42;
+
+               // 4. Contact darkening. Where the water meets glass or steel the light that
+               // would have bounced back out is trapped between the two surfaces, and the
+               // reference shows a distinctly darker seam at the nozzle collar and again
+               // where the flow spreads across the deflector face. Both ends, none of the
+               // middle.
+               float contact = smoothstep(0.12, 0.0, vRise) + smoothstep(0.88, 1.0, vRise);
+               gl_FragColor.rgb *= 1.0 - clamp(contact, 0.0, 1.0) * 0.20;
+
+               // 5. Specular, added rather than mixed.
                //
-               // The governing measurement stays the same. Sampled across the reference
-               // column at t = 60.63 s the core is rgb(83, 90, 111) — dark, desaturated
-               // blue-grey, with the nozzle and deflector clearly visible through it. Every
-               // term below is bounded so the core cannot drift off that value; where
-               // physical correctness and the recording disagree, the recording wins.
-               float cosView = abs(dot(N, V));
+               // A mix pulls the body *toward* the highlight colour and therefore washes it
+               // out; adding leaves the absorbed body underneath intact and puts light on
+               // top of it, which is what a wet surface actually does. Weighted by Fresnel
+               // so crests light up at grazing angles and stay quiet face-on — the cue that
+               // reads as "wet" rather than "pale".
+               // The Fresnel weight is what makes a highlight read as wet, but at a floor of
+               // 0.20 it also switched the crests off wherever the surface faced the camera —
+               // which is most of a cone. Measured with the geometry frozen, the conical plume
+               // changed by 0.67 levels per 0.2 s against the flat plate's 2.65, and the low-
+               // poly mesh's own static striations dominated what was left. The floor is
+               // raised and the grazing end left exactly where it was.
+               float glint = smoothstep(0.66, 0.97, crest) * (0.45 + 0.55 * fres);
+               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92) * (glint * 0.22 + edge * 0.18);
 
-               // 1. Fresnel. Water's reflectance at normal incidence is 0.02 and rises to 1
-               // at grazing — the reason a glass of water is transparent looking down and a
-               // mirror looking along. Schlick, kept honest at F0 and then scaled back,
-               // because a full-strength edge on a 32 mm column reads as a chrome tube.
-               float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
-               float edge = fresnel * 0.34;
+               // 6. Aeration.
+               //
+               // Air entrained by the flow, so it belongs only where the flow does work:
+               // the impact face at the top, the spreading foot at the bottom, and the
+               // thin torn edges of the sheet in between. Gated on the crest field so it
+               // moves with the surface rather than sitting on the geometry, and on the
+               // valve so a trickle does not foam.
+               float impact = smoothstep(0.86, 1.00, vRise);
+               float foot = smoothstep(0.14, 0.01, vRise);
+               float torn = smoothstep(0.55, 1.0, 1.0 - cosView);
+               float churn = smoothstep(0.42, 0.92, crest);
+               // Almost entirely gated on the crest field, so the aeration is a moving
+               // texture on those regions rather than a band of paint across them. An
+               // earlier, flatter version (0.30 + 0.85 * churn over the top 30 %) whitened
+               // the upper fifth of every plume wholesale.
+               float foam = clamp((impact * 0.95 + foot * 0.55) * (0.08 + 1.05 * churn)
+                                  + torn * churn * 0.16, 0.0, 1.0) * flow;
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.78, 0.85, 0.93), foam * 0.45);
 
-               // 2. Depth coloration. aWaterUv.y runs 0 at the nozzle to 1 at the far end,
-               // so it stands in for how much water the eye is looking through: the thin
-               // leading edge stays pale and the settled body deepens toward the
-               // attenuation colour. Beer-Lambert in shape, not in units — there is no
-               // physical path length to integrate on a hollow authored silhouette.
-               float depth = 1.0 - exp(-vRise * 1.15);
-               // Linear and pre-tone-map. The previous value was authored as though it
-               // were a display colour: vec3(0.247, 0.345, 0.467) renders near luminance
-               // 205 after ACES at exposure 1.3, so the "depth" term was *lightening* the
-               // column toward pale blue. Inverting the tone curve for the recording's
-               // core — rgb(60, 68, 92) — lands roughly six times lower, and the mix has
-               // to carry a floor as well as a slope or the near end reads as clear.
-               vec3 deep = vec3(0.039, 0.046, 0.069);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, deep, 0.60 + depth * 0.34);
-
-               // 3. Contact darkening. Where the column meets glass or steel the light that
-               // would have bounced back out is instead trapped between the two surfaces,
-               // and the reference shows a distinctly darker seam at the nozzle collar and
-               // again where the jet spreads across the deflector face. Both ends of the
-               // flow axis, none of the middle.
-               float contact = smoothstep(0.14, 0.0, vRise) + smoothstep(0.86, 1.0, vRise);
-               gl_FragColor.rgb *= 1.0 - clamp(contact, 0.0, 1.0) * 0.22;
-
-               // 4. Highlights. These three used to sum to 1.8 before clamping at 0.95, so
-               // almost the whole surface was mixed to near-white. Scaled to what the video
-               // shows, and now weighted by Fresnel so crests light up at grazing angles
-               // and stay quiet face-on, which is what makes a surface read as wet.
-               // Halved again, and capped harder. In the recording the only genuinely
-               // bright water is a small patch right where the jet strikes the cone; the
-               // column itself carries no white at all. A ceiling of 0.42 mixing toward a
-               // near-white target let most of the splash sheet reach it, which is what
-               // measured as saturation 0.006 against the reference's 0.335.
-               float glint = smoothstep(0.68, 0.96, hTop * 0.5 + hSide * 0.5) * 0.10;
-               float foam = smoothstep(0.62, 0.94, hSide) * 0.07;
-               float lum = clamp((glint + foam) * (0.55 + 0.75 * fresnel) + edge, 0.0, 0.22);
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.60, 0.68, 0.80), lum);
-
-               // Grazing edges also go slightly more opaque, so the column keeps a readable
-               // silhouette against the dark tank without the body itself thickening.
-               gl_FragColor.a = clamp(gl_FragColor.a + edge * 0.30 + lum * 0.20, 0.0, 0.95);
+               // 7. Opacity, from the same path length as the colour.
+               //
+               // Thin at the silhouette so the glass and the rod behind read through it,
+               // thick through the core so the body has substance, and firmer again where
+               // it is aerated — foam is the one part of water you cannot see through.
+               gl_FragColor.a = clamp(
+                 gl_FragColor.a * (0.40 + 0.85 * thick) + edge * 0.22 + foam * 0.30,
+                 0.06,
+                 0.97
+               );
              }`
           );
     };
@@ -970,7 +1062,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [waterTex]);
 
   useEffect(() => {
-    waterGltfs.forEach((gltf: any) => {
+    (Object.values(water) as any[]).forEach((gltf) => {
+      // Which way this shape's water runs along its own surface coordinate.
+      //
+      // All eight caches are fed from the top and grow downward — measured frame by frame in
+      // `waterShapeForFlow`'s table: each emerges as a ~10 mm nub at the nozzle, climbs for
+      // about a tenth of a second, and then spends the remaining second falling, its floor
+      // descending toward the tank while its top stays pinned. `Water_low` was assigned
+      // `toward` at BEDO-WATER-04 on the assumption that it was a jet climbing to the plate;
+      // the cache says otherwise — its top stops at the nozzle mouth and never reaches the
+      // deflector — so it runs `away` like the rest. The sign mechanism stays because it is
+      // a property of each cache, not a constant: a re-authored column that did climb to the
+      // plate would need `toward`.
+      const sense = WATER_FLOW_SENSE.away;
       gltf?.scene?.traverse((child: any) => {
         if (!child.isMesh) return;
         child.material = waterMaterial;
@@ -985,8 +1089,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         if (geometry && !geometry.getAttribute(WATER_UV_ATTRIBUTE)) {
           const position = geometry.getAttribute('position');
           if (position) {
-            const { uv } = buildWaterUv(position.array as ArrayLike<number>);
+            // Through the accessors, never through `.array`: these assets are meshopt-packed
+            // and their positions are interleaved four components to a vertex, so the raw
+            // buffer is not a list of xyz triples. See `packPositions`.
+            const { uv, crossRadius } = buildWaterUv(packPositions(position));
             geometry.setAttribute(WATER_UV_ATTRIBUTE, new THREE.BufferAttribute(uv, 2));
+            // The shape's own size in the magnitude and its flow direction in the sign, so
+            // one shared material can ripple all eight by the same visible amount and still
+            // run each of them the right way — see `WATER_AMPLITUDE_ATTRIBUTE`.
+            geometry.setAttribute(
+              WATER_AMPLITUDE_ATTRIBUTE,
+              new THREE.BufferAttribute(
+                new Float32Array(position.count).fill(crossRadius * sense),
+                1
+              )
+            );
           }
         }
 
@@ -1481,12 +1598,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // worldToLocal does not preserve which corner is which under a mirrored transform.
       return { min: lo.clone().min(hi), max: lo.clone().max(hi) };
     };
-    // The tank's own interior, for the procedural water body. Measured off the glass, so a
-    // re-exported model changes the water with it rather than needing a constant edited.
+    // The tank's own interior, for the procedural water body. Measured off the glass for
+    // the bore and off the parts that actually close it for the levels, so a re-exported
+    // model changes the water with it rather than needing a constant edited. The glass
+    // alone is not enough — it is sunk into the base and hidden under the cover, which is
+    // what put the water 23 mm below the floor (BEDO-WATER-01, see `measureTankInterior`).
     const tankMesh = pick(MESH.tank);
     setTankInterior(
       tankMesh
-        ? measureTankInterior(tankMesh, (v) => group.worldToLocal(v))
+        ? measureTankInterior(tankMesh, (v) => group.worldToLocal(v), {
+            floor: pick(MESH.nozzle),
+            ceiling: pick(MESH.tankCover),
+          })
         : null
     );
 
@@ -3018,19 +3141,30 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       //
       // The groups carry that scale from the JSX below and never move, so the only thing
       // left to decide each frame is which shape is visible and where its cache has got to.
-      jetGroupRef.current.visible = true;
-
-      // The plume forms once the jet actually arrives. Implementation behaviour: no BEDO
-      // source describes the startup, only that the water "forms" when the valve opens.
-      const impacting = state.valveOpening > STARTUP_VALVE_OPENING;
+      // The storyboard defines two mutually exclusive water states, and which one is showing
+      // is decided by how much water is arriving — see `waterShapeForFlow` for the caches'
+      // own evidence that `Water_low` is the low-flow body and for why the impact velocity
+      // it used to read could never select it. Every after-impact cache already contains its
+      // own nozzle column, impact and spread, so keeping Water_low underneath it would
+      // double the stream.
+      //
+      // `state.live.flowRateLMin` is the domain's own figure for the current valve setting,
+      // over the pump capacity the student may have customised — the same fraction the tank
+      // fill below is driven by, so the two states can never disagree about which one this is.
+      const inflowFraction =
+        state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9);
+      const activeWater = waterShapeForFlow(inflowFraction, deflector.water);
+      const impacting = activeWater !== JET_ASSET;
+      jetGroupRef.current.visible = !impacting;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
 
       // Ripple with the flow, but gently — see the material for the amplitude.
       waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
+      waterFlow.current.value = state.valveOpening;
 
       (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
         const gltf = (water as any)[key];
-        if (gltf?.scene) gltf.scene.visible = key === JET_ASSET || key === deflector.water;
+        if (gltf?.scene) gltf.scene.visible = key === activeWater;
       });
 
       // --- Authored geometry playback -----------------------------------------
@@ -3040,7 +3174,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // restart them — only the flow starting does — so nudging the setpoint cannot make
       // the water re-emerge from nothing. See `src/lib/waterCache.ts` and `docs/44 §F3`.
       const jetSource = (water as any)[JET_ASSET]?.scene;
-      if (jetSource) applyCacheFrame(jetSource, jetClock.current.advance(true, delta));
+      if (jetSource) {
+        applyCacheFrame(jetSource, jetClock.current.advance(!impacting, delta));
+      }
 
       const plumeSource = (water as any)[deflector.water]?.scene;
       if (plumeSource) {
@@ -3053,6 +3189,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // the emergence again from frame 0 rather than inventing a drain (`docs/44 §F2`).
       jetClock.current.advance(false, delta);
       plumeClock.current.advance(false, delta);
+      waterFlow.current.value = 0;
     }
 
     // --- The tank fills once more arrives than the drain can carry -------------
@@ -3063,8 +3200,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // is empty through ten seconds at the lower setpoint. See `src/lib/tankWater.ts`.
     const tankWater = tankWaterRef.current;
     if (tankWater && tankInterior) {
+      // The same fraction the shape selection above reads, so the column/plume switch and
+      // the tank's fill can never straddle `DRAIN_CAPACITY_FRACTION` differently. Recomputed
+      // rather than hoisted because the water block above is skipped when nothing flows.
       const inflow = flowing
-        ? flowRateLMin(state.valveOpening) / Math.max(TOTAL_FLOW_L_MIN, 1e-9)
+        ? state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9)
         : 0;
       tankLevel.current = advanceLevel(
         tankLevel.current,
