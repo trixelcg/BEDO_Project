@@ -289,9 +289,44 @@ describe('the submerged-plume mechanism that removes the second waterline', () =
     }
   });
 
-  it('adds no mesh, material, geometry or render pass', () => {
-    // The whole fix is one uniform and four lines of GLSL inside the existing jet material.
-    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(2);
+  it('adds no mesh, no geometry and no render pass', () => {
+    // The submerged-plume fix is a uniform and a few lines of GLSL inside the existing jet
+    // material — it builds nothing.
     expect(deviceModel.match(/createTankWaterGeometry\(/g)?.length).toBe(1);
+    // Three water materials, and no more: the jet, the tank body, and the supply hose.
+    // The hose's is not an addition to the scene's draw work — it *replaces* the tank glass
+    // instance the GLB had put on that one mesh (BEDO-WATER-12), so the number of drawn
+    // bodies is unchanged. If a fourth ever appears, something started drawing water twice.
+    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(3);
+  });
+});
+
+describe('C/D — the submerged plume converges into the tank body (BEDO-WATER-12)', () => {
+  it('convergence is driven by depth below the waterline, not by the band alone', () => {
+    // WATER-10 damped the plume's free-surface cues within +/-45 mm of the line. That left
+    // the plume a distinct translucent volume inside the fill, which at a partial level
+    // still read as a second body with its own top. Depth is what a real submerged jet
+    // loses itself to, so the convergence has to be a depth term.
+    expect(deviceModel).toMatch(/float depthBelow = clamp\(\(uWaterline - vWPos\.y\) \/ 0\.12/);
+  });
+
+  it('colour converges on the tank body and opacity follows it down', () => {
+    // Two bodies of water in contact are one body: below the surface the standing water
+    // owns the volume, so there is no second silhouette and no second top.
+    expect(deviceModel).toMatch(/gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, uTankTint, depthBelow \* 0\.85\)/);
+    expect(deviceModel).toMatch(/gl_FragColor\.a \*= 1\.0 - 0\.80 \* depthBelow/);
+  });
+
+  it('the convergence target is the tank material itself, not a restated literal', () => {
+    // So retuning either cannot leave the two disagreeing about what this water looks like.
+    expect(deviceModel).toMatch(/uniform vec3 uTankTint/);
+    expect(deviceModel).toMatch(/shader\.uniforms\.uTankTint = tankTintUniform\.current/);
+  });
+
+  it('an empty tank converges nothing — the plume keeps its full treatment', () => {
+    // uWaterline is parked far below the rig when no tank body is drawn, and the depth term
+    // is gated on that so a parked line cannot read as "infinitely deep".
+    expect(deviceModel).toMatch(/step\(-1e8, uWaterline\)/);
+    expect(deviceModel).toMatch(/waterlineUniform\.current\.value = -1e9/);
   });
 });

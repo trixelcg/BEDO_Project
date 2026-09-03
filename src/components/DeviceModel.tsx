@@ -21,7 +21,6 @@ import {
   type AnchorKey,
   type WaterShapeKey,
   MISMATERIALLED_HOSE,
-  HOSE_MATERIAL_DONOR,
 } from '../domain/apparatus';
 import { gltfName } from '../lib/gltfNames';
 import {
@@ -485,6 +484,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * Parked below the rig when the tank is empty, so nothing is ever considered submerged.
    */
   const waterlineUniform = useRef({ value: -1e9 });
+
+  /**
+   * The tank body's own colour, for the submerged plume to converge on.
+   *
+   * Read from the tank material rather than restated, so retuning one cannot leave the two
+   * disagreeing about what the water in this vessel looks like.
+   */
+  const tankTintUniform = useRef({ value: new THREE.Color('#38536e') });
   const tankWaterRef = useRef<THREE.Mesh>(null);
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
@@ -595,45 +602,42 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const liquidName = gltfName(MESH.liquid);
 
     /**
-     * `Line010` is a hose, and it was being drawn as glass (MODEL-01).
+     * `Line010` is the supply hose, and it has to read as one (BEDO-WATER-12).
      *
-     * `Galss_Material` has exactly two users in the GLB: the tank cylinder
-     * `JET Force 2_205`, which is genuinely the glass vessel, and this. Both inherit its
-     * `baseColorFactor` alpha of 0.10 and `alphaMode: BLEND`, so this rendered as a large,
-     * soft, near-invisible body — and because it is a swept tube seen close to edge-on, it
-     * read on screen as a faint elliptical ghost lying across the white bench panel to the
-     * left of the tank. Hiding it in a debug run removed that ghost completely and changed
-     * nothing else, which is what established ownership.
+     * ## What it is
      *
-     * It is not glass, and the evidence is not the name:
+     * The GLB gives `Galss_Material` to exactly two meshes: the tank cylinder
+     * `JET Force 2_205`, which is the glass vessel, and this. Measured, it is a J-shaped
+     * bent tube 239 x 620 x 311 mm centred 288 mm to the side of the tank axis and 408 mm
+     * below its floor, with vertices sweeping a 42-190 mm radius about its own centre and
+     * no UVs at all. It is a hose, not part of the vessel.
      *
-     *  - Rendered in isolation it is a **J-shaped bent tube** — a hose run, not a ring, a
-     *    pane or a vessel.
-     *  - It is 239 x 620 x 311 mm centred at (-0.143, 0.007, -0.652): about 288 mm to the
-     *    side of the tank axis (0.018, -0.413) and hanging 408 mm below the tank floor. It
-     *    is nowhere near the glass it was grouped with.
-     *  - Its vertices sweep a radius of 42 to 190 mm about its own centre, which is a path,
-     *    not a cylinder wall.
-     *  - Alone among `Galss_Material`'s users it carries **no UVs** — `POSITION` and
-     *    `NORMAL` only, where the tank also has `TEXCOORD_0`. A surface authored to be seen
-     *    through was UV-mapped; this one was not.
+     * ## Why the previous answer was wrong
      *
-     * So the material is corrected here rather than the model. The GLB stays frozen, the
-     * geometry, transform and scale are untouched, and no new material is introduced: the
-     * mesh is handed the instance already used by `Object297`, the bench pipe run it belongs
-     * with. That material is `16 - Default.001` — opaque, metalness 0, roughness 0.9, and
-     * **texture-free**, which matters because a UV-less mesh cannot sample a map.
+     * MODEL-01 handed it the opaque bench-pipe material to kill a ghost. That removed the
+     * ghost and was wrong about the part: `Bedo_Mesu_J.mp4` at t = 74 s shows this hose
+     * plainly, and it is a **translucent tube with a blue-grey water-filled interior** and
+     * bright specular highlights running along both edges. It is the feed into the tank
+     * base — it carries the water, and the reference lets you see the water in it.
      *
-     * The swap is per-mesh and not per-material on purpose: the loader shares one instance
-     * across both users, so editing the material would turn the tank glass opaque too.
+     * ## Why it ghosted, and what fixes that
+     *
+     * Not transparency itself. The authored material is a `MeshStandardMaterial` whose only
+     * route to translucency is `baseColorFactor` alpha at 0.10, blended flat and
+     * double-sided. That has no edge definition, so a 620 mm tube seen near edge-on
+     * composites into a broad featureless smear rather than a tube.
+     *
+     * What makes a tube read as a tube is its rim, so this is built as water in glass and
+     * not as a faint film: a Fresnel term that lights the walls where they turn away from
+     * the eye, which is exactly where the reference shows its highlights, and enough body
+     * opacity that the interior carries colour. The silhouette then draws itself.
+     *
+     * The water inside is driven by the authoritative flow — nothing moves at Q = 0 — and
+     * shares the jet's clock and ripple texture, so the hose, the jet and the tank water
+     * are visibly the same substance. No second mesh, no solver, no extra pass: the hose's
+     * own geometry already has the exact curvature, radius and transform, so the water is
+     * shaded inside it rather than modelled again.
      */
-    const hoseName = gltfName(MISMATERIALLED_HOSE);
-    const donorName = gltfName(HOSE_MATERIAL_DONOR);
-    let hoseMaterial: THREE.Material | null = null;
-    scene.traverse((child: any) => {
-      if (hoseMaterial || !child.isMesh || child.name !== donorName) return;
-      hoseMaterial = Array.isArray(child.material) ? child.material[0] : child.material;
-    });
 
     // Only things that move, or that the learner brings close to the camera, are worth a
     // real-time shadow. Everything else is a static room surface whose lighting is already
@@ -672,7 +676,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!child.isMesh) return;
 
       // Before anything reads the material: give the hose the bench's, not the glass's.
-      if (child.name === hoseName && hoseMaterial) child.material = hoseMaterial;
 
       child.castShadow = casters.has(child.name) || roomShadow(child.name);
       child.receiveShadow =
@@ -736,6 +739,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * how a shared material learns that without any per-frame React state.
    */
   const waterFlow = useRef({ value: 0 });
+
+  /**
+   * How hard water is being pushed through the supply hose, 0..1.
+   *
+   * The authoritative flow, not a decoration: it is the same valve opening the jet reads,
+   * and it is zero whenever the pump is off or the valve is shut, so a dry rig shows a dry
+   * hose. Presentation only — nothing downstream of it feeds any equation.
+   */
+  const hoseFlow = useRef({ value: 0 });
+
+  /** The hose's own world y range, so the flow coordinate is measured and not assumed. */
+  const hoseSpanUniform = useRef({ value: new THREE.Vector2(0, 1) });
 
   /**
    * Tileable animated-water texture, generated at runtime — the project ships none.
@@ -912,6 +927,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       shader.uniforms.uTime = waterTime.current;
       shader.uniforms.uFlow = waterFlow.current;
       shader.uniforms.uWaterline = waterlineUniform.current;
+      shader.uniforms.uTankTint = tankTintUniform.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
       const tiles = {
@@ -969,7 +985,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
       shader.fragmentShader =
         'uniform float uTime;\nuniform float uFlow;\nuniform float uWaterline;\n' +
-        'uniform sampler2D uWaterTex;\n' +
+        'uniform vec3 uTankTint;\nuniform sampler2D uWaterTex;\n' +
         'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
         'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.fragmentShader
@@ -1041,6 +1057,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // uWaterline is parked far below the rig while the tank is empty, so this is
                // 0 for the whole plume until the tank actually holds water.
                float submerged = smoothstep(uWaterline + 0.045, uWaterline - 0.045, vWPos.y);
+
+               // How deep under the surface, over 120 mm — separate from the band above.
+               //
+               // The band decides where the free-surface cues stop; this decides how far the
+               // body itself has stopped being its own body. WATER-10 damped the cues and
+               // left the plume as a distinct translucent volume inside the fill, which at a
+               // partial level still read as a second body of water with its own top. Depth
+               // is what a real submerged jet loses itself to, so the convergence is driven
+               // by depth rather than by proximity to the line.
+               float depthBelow = clamp((uWaterline - vWPos.y) / 0.12, 0.0, 1.0) * step(-1e8, uWaterline);
 
                vec2 hUvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.13, -vFlow * uTime * 0.70);
                vec2 hUvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.09, -vFlow * uTime * 0.95);
@@ -1171,11 +1197,152 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // aerated water sits inside the standing water, which is what the reference
                // shows; what goes is the hard rim that read as a second surface.
                gl_FragColor.a *= 1.0 - 0.70 * submerged;
+
+               // Finally, let the standing water own the submerged volume.
+               //
+               // Two bodies of water in contact are one body. The plume keeps its geometry
+               // and its motion, but with depth its colour converges on the tank's own tint
+               // and what is left of its opacity goes with it, so below the waterline there
+               // is no second silhouette, no second top and no second volume — only a faint
+               // disturbance where faster water is moving inside the still water.
+               // uTankTint is the tank material's own colour, so the two can never drift
+               // apart if either is retuned.
+               gl_FragColor.rgb = mix(gl_FragColor.rgb, uTankTint, depthBelow * 0.85);
+               gl_FragColor.a *= 1.0 - 0.80 * depthBelow;
              }`
           );
     };
     return mat;
   }, [waterTex]);
+
+  /**
+   * Water travelling through the supply hose.
+   *
+   * One material on the hose's own geometry, so the curvature, bore and transform are the
+   * authored ones. It is deliberately not the jet material: a 30 mm tube wants a tint, a
+   * rim and a travelling shimmer, not foam, crests or a free surface (BEDO-WATER-12).
+   */
+  const hoseMaterial = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      // The reference hose is water-blue through the wall rather than clear, so the tint is
+      // the water family's, a little lighter than the jet because the path through a bore
+      // this narrow is short.
+      color: new THREE.Color('#5b7ba4'),
+      transparent: true,
+      // High enough that the interior carries colour and the tube has a body. The authored
+      // 0.10 is what made it a smear; the shader below still opens the walls up where the
+      // eye looks straight through them, so this is a starting point rather than a film.
+      opacity: 0.62,
+      roughness: 0.12,
+      metalness: 0.0,
+      ior: 1.33,
+      // The wall highlight the reference shows along both edges of the tube.
+      clearcoat: 0.45,
+      clearcoatRoughness: 0.18,
+      specularIntensity: 0.7,
+      envMapIntensity: 0.9,
+      // Both walls, so the far side of the bore is there to look through — a tube drawn on
+      // one side reads as a ribbon.
+      side: THREE.DoubleSide,
+      // Same reasoning as the rest of the water: writing depth from a translucent body
+      // clips whatever is behind it out of the frame.
+      depthWrite: false,
+    });
+
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = waterTime.current;
+      shader.uniforms.uHoseFlow = hoseFlow.current;
+      shader.uniforms.uWaterTex = { value: waterTex };
+      shader.uniforms.uHoseSpan = hoseSpanUniform.current;
+
+      shader.vertexShader =
+        'varying vec3 vHoseW;\nvarying vec3 vHoseN;\n' +
+        shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           vHoseW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+           vHoseN = normalize(mat3(modelMatrix) * objectNormal);`
+        );
+
+      shader.fragmentShader =
+        'uniform float uTime;\nuniform float uHoseFlow;\nuniform vec2 uHoseSpan;\n' +
+        'uniform sampler2D uWaterTex;\n' +
+        'varying vec3 vHoseW;\nvarying vec3 vHoseN;\n' +
+        shader.fragmentShader.replace(
+          '#include <opaque_fragment>',
+          `#include <opaque_fragment>
+           {
+             vec3 V = normalize(cameraPosition - vHoseW);
+             vec3 N = normalize(vHoseN);
+             float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
+
+             // Where along the hose this fragment sits, 0 at the low end and 1 at the tank.
+             // A height parameter rather than a true arc length: the hose has no UVs to
+             // carry one and its ends differ by 620 mm of rise, so this tracks the run
+             // toward the tank closely enough for a shimmer at this scale. It is a
+             // presentation coordinate, not a measurement.
+             float along = clamp((vHoseW.y - uHoseSpan.x) / max(uHoseSpan.y - uHoseSpan.x, 1e-5), 0.0, 1.0);
+
+             // Water climbing the hose. Two scrolls at different rates off the jet's own
+             // ripple map, so hose, jet and tank water are made of the same texture and the
+             // speed already follows the valve through the shared clock.
+             float a = texture2D(uWaterTex, vec2(along * 6.0 - uTime * 0.55, 0.35)).g;
+             float b = texture2D(uWaterTex, vec2(along * 11.0 - uTime * 0.85, 0.71)).b;
+             float travel = (a * 0.6 + b * 0.4 - 0.5) * 2.0;
+
+             // Nothing moves and nothing fills when nothing flows.
+             float flow = clamp(uHoseFlow * 1.5, 0.0, 1.0);
+
+             // Beer-Lambert across the bore, so the middle of the tube is deeper water than
+             // its edges — the cue that says "full" rather than "tinted".
+             float path = (0.25 + 0.75 * cosView) * (0.55 + 0.45 * flow);
+             vec3 absorb = exp(-vec3(2.4, 1.25, 0.62) * path * 1.15);
+             vec3 filled = gl_FragColor.rgb * absorb + vec3(0.020, 0.048, 0.075) * (1.0 - absorb);
+             // Empty hose: almost colourless, just the wall. Full hose: water in glass.
+             gl_FragColor.rgb = mix(gl_FragColor.rgb * 0.85 + vec3(0.06), filled, flow);
+
+             // The moving part, kept small — this is a bore a few tens of millimetres
+             // across, so it should shimmer rather than churn.
+             gl_FragColor.rgb += vec3(0.30, 0.40, 0.52) * (travel * 0.10 * flow);
+
+             // The wall. Fresnel lights the tube where it turns away from the eye, which is
+             // where the reference's highlights sit, and it is what makes the silhouette
+             // read as a tube instead of a smear. This is the term the authored flat 0.10
+             // blend never had.
+             float rim = pow(1.0 - cosView, 3.0);
+             gl_FragColor.rgb += vec3(0.68, 0.76, 0.88) * rim * 0.55;
+
+             // Opacity follows the same shape: thin where the eye looks straight through
+             // the bore, firm at the walls, and a little firmer when it is carrying water.
+             gl_FragColor.a = clamp(
+               gl_FragColor.a * (0.30 + 0.55 * (1.0 - cosView)) + rim * 0.42 + flow * 0.10,
+               0.05,
+               0.94
+             );
+           }`
+        );
+    };
+    return mat;
+  }, [waterTex]);
+
+  /**
+   * Put the hose material on the hose, and measure the span its shader needs.
+   *
+   * Its own effect rather than part of the big material pass, because that pass runs before
+   * this material exists. Keeping it separate also means the hose is re-dressed if the
+   * material is ever rebuilt, without re-running the whole apparatus traversal.
+   */
+  useEffect(() => {
+    if (!scene) return;
+    const target = gltfName(MISMATERIALLED_HOSE);
+    scene.traverse((child: any) => {
+      if (!child.isMesh || child.name !== target) return;
+      child.material = hoseMaterial;
+      child.updateWorldMatrix(true, false);
+      const box = new THREE.Box3().setFromObject(child);
+      hoseSpanUniform.current.value.set(box.min.y, box.max.y);
+    });
+  }, [scene, hoseMaterial]);
 
   useEffect(() => {
     (Object.values(water) as any[]).forEach((gltf) => {
@@ -3277,6 +3444,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // Ripple with the flow, but gently — see the material for the amplitude.
       waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
       waterFlow.current.value = state.valveOpening;
+      // The hose carries whatever the pump is delivering, on the same authority.
+      hoseFlow.current.value = state.valveOpening;
 
       (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
         const gltf = (water as any)[key];
@@ -3306,6 +3475,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       jetClock.current.advance(false, delta);
       plumeClock.current.advance(false, delta);
       waterFlow.current.value = 0;
+      hoseFlow.current.value = 0;
     }
 
     // --- The tank fills once more arrives than the drain can carry -------------

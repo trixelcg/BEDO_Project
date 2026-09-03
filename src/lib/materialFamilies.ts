@@ -704,10 +704,11 @@ export interface GlassTuning {
  * `Galss_Material` — the cylinder `JET_Force_2_205`, and nominally `Line010` — is the
  * only glass in this model authored with **no material extensions at all**. No
  * `Line010` was described here as the tank's "base ring". It is not, and the description
- * was never measured: it is a bent hose 288 mm to the side of the tank axis and 408 mm
- * below its floor, and `DeviceModel` now hands it the bench pipe material it should have
- * had. Only the cylinder below is really glass; the paragraph is about that material's
- * authoring, which both meshes happened to share.
+ * was never measured: it is the bent supply hose, 288 mm to the side of the tank axis and
+ * 408 mm below its floor. The reference recording shows it translucent with water inside,
+ * so `DeviceModel` gives it a hose material of its own (BEDO-WATER-12). Only the cylinder
+ * below is really glass; the paragraph is about that material's authoring, which both
+ * meshes happened to share.
  *
  * `KHR_materials_transmission`, no `KHR_materials_ior`, and no `KHR_materials_specular`
  * either, so unlike almost everything else in Stage B it inherits no bad specular value to
