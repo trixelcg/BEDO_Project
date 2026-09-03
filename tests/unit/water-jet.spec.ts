@@ -195,8 +195,13 @@ describe('the authored low-flow / after-impact state mapping', () => {
     // exactly while the tank stays empty, which is what the recording pairs.
     const source = readFileSync(path.join(REPO_ROOT, 'src/lib/waterJet.ts'), 'utf8');
     expect(source).toMatch(/DRAIN_CAPACITY_FRACTION/);
-    // The selector must not carry a literal of its own.
-    const selector = source.slice(source.indexOf('export const waterShapeForFlow'));
+    // The selector must not carry a literal of its own. Scoped to the function body rather
+    // than to the rest of the file: other exports below it legitimately hold measured
+    // constants of their own (the plume cut band, BEDO-WATER-15), and this rule is about
+    // the crossover not being re-invented inside the selector.
+    const from = source.indexOf('export const waterShapeForFlow');
+    const selector = source.slice(from, source.indexOf(';', source.indexOf('JET_ASSET', from)));
+    expect(selector).toMatch(/waterShapeForFlow/);
     expect(selector).not.toMatch(/0\.\d/);
   });
 

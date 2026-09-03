@@ -188,3 +188,23 @@ export const waterShapeForFlow = (
   deflectorShape: WaterShapeKey
 ): WaterShapeKey =>
   inflowFraction > DRAIN_CAPACITY_FRACTION ? deflectorShape : JET_ASSET;
+
+/**
+ * The world-height band over which the after-impact plume fades out (BEDO-WATER-15).
+ *
+ * The authored caches do not stop at the splash — each carries a descending sheet down to
+ * the tank floor, and seen through a glass vessel that sheet reads as a blue cylinder
+ * filling the tank. Measured live at Q = 43.5 L/min, the flat-plate plume spans world y
+ * 0.1117 to 0.5076 while the nozzle mouth sits at 0.4712 and the tank floor at 0.1045: the
+ * impact and its spread occupy the top few centimetres and the rest simply hangs there.
+ *
+ * `FULL` is the height above which the plume is drawn untouched — just under the nozzle
+ * mouth, so the jet, the impact and the immediate turbulent entry are all above it. `CLEAR`
+ * is where it has gone entirely. The gap between them is deliberately wide enough that the
+ * sheet thins into the tank rather than ending on a visible line.
+ *
+ * World units, because the mask is applied in world space: the caches are authored at
+ * wildly different local origins and only their placed height is comparable.
+ */
+export const PLUME_CUT_FULL_Y = 0.455;
+export const PLUME_CUT_CLEAR_Y = 0.375;

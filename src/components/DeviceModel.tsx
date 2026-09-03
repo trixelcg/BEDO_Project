@@ -63,6 +63,8 @@ import {
   JET_ASSET,
   WATER_MODEL_SCALE,
   waterShapeForFlow,
+  PLUME_CUT_FULL_Y,
+  PLUME_CUT_CLEAR_Y,
 } from '../lib/waterJet';
 import {
   RIPPLE_AMPLITUDE,
@@ -709,6 +711,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const hoseFlow = useRef({ value: 0 });
 
+  /**
+   * Where the after-impact plume stops being drawn, in world Y (BEDO-WATER-15).
+   *
+   * `x` is the height at which it has faded out completely, `y` the height above which it is
+   * fully drawn. Parked far below the rig for `Water_low`, which is the pre-impact column and
+   * must not be cut at all — the two share one material, so the band travels as a uniform
+   * rather than as a second material.
+   */
+  const plumeCutUniform = useRef({ value: new THREE.Vector2(-1e9, -1e9 + 1) });
+
   /** The hose's own world y range, so the flow coordinate is measured and not assumed. */
   const hoseSpanUniform = useRef({ value: new THREE.Vector2(0, 1) });
 
@@ -886,6 +898,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
       shader.uniforms.uFlow = waterFlow.current;
+      shader.uniforms.uPlumeCut = plumeCutUniform.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
       const tiles = {
@@ -942,7 +955,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nuniform float uFlow;\n' +
+        'uniform float uTime;\nuniform float uFlow;\nuniform vec2 uPlumeCut;\n' +
         'uniform sampler2D uWaterTex;\n' +
         'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
         'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
@@ -1102,6 +1115,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                  0.06,
                  0.97
                );
+
+               // Keep the entry, drop the curtain (BEDO-WATER-15).
+               //
+               // The authored after-impact cache does not stop at the splash: it carries a
+               // long descending sheet all the way down to the tank floor, and inside a
+               // glass vessel that sheet reads as a blue cylinder filling the tank. Measured
+               // live at Q = 43.5 L/min, the plume spans world y 0.1117 to 0.5076 while the
+               // nozzle mouth is at 0.4712 — so roughly nine tenths of its height is below
+               // the impact, hanging in the vessel.
+               //
+               // Only that lower part goes. The fade is a smooth band rather than a plane so
+               // the sheet thins out into the tank instead of ending on a cut line, and the
+               // impact, the spread and the immediate turbulent entry are all above it and
+               // untouched. Parked out of range for the pre-impact column, which is short and
+               // must keep its full length.
+               gl_FragColor.a *= smoothstep(uPlumeCut.x, uPlumeCut.y, vWPos.y);
              }`
           );
     };
@@ -3114,6 +3143,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9);
       const activeWater = waterShapeForFlow(inflowFraction, deflector.water);
       const impacting = activeWater !== JET_ASSET;
+
+      // The after-impact caches hang a sheet to the tank floor; the pre-impact column does
+      // not and must not be cut. Measured off the live plume at high flow: it spans world y
+      // 0.1117..0.5076 against a nozzle mouth at 0.4712, so the band sits just under the
+      // mouth and clears by the time the sheet is well inside the vessel. See the mask in
+      // the water material.
+      if (impacting) {
+        plumeCutUniform.current.value.set(PLUME_CUT_CLEAR_Y, PLUME_CUT_FULL_Y);
+      } else {
+        plumeCutUniform.current.value.set(-1e9, -1e9 + 1);
+      }
       jetGroupRef.current.visible = !impacting;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
 

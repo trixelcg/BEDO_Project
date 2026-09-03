@@ -5,7 +5,12 @@ import * as THREE from 'three';
 import { loadApparatus } from '../helpers/model';
 import { MESH, WATER_SHAPES, type WaterShapeKey } from '../../src/domain/apparatus';
 import { gltfName } from '../../src/lib/gltfNames';
-import { JET_ASSET, waterShapeForFlow } from '../../src/lib/waterJet';
+import {
+  JET_ASSET,
+  waterShapeForFlow,
+  PLUME_CUT_FULL_Y,
+  PLUME_CUT_CLEAR_Y,
+} from '../../src/lib/waterJet';
 import {
   DRAIN_CAPACITY_FRACTION,
   advanceLevel,
@@ -254,5 +259,78 @@ describe('F — water selection is unchanged by the removal', () => {
 
   it('the selector still reads only the flow, never the tank level', () => {
     expect(waterShapeForFlow.length).toBe(2);
+  });
+});
+
+describe('the after-impact plume no longer hangs a curtain in the tank (BEDO-WATER-15)', () => {
+  // Measured live at Q = 43.5 L/min on the flat-plate plume, in world units.
+  const PLUME = { yMin: 0.11174, yMax: 0.50764 };
+  const NOZZLE_MOUTH_Y = 0.47118;
+  const TANK_FLOOR_Y = 0.10454;
+
+  it('A — no procedural tank cylinder has come back', () => {
+    expect(deviceModel).not.toMatch(/createTankWaterGeometry/);
+    expect(deviceModel).not.toMatch(/tankWaterRef/);
+    const lib = readFileSync(path.join(REPO_ROOT, 'src/lib/tankWater.ts'), 'utf8');
+    expect(lib).not.toMatch(/new THREE\.CylinderGeometry/);
+  });
+
+  it('D — the deep part of the plume is suppressed, and by world height', () => {
+    // The cache does not stop at the splash: it runs from y 0.1117 up to 0.5076 while the
+    // nozzle mouth is at 0.4712, so about nine tenths of its height hangs inside the vessel
+    // and reads as a blue cylinder. That lower part is what the mask removes.
+    expect(deviceModel).toMatch(/uniform vec2 uPlumeCut/);
+    expect(deviceModel).toMatch(/gl_FragColor\.a \*= smoothstep\(uPlumeCut\.x, uPlumeCut\.y, vWPos\.y\)/);
+    // Clears well above the floor, so nothing of the sheet survives down there.
+    expect(PLUME_CUT_CLEAR_Y).toBeGreaterThan(TANK_FLOOR_Y);
+    expect(PLUME_CUT_CLEAR_Y).toBeLessThan(PLUME_CUT_FULL_Y);
+  });
+
+  it('E — the impact and the entry stay fully drawn', () => {
+    // Everything from just under the nozzle mouth upward is untouched, which is the jet, the
+    // impact and the immediate turbulent spread.
+    expect(PLUME_CUT_FULL_Y).toBeLessThan(NOZZLE_MOUTH_Y);
+    expect(PLUME_CUT_FULL_Y).toBeLessThan(PLUME.yMax);
+    // The kept region is a real slice of the plume, not a sliver.
+    expect(PLUME.yMax - PLUME_CUT_FULL_Y).toBeGreaterThan(0.04);
+  });
+
+  it('the fade is a band, not a plane, so the sheet thins instead of ending on a line', () => {
+    const band = PLUME_CUT_FULL_Y - PLUME_CUT_CLEAR_Y;
+    expect(band).toBeGreaterThan(0.05);
+  });
+
+  it('F — the pre-impact column is never cut', () => {
+    // Water_low is short and sits at the nozzle; cutting it would shorten the low-flow state.
+    // The band is parked out of range whenever the column is the active shape.
+    expect(deviceModel).toMatch(/plumeCutUniform\.current\.value\.set\(-1e9, -1e9 \+ 1\)/);
+    expect(deviceModel).toMatch(/plumeCutUniform\.current\.value\.set\(PLUME_CUT_CLEAR_Y, PLUME_CUT_FULL_Y\)/);
+    // And it is keyed on the same `impacting` flag the shape selection already uses.
+    const block = deviceModel.slice(deviceModel.indexOf('const activeWater = waterShapeForFlow'));
+    expect(block.slice(0, 900)).toMatch(/if \(impacting\) \{/);
+  });
+
+  it('B/F — shape selection is unchanged by the mask', () => {
+    expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
+    expect(waterShapeForFlow(flowRateLMin(0.4) / TOTAL_FLOW_L_MIN, 'd90')).toBe(JET_ASSET);
+    expect(waterShapeForFlow(flowRateLMin(0.5) / TOTAL_FLOW_L_MIN, 'd90')).toBe('d90');
+  });
+
+  it('C — the hose is untouched by this change', () => {
+    // Its own material, its own uniforms, and no plume cut anywhere near it.
+    const hose = deviceModel.slice(
+      deviceModel.indexOf('const hoseMaterial = useMemo('),
+      deviceModel.indexOf('}, [scene, hoseMaterial]);')
+    );
+    expect(hose).toMatch(/uniform float uHoseFlow/);
+    expect(hose).not.toMatch(/uPlumeCut/);
+  });
+
+  it('adds no mesh, geometry, material or render pass', () => {
+    // The whole fix is one uniform and one line of GLSL.
+    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(2);
+    for (const shape of ['Cylinder', 'Sphere', 'Cone', 'Plane', 'Circle', 'Ring']) {
+      expect(deviceModel).not.toMatch(new RegExp(`new THREE\\.${shape}Geometry`));
+    }
   });
 });
