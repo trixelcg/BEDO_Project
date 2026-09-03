@@ -87,7 +87,6 @@ import {
 } from '../lib/waterCache';
 import {
   advanceLevel,
-  createTankWaterGeometry,
   measureTankInterior,
   targetLevel,
   type TankInterior,
@@ -448,51 +447,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const jetClock = useRef(createCacheClock());
   const plumeClock = useRef(createCacheClock());
-  /** The measured tank interior the procedural tank water is built in. */
+  /**
+   * The tank's measured interior.
+   *
+   * No longer used to build a body — nothing procedural is drawn in the tank any more
+   * (BEDO-WATER-14). It survives because the fill still has to know where the floor and the
+   * ceiling are in order to turn a level into a waterline height.
+   */
   const [tankInterior, setTankInterior] = useState<TankInterior | null>(null);
 
-  // Held in refs so the shader keeps one uniform object for its lifetime: the interior is
-  // measured after the model loads, which is later than the material is created.
-  const tankHeightUniform = useRef({ value: 1 });
-  const tankRadiusUniform = useRef({ value: 1 });
-  // How full the tank is, and how hard water is arriving. Both are *read* from the fill
-  // simulation, never written to it — the level is the same number that already drives the
-  // mesh scale, and the inflow the same one that already picks the target level. The
-  // surface optics need them to know real depth from fractional depth, and calm from
-  // agitated. See the free-surface block in `tankWaterMaterial`.
-  const tankLevelUniform = useRef({ value: 0 });
-  const tankInflowUniform = useRef({ value: 0 });
-
-  /**
-   * World height of the tank's free surface, for the *jet* material to read.
-   *
-   * The tank body and the authored plume are two separate meshes that occupy the same
-   * glass, and each was drawing its own free surface: once the tank filled past the plume's
-   * crown the frame showed the tank's waterline near the cover **and** the plume's own foam
-   * band a third of the way down, with clear water between them — two stacked surfaces in
-   * one vessel (BEDO-WATER-07 defect B, measured in `water-surfaces.spec.ts`).
-   *
-   * A submerged body has no free surface: the foam, the crest glint and the surface-opacity
-   * lift all belong to water meeting air, and below the waterline there is no air to meet.
-   * So the jet shader fades those cues out under this height and the plume becomes part of
-   * the one volume instead of a second one inside it.
-   *
-   * Presentation only, and strictly downstream: it is the level the tank mesh was *just*
-   * given this frame, converted to world units. Nothing reads it back, no equation sees it,
-   * and the plume's geometry, scale, morph playback and visibility are untouched.
-   *
-   * Parked below the rig when the tank is empty, so nothing is ever considered submerged.
-   */
-  const waterlineUniform = useRef({ value: -1e9 });
-
-  /**
-   * The tank body's own colour, for the submerged plume to converge on.
-   *
-   * Read from the tank material rather than restated, so retuning one cannot leave the two
-   * disagreeing about what the water in this vessel looks like.
-   */
-  const tankTintUniform = useRef({ value: new THREE.Color('#38536e') });
-  const tankWaterRef = useRef<THREE.Mesh>(null);
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
   /**
@@ -561,9 +524,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       box: new THREE.Box3(),
       center: new THREE.Vector3(),
       size: new THREE.Vector3(),
-      // Where the tank's free surface has got to, in world units, for the jet material.
-      tankSurfacePos: new THREE.Vector3(),
-      tankSurfaceScale: new THREE.Vector3(),
     }),
     []
   );
@@ -926,8 +886,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uTime = waterTime.current;
       shader.uniforms.uFlow = waterFlow.current;
-      shader.uniforms.uWaterline = waterlineUniform.current;
-      shader.uniforms.uTankTint = tankTintUniform.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
       const tiles = {
@@ -984,8 +942,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nuniform float uFlow;\nuniform float uWaterline;\n' +
-        'uniform vec3 uTankTint;\nuniform sampler2D uWaterTex;\n' +
+        'uniform float uTime;\nuniform float uFlow;\n' +
+        'uniform sampler2D uWaterTex;\n' +
         'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
         'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
         shader.fragmentShader
@@ -1044,29 +1002,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                vec3 N = normalize(vWNorm);
                float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
                float flow = clamp(uFlow * 1.6, 0.0, 1.0);
-
-               // How far under the tank's free surface this fragment sits, 0..1.
-               //
-               // The band is deliberately wide — about 90 mm of world height, a fifth of the
-               // tank's interior. A narrow one is worse than none: at +/-4 mm the cues
-               // switched off across six pixels and measured as a single 27.8-level step
-               // down the column, trading the old soft double band (8.8 and 7.3 levels) for
-               // one hard line. Surface agitation dies away with depth rather than stopping,
-               // so fading it over a real depth is both the softer and the truer answer.
-               //
-               // uWaterline is parked far below the rig while the tank is empty, so this is
-               // 0 for the whole plume until the tank actually holds water.
-               float submerged = smoothstep(uWaterline + 0.045, uWaterline - 0.045, vWPos.y);
-
-               // How deep under the surface, over 120 mm — separate from the band above.
-               //
-               // The band decides where the free-surface cues stop; this decides how far the
-               // body itself has stopped being its own body. WATER-10 damped the cues and
-               // left the plume as a distinct translucent volume inside the fill, which at a
-               // partial level still read as a second body of water with its own top. Depth
-               // is what a real submerged jet loses itself to, so the convergence is driven
-               // by depth rather than by proximity to the line.
-               float depthBelow = clamp((uWaterline - vWPos.y) / 0.12, 0.0, 1.0) * step(-1e8, uWaterline);
 
                vec2 hUvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.13, -vFlow * uTime * 0.70);
                vec2 hUvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.09, -vFlow * uTime * 0.95);
@@ -1136,14 +1071,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // poly mesh's own static striations dominated what was left. The floor is
                // raised and the grazing end left exactly where it was.
                float glint = smoothstep(0.66, 0.97, crest) * (0.45 + 0.55 * fres);
-               // A crest catches the room because it is a water/air boundary; submerged it
-               // is a water/water one, where the index step — and so the whole reflection —
-               // is gone. The rim term goes the same way for the same reason. Both are only
-               // damped, not cut: a little is kept so the plume still reads as a body inside
-               // the water rather than dissolving into it.
-               float airside = 1.0 - 0.60 * submerged;
-               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92)
-                                 * (glint * 0.22 + edge * 0.18) * airside;
+               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92) * (glint * 0.22 + edge * 0.18);
 
                // 6. Aeration.
                //
@@ -1162,12 +1090,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // the upper fifth of every plume wholesale.
                float foam = clamp((impact * 0.95 + foot * 0.55) * (0.08 + 1.05 * churn)
                                   + torn * churn * 0.16, 0.0, 1.0) * flow;
-               // Aeration is air carried *into* water at a free surface. Below the tank's
-               // waterline the plume is inside the body rather than falling through air, so
-               // the entrained white goes with the surface it belonged to. Without this the
-               // plume kept a bright foam band a third of the way down a full tank, which is
-               // the second "waterline" the frame was reading (BEDO-WATER-07 defect B).
-               foam *= 1.0 - submerged;
                gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.78, 0.85, 0.93), foam * 0.45);
 
                // 7. Opacity, from the same path length as the colour.
@@ -1175,40 +1097,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // Thin at the silhouette so the glass and the rod behind read through it,
                // thick through the core so the body has substance, and firmer again where
                // it is aerated — foam is the one part of water you cannot see through.
-               // The silhouette lift is what keeps the plume readable against the dark tank
-               // *through air*. Submerged, that same lift draws its outline as a distinct
-               // second body inside the fill, so it is damped along with the rest — the
-               // plume then shows through the tank water at its own depth rather than
-               // sitting on top of it as a separate sheet.
                gl_FragColor.a = clamp(
-                 gl_FragColor.a * (0.40 + 0.85 * thick)
-                   + (edge * 0.22 + foam * 0.30) * airside,
+                 gl_FragColor.a * (0.40 + 0.85 * thick) + edge * 0.22 + foam * 0.30,
                  0.06,
                  0.97
                );
-
-               // Finally, thin the whole body where it is submerged.
-               //
-               // Damping only the surface cues left the plume's crown standing as a 27.8-
-               // level density step inside the fill — the foam had been masking an edge
-               // rather than being it. Two bodies of water in contact have no such step, so
-               // the submerged part composites lighter and the tank volume carries the
-               // colour there. What survives is a soft change in shade where faster, more
-               // aerated water sits inside the standing water, which is what the reference
-               // shows; what goes is the hard rim that read as a second surface.
-               gl_FragColor.a *= 1.0 - 0.70 * submerged;
-
-               // Finally, let the standing water own the submerged volume.
-               //
-               // Two bodies of water in contact are one body. The plume keeps its geometry
-               // and its motion, but with depth its colour converges on the tank's own tint
-               // and what is left of its opacity goes with it, so below the waterline there
-               // is no second silhouette, no second top and no second volume — only a faint
-               // disturbance where faster water is moving inside the still water.
-               // uTankTint is the tank material's own colour, so the two can never drift
-               // apart if either is retuned.
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, uTankTint, depthBelow * 0.85);
-               gl_FragColor.a *= 1.0 - 0.80 * depthBelow;
              }`
           );
     };
@@ -1399,223 +1292,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [...waterGltfs, waterMaterial]);
 
   /** Built once from the measured interior; rebuilt only if the model is re-exported. */
-  const tankWaterGeometry = useMemo(
-    () => (tankInterior ? createTankWaterGeometry(tankInterior) : null),
-    [tankInterior]
-  );
-
-  /**
-   * The tank body's own material.
-   *
-   * Flatter and more transmissive than the jet: in the reference you read the rod, the
-   * nozzle and the deflector straight through it, and its free surface catches light
-   * rather than reflecting the room. Depth-write is off so the apparatus inside stays
-   * visible from every angle rather than being clipped away.
-   */
-  const tankWaterMaterial = useMemo(() => {
-    const mat = new THREE.MeshPhysicalMaterial({
-      // Darker and more saturated than it looks like it should be, because ACES lifts it.
-      // The recording's water reads rgb(103,110,130) just under the surface; a body colour
-      // authored at that value renders far brighter than it, since the tone curve's shoulder
-      // sits under mid-darks. This is the colour that *arrives* at the reference's value.
-      color: new THREE.Color('#38536e'),
-      transparent: true,
-      // Solved, not guessed. The recording's water just under the surface composites to
-      // luminance 109.7 over a background this scene renders at about 155; that needs the
-      // body to carry roughly 0.7 of the pixel. At 0.42 the room behind the tank supplied
-      // most of it, which is why the volume measured almost achromatic (saturation 0.04
-      // against the reference's 0.20) however dark the body colour was made.
-      opacity: 0.66,
-      roughness: 0.18,
-      metalness: 0,
-      // No transmission — see the jet material for the measurement. The tank is where the
-      // block artifact was worst, because it is the largest area of water with high-contrast
-      // apparatus directly behind it.
-      ior: 1.33,
-      // Was 0.5, which laid a broad achromatic sheet over the whole body and was the main
-      // reason the volume read pale and desaturated near the surface — the same mechanism
-      // that whitens the splash. The free surface now carries its own explicit reflection,
-      // so the body does not need a clearcoat to look wet.
-      clearcoat: 0.12,
-      clearcoatRoughness: 0.25,
-        // As with the jet: authored at 0.5 while the factor was inert, so the validated look
-        // is the one at 1.0. See the note on the jet material.
-        envMapIntensity: 1.0,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-
-    // The same optics as the jet, expressed in the tank's own geometry.
-    //
-    // A standing body of water reads differently from a falling one, and the two cues that
-    // carry it are both spatial: it gets darker with depth, and it darkens where it meets
-    // the glass. Neither is available to a uniform translucent cylinder, which is why the
-    // filled tank looked like a coloured sleeve rather than a volume.
-    //
-    // This changes appearance only. The level, the fill and drain rates, the threshold that
-    // starts it filling and the geometry itself are all untouched — see `lib/tankWater.ts`,
-    // whose numbers are measured off the recording and asserted in tests.
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTankHeight = tankHeightUniform.current;
-      shader.uniforms.uTankRadius = tankRadiusUniform.current;
-      shader.uniforms.uTankLevel = tankLevelUniform.current;
-      shader.uniforms.uInflow = tankInflowUniform.current;
-      // The jet's clock, not a second one. It is already `t * (0.6 + valveOpening * 1.6)`,
-      // so the standing water and the falling water stay in step, and the whole system
-      // stays reproducible under the capture harness's virtual clock.
-      shader.uniforms.uTime = waterTime.current;
-      shader.uniforms.uWaterTex = { value: waterTex };
-
-      shader.vertexShader =
-        'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
-        shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           // Object space, before the per-frame y scale that raises the level — so "how far
-           // below the surface" does not change meaning as the tank fills.
-           vLocal = position;
-           vTankWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vTankWNorm = normalize(mat3(modelMatrix) * objectNormal);`
-        );
-
-      shader.fragmentShader =
-        'uniform float uTankHeight;\nuniform float uTankRadius;\n' +
-        'uniform float uTankLevel;\nuniform float uInflow;\nuniform float uTime;\n' +
-        'uniform sampler2D uWaterTex;\n' +
-        'varying vec3 vLocal;\nvarying vec3 vTankWPos;\nvarying vec3 vTankWNorm;\n' +
-        shader.fragmentShader.replace(
-          '#include <opaque_fragment>',
-          `#include <opaque_fragment>
-           {
-             vec3 V = normalize(cameraPosition - vTankWPos);
-             vec3 N = normalize(vTankWNorm);
-
-             // The cylinder's top cap *is* the free surface. Its object normal is the only
-             // one pointing up, which separates it from the wall and the floor without
-             // needing to know the geometry's group order. Back faces keep the object
-             // normal here, so the surface is still the surface seen from underneath.
-             float isSurface = smoothstep(0.80, 0.98, N.y);
-
-             // --- Depth (Beer-Lambert) ------------------------------------------------
-             // Real depth, not fractional depth. \`vLocal.y\` spans the full interior
-             // height and the mesh is scaled by the level, so a fragment sits
-             // (uTankHeight - y) * level below the surface. The previous form used the
-             // fraction alone, which made a tank at a tenth full exactly as dark at its
-             // floor as a full one.
-             //
-             // Calibrated against the recording, which over the filled column runs
-             // luminance 109.7 -> 76.0 and saturation 0.204 -> 0.331: light both fades and
-             // *saturates* along the path. The old constants moved luminance a third of
-             // that and moved saturation the wrong way, because at a flat 0.42 alpha the
-             // bright room behind the tank washed the tint back out. Transmittance drives
-             // opacity as well as colour here, which is what stops that happening.
-             float depthWorld = max(uTankHeight - vLocal.y, 0.0) * uTankLevel;
-             float transmit = exp(-depthWorld * 5.4);
-             // Beer-Lambert proper, per channel, rather than a fade toward one "deep"
-             // colour. Water absorbs red fastest and blue slowest, and that difference —
-             // not a darker tint — is what makes a deep column read blue while a shallow
-             // one reads nearly clear. The coefficients are in inverse world units over
-             // this tank's 0.317-unit interior.
-             //
-             // It *replaces* the shaded body rather than tinting it. Measured directly:
-             // with alpha forced to 1.0 the lit body still rendered at luminance 135 near
-             // the surface, about 2.5x its own albedo, because a smooth dielectric under a
-             // 2.4-intensity sun and a room probe is mostly specular. Tinting toward a dark
-             // colour barely moved it — the reference's water is transmitted light, so
-             // transmitted light is what has to drive it. A fifth of the shaded result is
-             // kept so the wall highlights and the grazing rim still live.
-             //
-             // \`shallow\` is linear and pre-tone-map: ACES at exposure 1.3 lifts mid-darks
-             // hard, so the value that *arrives* at the recording's near-surface water is
-             // well below the one it looks like it should be.
-             // The path is not just the depth. A fragment on the near wall has the whole
-             // width of the column behind it, and light reaching the eye crosses that too.
-             // Entering along -V from a point on the wall, the ray leaves the cylinder
-             // after -2*(p . v) — up to the full 0.169-unit diameter at the axis, nothing
-             // at the silhouette. This is why the recording's water is already blue just
-             // under the surface, and darker through the middle than near the glass, and
-             // omitting it left the shallow water reading as almost clear.
-             vec2 travel = normalize(-V.xz + vec2(1e-6, 0.0));
-             float chord = clamp(-2.0 * dot(vLocal.xz, travel), 0.0, 2.0 * uTankRadius);
-
-             vec3 shallow = vec3(0.070, 0.092, 0.130);
-             vec3 absorb = exp(-(depthWorld + chord) * vec3(5.5, 3.4, 2.0));
-             gl_FragColor.rgb = mix(shallow * absorb, gl_FragColor.rgb, 0.18);
-             gl_FragColor.a = clamp(mix(0.92, gl_FragColor.a, transmit), 0.0, 0.93);
-
-             // --- Contact darkening ---------------------------------------------------
-             // Light entering the meniscus is trapped between water and glass instead of
-             // leaving. The recording shows this clearly: the base of the column reads
-             // 40.7 luminance below the water just under the surface, and the floor of the
-             // tank is the darkest part of the whole vessel.
-             float radial = length(vLocal.xz) / max(uTankRadius, 1e-5);
-             float wall = smoothstep(0.86, 1.0, radial) * (1.0 - isSurface);
-             float floorContact = smoothstep(0.10, 0.0, vLocal.y / max(uTankHeight, 1e-5));
-             gl_FragColor.rgb *= 1.0 - clamp(wall * 0.22 + floorContact * 0.30, 0.0, 0.45);
-
-             // --- Free surface --------------------------------------------------------
-             // The strongest cue the reference has and the one production was missing
-             // outright: walking down through the waterline, the recording falls to a
-             // trough and then rebounds +46 luminance into a textured bright band, while
-             // production stepped down 30 and stayed dead flat for 55 rows.
-             //
-             // The band is a reflection of the room, so it is built as one: ripple the
-             // surface normal, then take Fresnel against the rippled normal. A flat sheet
-             // at these viewing angles returns about 5%, far too little; a rippled one
-             // swings roughly 2.4% to 12% across the wave, and that *variation* is what
-             // reads as water rather than as a painted line.
-             //
-             // Both wave trains and the ring term run off the jet's clock, so ripple
-             // speed already follows the valve, and amplitude follows inflow — existing
-             // simulation state in both cases, never a free-running decoration.
-             if (isSurface > 0.001) {
-               vec2 sp = vLocal.xz / max(uTankRadius, 1e-5);
-               float agitation = 0.28 + 0.72 * clamp(uInflow, 0.0, 1.0);
-
-               // The jet's own ripple map, scrolled twice, rather than a sum of sines.
-               // Three sine trains at fixed frequencies in this space beat against each
-               // other into a regular dot lattice, which was plainly visible across the
-               // surface once the tank drained far enough to be seen from above — a tiled
-               // normal map in all but name. The texture is tileable and aperiodic at
-               // these scales, and reusing it keeps the standing water and the falling
-               // water made of the same material.
-               vec2 uvA = sp * 2.6 + vec2(uTime * 0.045, -uTime * 0.030);
-               vec2 uvB = sp * 1.7 + vec2(-uTime * 0.028, uTime * 0.052);
-               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5)
-                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.8;
-               vec3 Nr = normalize(N + vec3(grad.x, 0.0, grad.y) * 0.46 * agitation);
-               float cosR = clamp(dot(Nr, V), 0.0, 1.0);
-               float F = 0.02 + 0.98 * pow(1.0 - cosR, 5.0);
-
-               // The probe holds the room's albedo rather than its radiance — the same
-               // shortfall Stage B.1 compensates elsewhere — so the reflection needs a
-               // gain to reach the reference's rebound. 5.2 is where the band matches;
-               // see docs/48_WATER_RESPONSE.md.
-               vec3 sky = vec3(0.86, 0.90, 0.96);
-               // The reflection is bright, but it must not also make the water opaque.
-               // Seen along the surface — the drained tank is viewed from about 14 degrees
-               // above it — Fresnel alone reaches 0.27, so the mix saturates its ceiling
-               // across the whole cap at once and the alpha it used to add on top turned
-               // that into a white lid you could not see into. The colour still saturates
-               // there, which is correct (water at grazing incidence is a bright sheet),
-               // but a deeper ripple keeps variation inside it, and the opacity gain is
-               // now small enough that the body stays visible through the surface.
-               float spec = isSurface * F * 5.2;
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, clamp(spec, 0.0, 0.40));
-               gl_FragColor.a = clamp(gl_FragColor.a + clamp(spec, 0.0, 0.22), 0.0, 0.96);
-
-               // Where the surface meets the glass it climbs the wall slightly and catches
-               // a thin bright line. Small, but it is what makes the level readable at a
-               // glance rather than merely present.
-               float meniscus = smoothstep(0.90, 1.0, radial) * isSurface;
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, meniscus * 0.30);
-               gl_FragColor.a = clamp(gl_FragColor.a + meniscus * 0.22, 0.0, 0.96);
-             }
-           }`
-        );
-    };
-    return mat;
-  }, [tankHeightUniform, tankRadiusUniform, tankLevelUniform, tankInflowUniform, waterTime, waterTex]);
 
 
   /**
@@ -3484,8 +3160,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // Driven by how much water is arriving, which is what the recording actually shows
     // changing — the student turns the *flow* valve, never the volumetric one, and the tank
     // is empty through ten seconds at the lower setpoint. See `src/lib/tankWater.ts`.
-    const tankWater = tankWaterRef.current;
-    if (tankWater && tankInterior) {
+    // Gated on the measured interior so the fill starts only once the rig has actually been
+    // measured — the same moment it always started. The level no longer *uses* the interior's
+    // dimensions, because nothing is drawn from them, but the measurement is still what says
+    // the apparatus is ready.
+    if (tankInterior) {
       // The same fraction the shape selection above reads, so the column/plume switch and
       // the tank's fill can never straddle `DRAIN_CAPACITY_FRACTION` differently. Recomputed
       // rather than hoisted because the water block above is skipped when nothing flows.
@@ -3497,39 +3176,23 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         targetLevel(inflow, state.isVolumetricValveOpen),
         delta
       );
-      const height = Math.max(tankInterior.ceilingY - tankInterior.floorY, 1e-6);
-      tankWater.visible = tankLevel.current > 0.002;
-      tankWater.scale.set(1, Math.max(tankLevel.current, 1e-4), 1);
-      tankWater.position.set(tankInterior.axis.x, tankInterior.floorY, tankInterior.axis.y);
-      // The optics need the interior's own dimensions to know what "deep" and "against the
-      // glass" mean. Measured, not assumed — see `measureTankInterior`.
-      tankHeightUniform.current.value = height;
-      tankRadiusUniform.current.value = tankInterior.radius;
-      // Appearance only, and read-only with respect to the fill: these are the level that
-      // was just applied to the mesh scale and the inflow that was just used to pick the
-      // target. Nothing downstream of them writes back.
-      tankLevelUniform.current.value = Math.max(tankLevel.current, 1e-4);
-      tankInflowUniform.current.value = inflow;
 
-      // Hand the jet material the waterline it has to defer to, in the world units its own
-      // shader works in. The mesh was just positioned and scaled above, so this reads that
-      // surface rather than predicting it.
+      // The level is still simulated; it is simply no longer drawn (BEDO-WATER-14).
       //
-      // The geometry is the full interior height with its origin at the base, so the
-      // surface is `height` up the mesh's own y axis. `getWorldScale` already carries the
-      // level — it is the mesh's `scale.y` — so the level must not be applied twice here.
+      // It used to be both at once — the cylinder mesh was the picture of the standing water
+      // *and* the thing every other water effect measured its waterline off. Deleting the
+      // picture would have taken the measurement with it, so the two were separated first.
       //
-      // Parked far below the rig while the tank is empty, so an empty tank can never make
-      // the plume look submerged.
-      tankWater.getWorldPosition(tmp.tankSurfacePos);
-      tankWater.getWorldScale(tmp.tankSurfaceScale);
-      waterlineUniform.current.value = tankWater.visible
-        ? tmp.tankSurfacePos.y + height * tmp.tankSurfaceScale.y
-        : -1e9;
-    } else {
-      // No tank body this frame — measured interior missing, or the mesh not mounted yet.
-      // Nothing is submerged, so the plume keeps its full free-surface treatment.
-      waterlineUniform.current.value = -1e9;
+      // With the body gone there is no standing water to measure against: the authored plume
+      // is the water in the tank, and it is falling through air for its whole length. The
+      // submerged-plume convergence that WATER-10 and WATER-13 added existed only to stop the
+      // plume reading as a second volume beside the cylinder, and with the cylinder removed it
+      // had nothing to converge into — it simply erased the water, leaving an empty glass at
+      // high flow. It is gone with the body that justified it.
+      //
+      // The level itself stays. It is domain-adjacent state that the fill logic owns, it is
+      // still advanced every frame from the authoritative inflow, and nothing about removing
+      // its visualisation should remove it.
     }
 
     // --- Loaded weights ride the pan --------------------------------------------
@@ -3697,19 +3360,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               {plumes.map(shape)}
             </group>
             {/*
-              The water that collects in the measuring tank. Procedural because no shipped
-              asset can draw it — `LIQUID001` is a four-vertex quad 480 mm below the tank.
-              Presentation only; the drain valve drives it. See `src/lib/tankWater.ts`.
+              No procedural tank body is drawn (BEDO-WATER-14). The standing water used to
+              be a `CylinderGeometry` inside the glass, and it read as exactly that: a blue
+              cylinder with its own walls, narrower than the bore it was meant to fill.
+              Hiding it at runtime produced the wanted frame outright, so it is gone rather
+              than reshaded. The water entering the tank is the authored Alembic plume; the
+              fill level survives as state, not as a mesh — see the frame loop.
             */}
-            {tankWaterGeometry && (
-              <mesh
-                ref={tankWaterRef}
-                geometry={tankWaterGeometry}
-                material={tankWaterMaterial}
-                visible={false}
-                renderOrder={-1}
-              />
-            )}
           </>
         );
       })()}

@@ -7,10 +7,8 @@ import {
   DRAIN_SECONDS,
   FILL_SECONDS,
   FULL_LEVEL,
-  TANK_WATER_SEGMENTS,
   WALL_CLEARANCE,
   advanceLevel,
-  createTankWaterGeometry,
   measureTankInterior,
   targetLevel,
 } from '../../src/lib/tankWater';
@@ -86,25 +84,6 @@ describe('the interior is measured from the glass', () => {
   });
 });
 
-describe('the geometry it builds', () => {
-  it('is a unit-scalable cylinder standing on the tank floor', () => {
-    const it0 = interior()!;
-    const g = createTankWaterGeometry(it0);
-    g.computeBoundingBox();
-    const box = g.boundingBox!;
-    // Origin at the base: scaling y raises the surface instead of growing both ways.
-    expect(box.min.y).toBeCloseTo(0, 6);
-    expect(box.max.y).toBeCloseTo(it0.ceilingY - it0.floorY, 6);
-    expect(box.max.x).toBeCloseTo(it0.radius, 4);
-  });
-
-  it('is cheap: one draw, a couple of hundred triangles', () => {
-    const g = createTankWaterGeometry(interior()!);
-    const tris = (g.index ? g.index.count : g.getAttribute('position').count) / 3;
-    expect(TANK_WATER_SEGMENTS).toBeLessThanOrEqual(64);
-    expect(tris).toBeLessThan(400);
-  });
-});
 
 describe('the tank fills only when more arrives than the drain can carry', () => {
   it('treats the threshold as presentation, never as a physical constant', () => {
@@ -184,7 +163,7 @@ describe('the tank fills only when more arrives than the drain can carry', () =>
     );
     const block = source
       .slice(source.indexOf('The tank fills once more arrives'))
-      .slice(0, 1200);
+      .slice(0, 2200);
     // Flow-driven, because that is what the recording shows changing — and read from the
     // domain's own figure rather than recomputed here, so the fill and the shape selection
     // above it can never straddle `DRAIN_CAPACITY_FRACTION` differently (BEDO-WATER-05).

@@ -9,10 +9,7 @@ import { JET_ASSET, waterShapeForFlow } from '../../src/lib/waterJet';
 import {
   DRAIN_CAPACITY_FRACTION,
   advanceLevel,
-  createTankWaterGeometry,
   targetLevel,
-  TANK_WATER_SEGMENTS,
-  type TankInterior,
 } from '../../src/lib/tankWater';
 import { flowRateLMin, TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
 
@@ -78,8 +75,7 @@ describe('A — startup water visibility matches authoritative flow', () => {
     expect(hideJet && hidePlume).toBe(true);
   });
 
-  it('the tank body is hidden below a hair of level, so an empty tank draws nothing', () => {
-    expect(deviceModel).toMatch(/tankWater\.visible = tankLevel\.current > 0\.002/);
+  it('no flow means no fill, and there is no tank body to draw in any case', () => {
     expect(targetLevel(0, false)).toBe(0);
     expect(targetLevel(0, true)).toBe(0);
   });
@@ -120,93 +116,6 @@ describe('B — the flat authored quad is never drawn', () => {
     // must have real extent on every axis, or one of them *is* a billboard.
     // (Loaded lazily so the flat-quad assertions above still run if a cache is missing.)
     expect(Object.keys(WATER_SHAPES).length).toBe(8);
-  });
-});
-
-describe('C/D — exactly one tank water surface, at every fill', () => {
-  const interior: TankInterior = {
-    axis: new THREE.Vector2(0.0101, -0.2293),
-    radius: 0.0847,
-    floorY: 1.08096,
-    ceilingY: 1.37491,
-  };
-
-  it('the tank body is one capped cylinder, so it owns exactly one free surface', () => {
-    const geometry = createTankWaterGeometry(interior);
-    expect(geometry.type).toBe('CylinderGeometry');
-    // Capped: an open-ended cylinder would have no top face at all and the waterline would
-    // have to be drawn by something else — which is precisely the duplicate this forbids.
-    expect(geometry.parameters.openEnded).toBe(false);
-    // One radial ring, one height segment: a single top cap, not a stack of them.
-    expect(geometry.parameters.heightSegments).toBe(1);
-    expect(geometry.parameters.radiusTop).toBeCloseTo(geometry.parameters.radiusBottom, 12);
-  });
-
-  it('the geometry has a top cap and NO bottom cap (BEDO-WATER-11)', () => {
-    // The regression this locks: a both-ends-capped cylinder under a DoubleSide,
-    // depthWrite:false, transparent material shows its floor disc straight through the
-    // body, and the learner sees two horizontal water circles in one tank.
-    const geometry = createTankWaterGeometry(interior);
-    const index = geometry.getIndex()!;
-    const normal = geometry.getAttribute('normal');
-    let up = 0;
-    let down = 0;
-    let wall = 0;
-    for (let i = 0; i < index.count; i += 3) {
-      const facing =
-        (normal.getY(index.getX(i)) +
-          normal.getY(index.getX(i + 1)) +
-          normal.getY(index.getX(i + 2))) /
-        3;
-      if (facing > 0.9) up++;
-      else if (facing < -0.9) down++;
-      else wall++;
-    }
-    // One free surface, kept.
-    expect(up).toBe(TANK_WATER_SEGMENTS);
-    // No second one, at any level.
-    expect(down).toBe(0);
-    // The wall is untouched — this removed a cap, not the body.
-    expect(wall).toBe(TANK_WATER_SEGMENTS * 2);
-    // And the whole saving is exactly the bottom cap: 192 faces become 144.
-    expect(index.count / 3).toBe(TANK_WATER_SEGMENTS * 3);
-  });
-
-  it('exactly one horizontal surface exists at every fill level', () => {
-    // The invariant is visual, and it holds because there is only one up-facing face set in
-    // the geometry — the per-frame y scale moves that surface, it cannot duplicate it.
-    const geometry = createTankWaterGeometry(interior);
-    const index = geometry.getIndex()!;
-    const normal = geometry.getAttribute('normal');
-    const pos = geometry.getAttribute('position');
-    const surfaceYs = new Set<number>();
-    for (let i = 0; i < index.count; i += 3) {
-      const a = index.getX(i);
-      if (normal.getY(a) > 0.9) surfaceYs.add(Number(pos.getY(a).toFixed(6)));
-    }
-    // Every up-facing vertex sits at one height: one plane, not two.
-    expect(surfaceYs.size).toBe(1);
-    for (const level of [0.05, 0.25, 0.5, 0.75, 0.9]) {
-      const surfaceAt = [...surfaceYs][0] * level;
-      expect(Number.isFinite(surfaceAt)).toBe(true);
-    }
-  });
-
-  it('only one tank-water mesh is ever instantiated', () => {
-    // One ref, one <mesh>, one geometry. Two would be two surfaces however they were shaded.
-    expect(deviceModel.match(/ref=\{tankWaterRef\}/g)?.length).toBe(1);
-    expect(deviceModel.match(/createTankWaterGeometry\(/g)?.length).toBe(1);
-  });
-
-  it('level is a single scalar, so mid and high fill cannot disagree about the surface', () => {
-    // There is one number for the level and the mesh is scaled by it. No second level, no
-    // per-surface offset, so "mid fill" and "high fill" are the same surface at two heights.
-    for (const level of [0.05, 0.25, 0.5, 0.75, 0.99, 1.0]) {
-      const next = advanceLevel(level, 1, 0.016);
-      expect(next).toBeGreaterThanOrEqual(level);
-      expect(next).toBeLessThanOrEqual(1);
-    }
-    expect(deviceModel).toMatch(/tankWater\.scale\.set\(1, Math\.max\(tankLevel\.current, 1e-4\), 1\)/);
   });
 });
 
@@ -255,78 +164,95 @@ describe('F — the plume is owned by the flow, not by the tank surface', () => 
   });
 });
 
-describe('the submerged-plume mechanism that removes the second waterline', () => {
-  it('the jet shader takes the tank waterline and fades its surface cues under it', () => {
-    expect(deviceModel).toMatch(/uniform float uWaterline/);
-    expect(deviceModel).toMatch(/float submerged = smoothstep\(\s*uWaterline \+ /);
-    // Foam is entrained air at a water/air boundary; below the line there is none.
-    expect(deviceModel).toMatch(/foam \*= 1\.0 - submerged/);
-    // The reflective cues and the silhouette lift are damped by the same term.
-    expect(deviceModel).toMatch(/float airside = 1\.0 - 0\.60 \* submerged/);
-    expect(deviceModel).toMatch(/gl_FragColor\.a \*= 1\.0 - 0\.70 \* submerged/);
+describe('A — the procedural tank cylinder is gone (BEDO-WATER-14)', () => {
+  it('no tank body geometry is built anywhere in the app', () => {
+    // The standing water used to be a CylinderGeometry inside the glass, and it read as
+    // exactly that: a blue cylinder with its own walls, narrower than the bore it filled.
+    // Hiding it at runtime produced the wanted frame outright, so it is removed rather than
+    // reshaded — builder and all, so nothing can reintroduce it by calling the old helper.
+    expect(deviceModel).not.toMatch(/createTankWaterGeometry/);
+    expect(deviceModel).not.toMatch(/tankWaterRef/);
+    const lib = readFileSync(path.join(REPO_ROOT, 'src/lib/tankWater.ts'), 'utf8');
+    expect(lib).not.toMatch(/export function createTankWaterGeometry/);
+    expect(lib).not.toMatch(/new THREE\.CylinderGeometry/);
   });
 
-  it('the waterline is parked below the rig whenever no tank body is drawn', () => {
-    // Two routes reach "no water in the tank" — the mesh hidden, and the block skipped
-    // entirely. Both must park the uniform, or a stale waterline would make the plume look
-    // submerged in an empty tank.
-    const parks = deviceModel.match(/waterlineUniform\.current\.value = -1e9/g) ?? [];
-    expect(parks.length).toBeGreaterThanOrEqual(1);
-    expect(deviceModel).toMatch(/tankWater\.visible\s*\?[\s\S]{0,200}:\s*-1e9/);
-  });
-
-  it('it is driven from the level already applied, and writes nothing back', () => {
-    // Presentation only: the uniform is computed after the mesh was positioned and scaled,
-    // from that mesh's own world transform, and no domain module knows it exists.
-    const block = deviceModel.slice(deviceModel.indexOf('const tankWater = tankWaterRef.current'));
-    const setLevel = block.indexOf('tankWater.scale.set');
-    const setLine = block.indexOf('waterlineUniform.current.value');
-    expect(setLevel).toBeGreaterThan(-1);
-    expect(setLine).toBeGreaterThan(setLevel);
-    for (const file of ['physics.ts', 'stateMachine.ts', 'experiments.ts']) {
-      const domain = readFileSync(path.join(REPO_ROOT, 'src/domain', file), 'utf8');
-      expect(domain, `${file} must not know about the waterline`).not.toMatch(/uWaterline|waterline/i);
+  it('nothing procedural is substituted for it', () => {
+    // Explicitly not a replacement volume, shell or surface — the brief asked for removal,
+    // not for a different body. The authored plume is the water in the tank.
+    for (const shape of ['Cylinder', 'Sphere', 'Cone', 'Plane', 'Circle', 'Ring']) {
+      expect(deviceModel, `${shape}Geometry must not appear`).not.toMatch(
+        new RegExp(`new THREE\\.${shape}Geometry`)
+      );
     }
   });
 
-  it('adds no mesh, no geometry and no render pass', () => {
-    // The submerged-plume fix is a uniform and a few lines of GLSL inside the existing jet
-    // material — it builds nothing.
-    expect(deviceModel.match(/createTankWaterGeometry\(/g)?.length).toBe(1);
-    // Three water materials, and no more: the jet, the tank body, and the supply hose.
-    // The hose's is not an addition to the scene's draw work — it *replaces* the tank glass
-    // instance the GLB had put on that one mesh (BEDO-WATER-12), so the number of drawn
-    // bodies is unchanged. If a fourth ever appears, something started drawing water twice.
-    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(3);
+  it('two water materials remain: the jet and the hose', () => {
+    // The tank body's material went with the body. A third would mean something started
+    // drawing standing water again.
+    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(2);
   });
 });
 
-describe('C/D — the submerged plume converges into the tank body (BEDO-WATER-12)', () => {
-  it('convergence is driven by depth below the waterline, not by the band alone', () => {
-    // WATER-10 damped the plume's free-surface cues within +/-45 mm of the line. That left
-    // the plume a distinct translucent volume inside the fill, which at a partial level
-    // still read as a second body with its own top. Depth is what a real submerged jet
-    // loses itself to, so the convergence has to be a depth term.
-    expect(deviceModel).toMatch(/float depthBelow = clamp\(\(uWaterline - vWPos\.y\) \/ 0\.12/);
+describe('B — the fill is still simulated, just not drawn', () => {
+  it('the level is still advanced from the authoritative inflow every frame', () => {
+    // Removing a visualisation must not remove state. The level is domain-adjacent: the
+    // fill logic owns it and it is still driven by the same flow the jet reads.
+    expect(deviceModel).toMatch(/tankLevel\.current = advanceLevel\(/);
+    expect(deviceModel).toMatch(/targetLevel\(inflow, state\.isVolumetricValveOpen\)/);
+    expect(deviceModel).toMatch(/state\.live\.flowRateLMin \/ Math\.max\(state\.params\.pumpFlowLMin/);
   });
 
-  it('colour converges on the tank body and opacity follows it down', () => {
-    // Two bodies of water in contact are one body: below the surface the standing water
-    // owns the volume, so there is no second silhouette and no second top.
-    expect(deviceModel).toMatch(/gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, uTankTint, depthBelow \* 0\.85\)/);
-    expect(deviceModel).toMatch(/gl_FragColor\.a \*= 1\.0 - 0\.80 \* depthBelow/);
+  it('the level maths is untouched by the removal', () => {
+    // Same numbers as before: the threshold, the fill and the drain all still behave.
+    expect(targetLevel(DRAIN_CAPACITY_FRACTION + 0.01, false)).toBeGreaterThan(0);
+    expect(targetLevel(DRAIN_CAPACITY_FRACTION + 0.01, true)).toBe(0);
+    expect(targetLevel(0, false)).toBe(0);
+    let level = 0;
+    for (let i = 0; i < 400; i++) level = advanceLevel(level, 0.9, 0.016);
+    expect(level).toBeCloseTo(0.9, 5);
+    for (let i = 0; i < 800; i++) level = advanceLevel(level, 0, 0.016);
+    expect(level).toBe(0);
   });
 
-  it('the convergence target is the tank material itself, not a restated literal', () => {
-    // So retuning either cannot leave the two disagreeing about what this water looks like.
-    expect(deviceModel).toMatch(/uniform vec3 uTankTint/);
-    expect(deviceModel).toMatch(/shader\.uniforms\.uTankTint = tankTintUniform\.current/);
+  it('the interior is still measured, and still gates when the fill may start', () => {
+    // The level no longer uses the interior's dimensions — nothing is drawn from them — but
+    // the measurement is still what says the apparatus is ready, and it is what a waterline
+    // would be derived from if one is ever needed again.
+    expect(deviceModel).toMatch(/measureTankInterior\(/);
+    expect(deviceModel).toMatch(/if \(tankInterior\) \{/);
+  });
+});
+
+describe('C/D — the submerged-plume machinery went with the body', () => {
+  it('the jet shader no longer damps itself against a waterline', () => {
+    // That convergence existed only to stop the plume reading as a second volume beside the
+    // cylinder. With the cylinder gone it had nothing to converge into and simply erased the
+    // water — at high flow it left an empty glass. Its premise is gone, so it is gone.
+    expect(deviceModel).not.toMatch(/uWaterline/);
+    expect(deviceModel).not.toMatch(/uTankTint/);
+    expect(deviceModel).not.toMatch(/float submerged =/);
+    expect(deviceModel).not.toMatch(/depthBelow/);
   });
 
-  it('an empty tank converges nothing — the plume keeps its full treatment', () => {
-    // uWaterline is parked far below the rig when no tank body is drawn, and the depth term
-    // is gated on that so a parked line cannot read as "infinitely deep".
-    expect(deviceModel).toMatch(/step\(-1e8, uWaterline\)/);
-    expect(deviceModel).toMatch(/waterlineUniform\.current\.value = -1e9/);
+  it('the plume keeps its full free-surface treatment everywhere', () => {
+    // Foam, glint and the silhouette lift are unconditional again: the authored plume is
+    // falling through air for its whole length now that no standing water is drawn.
+    expect(deviceModel).toMatch(/gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, vec3\(0\.78, 0\.85, 0\.93\), foam \* 0\.45\)/);
+    expect(deviceModel).toMatch(/gl_FragColor\.rgb \+= vec3\(0\.62, 0\.74, 0\.92\) \* \(glint \* 0\.22 \+ edge \* 0\.18\)/);
+  });
+});
+
+describe('F — water selection is unchanged by the removal', () => {
+  it('no flow draws nothing, low flow is the column, high flow is the plume', () => {
+    expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
+    const low = flowRateLMin(0.4) / TOTAL_FLOW_L_MIN;
+    const high = flowRateLMin(0.5) / TOTAL_FLOW_L_MIN;
+    expect(waterShapeForFlow(low, 'd90')).toBe(JET_ASSET);
+    expect(waterShapeForFlow(high, 'd90')).toBe('d90');
+  });
+
+  it('the selector still reads only the flow, never the tank level', () => {
+    expect(waterShapeForFlow.length).toBe(2);
   });
 });
