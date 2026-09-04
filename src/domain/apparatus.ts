@@ -52,6 +52,15 @@ export const MESH = {
   sightGaugeWindow: 'Rectangle003',
   /** The bench basin the tank and the gauge drain into. */
   benchSink: 'Bing Sink',
+  /**
+   * The laboratory's own interior walls — the box a camera has to stay inside.
+   *
+   * The largest interior shell in the export, 10.40 x 3.53 x 11.13 model units. The room
+   * also carries an outdoor ground plane twice that across (`Plane001_Baked`, 20.6 x 13.2),
+   * so "the scene's bounds" is not the room and a camera clamped to it would still go
+   * through the window. This is the mesh that actually encloses the laboratory.
+   */
+  roomWalls: 'WALLS_INTERNAL_PARTITIONING_Baked',
   powerSwitch: 'Power_Switch',
   powerButtonBody: 'power_button_body001',
   powerLight: 'Diagram_Green_light_off',

@@ -5,7 +5,11 @@
 }
 
 :root {
-  font-family: 'Inter', 'Cairo', system-ui, -apple-system, sans-serif;
+  /*
+    The Latin stack. Arabic gets its own further down — see the `[dir='rtl']` block, and
+    the note there about why neither named face is vendored.
+  */
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -1625,4 +1629,175 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .vol-fill { transition: none; }
+}
+
+/* The walkthrough player fills the dialog and keeps the video's own aspect. */
+.video-stage {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.video-stage video {
+  width: 100%;
+  height: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+}
+
+/* A dialog is above the scene and takes its own pointer events, whatever contains it. */
+.bedo-modal { pointer-events: auto; }
+
+/*
+  The HUD stands down while an overlay is up.
+
+  The bottom toolbar used to sit over the very controls a learner reaches for when an
+  overlay is open — the Board view's "Back to Step", the monitor's readings row. The step
+  card goes with it: an instruction the learner cannot act on while a document is in front
+  of them is noise, and it comes straight back when the overlay closes.
+*/
+.ui-container.has-overlay .guided-dock,
+.ui-container.has-overlay .guided-chip { display: none; }
+
+/*
+  The footer is the exception, and only in the Board view — that is where `Back to Step`
+  lives, and hiding it would be the trap this rule exists to remove.
+*/
+.ui-container.has-overlay:not(.is-board-view) .guided-footer { display: none; }
+
+/* Progress across the procedure, beside the step badge. */
+.step-progress {
+  flex: 1;
+  min-width: 60px;
+  max-width: 180px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.step-progress-fill {
+  display: block;
+  height: 100%;
+  background: #f58220;
+  transition: width 0.35s ease-out;
+}
+
+.step-hint-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-inline-start: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-gold, #ffc233);
+  background: rgba(255, 194, 51, 0.1);
+  border: 1px solid rgba(255, 194, 51, 0.35);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.step-hint-btn:hover {
+  background: rgba(255, 194, 51, 0.18);
+  border-color: rgba(255, 194, 51, 0.6);
+}
+
+.step-card-number {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step-progress-fill { transition: none; }
+}
+
+/*
+  Arabic typography.
+
+  ## Why the family is a stack and not a self-hosted file
+
+  The brief asks for IBM Plex Sans Arabic or Cairo, self-hosted with `font-display: swap`.
+  Neither font is in this repository and neither can be fetched here, and a `@font-face`
+  pointing at a file that does not exist is worse than no rule at all: the browser blocks
+  text for the swap period and then falls back anyway, so every Arabic label flashes.
+
+  So this is the same typographic intent expressed as a stack the platform can satisfy
+  today, with the two named faces first — drop either into `public/fonts/`, add the
+  `@font-face` above this block, and every Arabic label picks it up with no other change.
+  The rest of the stack is deliberate rather than a default: Noto Sans Arabic, Segoe UI
+  and Geeza Pro are the system Arabic faces on Windows, Linux and macOS/iOS respectively,
+  and each of them has the full glyph coverage the labels need.
+
+  ## Why Arabic gets its own size
+
+  The Latin UI runs down to 10 px in places. Arabic script carries its meaning in
+  diacritics and in the shape of joined letters, both of which disappear first as the size
+  drops — the same 10 px that is merely small in Latin is unreadable here. 14 px is the
+  floor, applied by raising the *root* size in RTL so every relative size in the sheet
+  moves with it rather than being overridden one rule at a time.
+*/
+[dir='rtl'] {
+  font-family: 'IBM Plex Sans Arabic', 'Cairo', 'Noto Sans Arabic', 'Segoe UI', 'Geeza Pro',
+    system-ui, sans-serif;
+  /* Arabic sits lower and taller in the line box than Latin at the same size. */
+  line-height: 1.75;
+}
+
+/*
+  The floor, applied where the small type actually is.
+
+  A blanket `font-size` on the root would rescale the 3D canvas overlays and the monitor's
+  own layout with it. These are the surfaces that carry Arabic labels below the floor.
+*/
+[dir='rtl'] .guided-footer,
+[dir='rtl'] .guided-footer-btn,
+[dir='rtl'] .step-card-secondary,
+[dir='rtl'] .slider-label,
+[dir='rtl'] .vol-lbl,
+[dir='rtl'] .vol-note,
+[dir='rtl'] .balance-bar-foot,
+[dir='rtl'] .mon-lbl,
+[dir='rtl'] .data-table,
+[dir='rtl'] .weight-row-mass,
+[dir='rtl'] .weight-row-count,
+[dir='rtl'] .legend-item,
+[dir='rtl'] .plot-legend {
+  font-size: 14px;
+}
+
+/*
+  Arabic labels are longer than their English counterparts — "Close the dump valve and
+  start timing" is 34 characters and its Arabic is 33, but "Hint" is four against six —
+  so buttons wrap rather than clip. `min-height` keeps a wrapped row from changing the
+  height of the row beside it.
+*/
+[dir='rtl'] .guided-footer-btn,
+[dir='rtl'] .btn-secondary,
+[dir='rtl'] .btn-primary {
+  white-space: normal;
+  text-align: center;
+  min-height: 34px;
+}
+
+/* Numbers stay left-to-right inside an Arabic line, wherever they appear. */
+[dir='rtl'] .slider-val,
+[dir='rtl'] .step-badge,
+[dir='rtl'] .data-table td {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* The build's own version, quietly, under the monitor's subtitle. */
+.monitor-version {
+  font-size: 10.5px;
+  color: #5c7a82;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
 }

@@ -206,6 +206,17 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
           <p>
             {isAr ? experiment.nameAr : experiment.nameEn} — {deflectorName}
           </p>
+          {/*
+            The version, from `package.json` and nowhere else.
+
+            The printed wall chart says 2.0.0 and Copyright 2022, baked into an atlas it
+            shares with seventeen other primitives — repainting it would repaint the room.
+            So the artwork keeps its number and every version the interface states itself
+            comes from one place; see `vite.config.ts`'s `__APP_VERSION__`.
+          */}
+          <p className="monitor-version" dir="ltr">
+            VL-FM009 · v{__APP_VERSION__}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button

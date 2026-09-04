@@ -145,3 +145,88 @@ export function regionOffset(
     up: ((regionCentreY - canvasCentreY) / Math.max(canvas.height, 1)) * viewHeight,
   };
 }
+
+
+/**
+ * Keeping the camera inside the room.
+ *
+ * ## The defect
+ *
+ * Every guided view is an anchor plus a hand-authored offset, and the offsets were chosen
+ * against the parts they frame rather than against the walls behind them. Step 3 frames the
+ * tank cover from far enough back that the camera ends up *outside* the window — the
+ * apparatus is drawn through glass and a slice of the wall, which reads as a rendering
+ * fault rather than as a camera position.
+ *
+ * ## Why a clamp, and not `CameraControls`
+ *
+ * The brief asks for drei's `CameraControls` with a boundary box. That is a different
+ * controls API — `setLookAt`, its own damping, its own enabled semantics — and the rig here
+ * drives `controls.target` and `controls.enabled` directly through a flight it owns, plus a
+ * second transit mode that frames a moving disc. Swapping the controls means rewriting all
+ * of that, and the boundary is the only part of it that fixes anything.
+ *
+ * So the boundary is applied where the problem is: to the position the rig computes, before
+ * it flies there. `OrbitControls` keeps its own `minDistance`/`maxDistance`/`maxPolarAngle`,
+ * which already bound what a *user* can do; this bounds what a *step* can ask for.
+ *
+ * ## What it does
+ *
+ * Pulls the camera back along the line to its own look-at target until it is inside the
+ * box. Along that line, so the framing is preserved — the subject stays centred and simply
+ * gets nearer. Moving it to the nearest point on the box instead would slide the subject
+ * off to one side.
+ */
+export interface Bounds3 {
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+}
+
+/** How far inside the wall the camera is kept, in metres. A near plane needs room. */
+export const ROOM_MARGIN = 0.25;
+
+const inside = (p: readonly [number, number, number], b: Bounds3, margin: number): boolean =>
+  p[0] >= b.min[0] + margin &&
+  p[0] <= b.max[0] - margin &&
+  p[1] >= b.min[1] + margin &&
+  p[1] <= b.max[1] - margin &&
+  p[2] >= b.min[2] + margin &&
+  p[2] <= b.max[2] - margin;
+
+/**
+ * The camera position, pulled inside `bounds` along the line to `lookAt`.
+ *
+ * Returns `position` unchanged when it is already inside — the common case, and the one
+ * that must cost nothing and change nothing.
+ */
+export function clampToRoom(
+  position: readonly [number, number, number],
+  lookAt: readonly [number, number, number],
+  bounds: Bounds3,
+  margin: number = ROOM_MARGIN
+): [number, number, number] {
+  if (inside(position, bounds, margin)) return [position[0], position[1], position[2]];
+
+  // A bisection on the segment from the target to the camera: the target is the subject and
+  // is inside the room by construction, so there is always an answer between the two. Forty
+  // steps is exact to well under a micrometre over any room this size, and it is a handful
+  // of comparisons run once per step change.
+  let lo = 0; // at the target, inside
+  let hi = 1; // at the camera, outside
+  const at = (t: number): [number, number, number] => [
+    lookAt[0] + (position[0] - lookAt[0]) * t,
+    lookAt[1] + (position[1] - lookAt[1]) * t,
+    lookAt[2] + (position[2] - lookAt[2]) * t,
+  ];
+
+  // If even the target is outside the room there is nothing sensible to pull back to, so
+  // the position is left alone rather than dragged somewhere arbitrary.
+  if (!inside(lookAt, bounds, margin)) return [position[0], position[1], position[2]];
+
+  for (let i = 0; i < 40; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (inside(at(mid), bounds, margin)) lo = mid;
+    else hi = mid;
+  }
+  return at(lo);
+}

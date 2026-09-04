@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import pkg from './package.json' with { type: 'json' };
 
 /**
  * Unit + integration suite (BEDO-002).
@@ -13,6 +14,17 @@ import react from '@vitejs/plugin-react';
  */
 export default defineConfig({
   plugins: [react()],
+  /*
+    The same build-time constants `vite.config.ts` substitutes.
+
+    Declared here too rather than guarded at every use site: `__APP_VERSION__` is a literal
+    the bundler inlines, and a component that has to ask whether it exists would be
+    carrying a runtime branch for the benefit of the test runner alone.
+  */
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_GEN__: JSON.stringify('test'),
+  },
   test: {
     include: ['tests/**/*.spec.{ts,tsx}'],
     exclude: ['tests/e2e/**', 'node_modules/**', 'dist/**'],

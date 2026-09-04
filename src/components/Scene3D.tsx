@@ -11,9 +11,10 @@ import {
 } from './DeviceModel';
 import type { LessonView, SimulationView } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
-import type { AnchorKey } from '../domain/apparatus';
+import { MESH, type AnchorKey } from '../domain/apparatus';
+import { gltfName } from '../lib/gltfNames';
 import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
-import { fitDistance, regionOffset, usableRect } from '../lib/cameraFraming';
+import { clampToRoom, fitDistance, regionOffset, usableRect, type Bounds3 } from '../lib/cameraFraming';
 import { TRANSFER_SECONDS } from '../interaction/transfer';
 import { ROOM_ENV_INTENSITY, captureRoomEnvironment } from '../lib/roomEnvironment';
 import { classifyMaterial } from '../lib/materialFamilies';
@@ -37,6 +38,8 @@ interface Scene3DProps {
   onWeightAvailability: (availability: WeightAvailability) => void;
   /** The volumetric measurement, sampled from the frame loop for the panel. */
   onVolumetricSample: (measurement: VolumetricMeasurement) => void;
+  /** The learner clicked the printed board. */
+  onBoardClick: () => void;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
@@ -261,6 +264,15 @@ const ModelLoadingPlaceholder: React.FC = () => (
 const UP = new THREE.Vector3(0, 1, 0);
 
 const FLIGHT_SECONDS = 1.25;
+
+/**
+ * How long the camera takes to come back to the apparatus after a valve is set.
+ *
+ * Shorter than a step change, because it is not one: the learner has just finished a
+ * gesture and is waiting to see what it did, and 1.25 s of travel between the two reads as
+ * lag. 0.7 s, as the brief asks, on the same ease-in-out.
+ */
+const RETURN_SECONDS = 0.7;
 const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - (-2 * x + 2) ** 3 / 2);
 
 /**
@@ -337,6 +349,28 @@ const CameraRig: React.FC<{
   /** undefined until the first render settles — see below. */
   const lastTarget = useRef<AnchorKey | null | undefined>(undefined);
   const pendingInstall = useRef(false);
+  /**
+   * The laboratory's interior, in world space, measured once.
+   *
+   * Lazy and cached: the walls do not move, and measuring a 10 m shell on every step change
+   * would be a `Box3.setFromObject` over its whole geometry for no reason.
+   */
+  const roomBox = useRef<Bounds3 | null | undefined>(undefined);
+  const roomBounds = useCallback((): Bounds3 | null => {
+    if (roomBox.current !== undefined) return roomBox.current;
+    const walls = groupRef.current?.getObjectByName(gltfName(MESH.roomWalls));
+    if (!walls) {
+      roomBox.current = null;
+      return null;
+    }
+    walls.updateWorldMatrix(true, true);
+    const box = new THREE.Box3().setFromObject(walls);
+    roomBox.current = box.isEmpty()
+      ? null
+      : { min: [box.min.x, box.min.y, box.min.z], max: [box.max.x, box.max.y, box.max.z] };
+    return roomBox.current;
+  }, [groupRef]);
+
   const from = useMemo(() => ({ pos: new THREE.Vector3(), target: new THREE.Vector3() }), []);
   const to = useMemo(() => ({ pos: new THREE.Vector3(), target: new THREE.Vector3() }), []);
   const scratch = useMemo(() => new THREE.Vector3(), []);
@@ -359,6 +393,8 @@ const CameraRig: React.FC<{
     region: { left: number; top: number; width: number; height: number };
   } | null>(null);
   const quat = useMemo(() => new THREE.Quaternion(), []);
+  /** True when the next flight is a return to the apparatus rather than a step change. */
+  const isReturn = useRef(false);
 
   // Fly when the focused part *changes*, not on first paint. Step 1 focuses the cover, so
   // flying on mount snapped the camera to a close-up of the plate and the student never
@@ -369,9 +405,20 @@ const CameraRig: React.FC<{
       lastTarget.current = target;
       return;
     }
+    /*
+      A move back to the apparatus is not a step change.
+
+      Steps 5 and 7 put the camera under the bench at the flow valve, and their own notice
+      then asks the learner to *notice the jet pushing the deflector upward* — which is
+      forty centimetres above the frame they are looking at. The lesson keeps the camera at
+      the valve because the valve is the step's target; the panel says the gesture has
+      finished, and the camera comes back to watch the result.
+    */
+    const wasValve = lastTarget.current === 'flowValve';
     if (target === lastTarget.current) return;
     lastTarget.current = target;
     if (!target || !anchors[target]) return;
+    isReturn.current = wasValve;
     pending.current = true;
   }, [target, sceneHidden, anchors]);
 
@@ -500,7 +547,10 @@ const CameraRig: React.FC<{
     }
 
     if (pending.current) {
-      duration.current = FLIGHT_SECONDS;
+      // A return to the apparatus after a valve gesture is a shorter move than a step
+      // change: the learner is waiting on the result of something they just did.
+      duration.current = isReturn.current ? RETURN_SECONDS : FLIGHT_SECONDS;
+      isReturn.current = false;
       transit.current = null;
       const anchor = target ? anchors[target] : undefined;
       const view = target ? ANCHOR_VIEW[target] : undefined;
@@ -524,6 +574,29 @@ const CameraRig: React.FC<{
           )
         )
       );
+
+      /*
+        Keep the camera inside the laboratory.
+
+        Every guided view is an anchor plus a hand-authored offset, and the offsets were
+        chosen against the parts they frame rather than against the walls behind them —
+        step 3 pulls back far enough to put the camera outside the window, so the apparatus
+        is drawn through glass and a slice of wall. The clamp pulls it back along the line
+        to its own look-at, so the subject stays centred and simply gets nearer; see
+        `clampToRoom`.
+
+        Measured from the room's own interior shell every time, rather than from constants
+        that would have to be kept in step with the model.
+      */
+      const room = roomBounds();
+      if (room) {
+        const clamped = clampToRoom(
+          [to.pos.x, to.pos.y, to.pos.z],
+          [to.target.x, to.target.y, to.target.z],
+          room
+        );
+        to.pos.set(clamped[0], clamped[1], clamped[2]);
+      }
 
       progress.current = 0;
       pending.current = false;
@@ -597,6 +670,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onRemoveWeight,
   onWeightAvailability,
   onVolumetricSample,
+  onBoardClick,
 }) => {
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
@@ -692,6 +766,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onRemoveWeight={onRemoveWeight}
             onWeightAvailability={onWeightAvailability}
             onVolumetricSample={onVolumetricSample}
+            onBoardClick={onBoardClick}
             position={sceneConfig.characterPosition}
             rotation={[
               (sceneConfig.characterRotation[0] * Math.PI) / 180,

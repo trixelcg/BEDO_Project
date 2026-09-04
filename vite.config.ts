@@ -1,4 +1,5 @@
 import { defineConfig, type PreviewServer } from 'vite'
+import pkg from './package.json' with { type: 'json' }
 import react from '@vitejs/plugin-react'
 import { createReadStream, existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -73,6 +74,16 @@ export default defineConfig({
   plugins: [react(), localRuntimeAssets()],
   define: {
     __BUILD_GEN__: JSON.stringify(BUILD_GEN),
+    /*
+      The application's version, from the one file that owns it.
+
+      The printed wall chart carries "2.0.0" and "Copyright 2022" baked into its texture —
+      it shares the `MergedBake_Baked` atlas with seventeen other primitives, so repainting
+      it would repaint the room, and it cannot be corrected in place. What can be corrected
+      is every version the interface states itself, and there is now one source for that:
+      bump `package.json` and the intro screen and the monitor follow.
+    */
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
   build: {
     // Suppress the chunk size warning — large 3D libs are expected

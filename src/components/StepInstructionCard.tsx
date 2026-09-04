@@ -1,5 +1,5 @@
 import React from 'react';
-import { Info } from 'lucide-react';
+import { Info, Lightbulb } from 'lucide-react';
 import type { AnchorKey } from '../domain/apparatus';
 import type { Language, LessonView } from '../types/index';
 
@@ -34,6 +34,8 @@ interface StepInstructionCardProps {
    */
   okInPanel: boolean;
   onOkClick: () => void;
+  /** Light the step's target for a few seconds. */
+  onHint: () => void;
   showAnswerSheet: boolean;
   onOpenAnswerSheet: () => void;
 }
@@ -60,6 +62,7 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
   okVisible,
   okInPanel,
   onOkClick,
+  onHint,
   showAnswerSheet,
   onOpenAnswerSheet,
 }) => {
@@ -88,7 +91,23 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
     .join(isAr ? ' — ' : ' — ');
 
   return (
-    <div className="step-card interactive" data-bedo-step-card>
+    /*
+      The instruction is announced, politely.
+
+      The step changes without anything being focused — a learner opens the tank cover with
+      a pointer and the card silently becomes a different instruction. `aria-live="polite"`
+      is what turns that into something a screen reader says; `polite` rather than
+      `assertive` because it must queue behind the interlock's own `role="alert"` rather
+      than talk over it.
+    */
+    <div
+      className="step-card interactive"
+      data-bedo-step-card
+      role="region"
+      aria-live="polite"
+      aria-atomic="true"
+      aria-label={isAr ? 'الخطوة الحالية' : 'Current step'}
+    >
       <div className="step-card-number">
         {/* Kept as `.step-badge` text: the E2E suite and the harness read "Step n / 11". */}
         <span className="step-badge">
@@ -96,6 +115,37 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
             ? `الخطوة ${lesson.displayNumber} / ${lesson.totalSteps}`
             : `Step ${lesson.displayNumber} / ${lesson.totalSteps}`}
         </span>
+
+        {/*
+          How far through the procedure the learner is.
+
+          The badge already says which step; this says how much is left, which is the
+          question a learner asks at step 4 of something. `aria-hidden` because the badge
+          beside it carries the same fact in words, and a screen reader should hear it once.
+        */}
+        <span className="step-progress" aria-hidden="true">
+          <span
+            className="step-progress-fill"
+            style={{ width: `${(lesson.displayNumber / lesson.totalSteps) * 100}%` }}
+          />
+        </span>
+
+        {/*
+          Hint, rather than a permanent arrow floating over the apparatus.
+
+          It lights the part the step is asking for, using the glow the scene already
+          applies on hover — so nothing is drawn in front of anything and a thumbnail-sized
+          valve lever can be pointed at. See `src/lib/guidance.ts`.
+        */}
+        <button
+          type="button"
+          className="step-hint-btn"
+          onClick={onHint}
+          title={isAr ? 'أضئ الجزء المطلوب' : 'Light up the part this step needs'}
+        >
+          <Lightbulb size={13} aria-hidden="true" />
+          {isAr ? 'تلميح' : 'Hint'}
+        </button>
       </div>
 
       <div className="step-card-body">

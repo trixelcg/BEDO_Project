@@ -52,6 +52,14 @@ import {
   type VolumetricMeasurement,
 } from '../domain/volumetric';
 import { attachSightGauge } from '../lib/sightGauge';
+import {
+  GUIDE_ARROW_ENABLED,
+  HINT_BASE,
+  HINT_SECONDS,
+  HINT_SWING,
+  PULSE_BASE,
+  PULSE_SWING,
+} from '../lib/guidance';
 import { createSpray, type SprayField } from '../lib/waterSpray';
 import { createWaterCircuit, type WaterCircuit } from '../lib/waterCircuit';
 import { attachBoardReadout, type BoardValues } from './boardReadout';
@@ -122,7 +130,18 @@ type Action =
    * `actionableKeys` and `handleHotspot` does nothing with it: the proxy exists only so
    * the part can name itself and its bore on hover (`docs/48 §BEDO-UX-09`).
    */
-  | { kind: 'nozzle' };
+  | { kind: 'nozzle' }
+  /**
+   * The printed wall chart, as a surface you can open.
+   *
+   * The values drawn onto it are registered to the artwork's own boxes and are therefore
+   * the size the artwork drew them — legible standing at the board, unreadable from any
+   * framing that also contains the apparatus. Rather than scale the print up until it
+   * fits the working camera (which would put it out of register with the boxes it sits
+   * in), the board is a thing you go to: clicking it is the same action the toolbar's
+   * Board button already performs, and the readable copy stays the 2D monitor.
+   */
+  | { kind: 'board' };
 
 /** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
 const QUARTER_TURN = Math.PI / 2;
@@ -339,6 +358,8 @@ interface DeviceModelProps {
    * re-render this component — and its several hundred hooks — ten times a second.
    */
   onVolumetricSample: (measurement: VolumetricMeasurement) => void;
+  /** The learner clicked the printed board: take the camera to it. */
+  onBoardClick: () => void;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -379,6 +400,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onRemoveWeight,
   onWeightAvailability,
   onVolumetricSample,
+  onBoardClick,
   position,
   rotation,
   scale,
@@ -558,6 +580,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const deflectionRef = useRef(0);
   /** The part to light up while the pointer is over a drop region, or null. */
   const dropHighlightRef = useRef<string | null>(null);
+  /**
+   * Where a carried deflector would land, if anywhere.
+   *
+   * State rather than a ref because it is drawn: the seat is shown as a hologram while the
+   * disc is in the air, and hidden the rest of the time. It changes on the order of once a
+   * gesture, not once a frame.
+   */
+  const [dropSeat, setDropSeat] = useState<{ centre: THREE.Vector3; radius: number } | null>(
+    null
+  );
+  /** When the current hint stops being lit, on the scene clock. */
+  const hintUntil = useRef(0);
+  const lastHintNonce = useRef(0);
 
   /** Resting Y of each animated part, captured the first time it is touched. */
   const restY = useRef<Record<string, number>>({});
@@ -1780,6 +1815,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // Fitted for the same reason the discs are: it sits inside the tank among parts the
       // learner does aim at, so it must not stand in front of them.
       spot(MESH.nozzle, { kind: 'nozzle' }, 0.02, true),
+      spot(BOARD_MESH, { kind: 'board' }, 0.05, true),
     ];
 
     setHotspots(list.filter((h): h is Hotspot => h !== null));
@@ -1854,6 +1890,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           ? `الفوهة — قطر ${boreMm.toFixed(0)} مم`
           : `Nozzle — ${boreMm.toFixed(0)} mm bore`;
       }
+      if (action.kind === 'board') {
+        return isArabic ? 'اللوحة — اضغط للعرض' : 'Experiment board — click to read';
+      }
       return null;
     },
     [isArabic]
@@ -1906,6 +1945,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
   const handleHotspot = (action: Action) => {
     switch (action.kind) {
+      case 'board':
+        onBoardClick();
+        return;
+
       case 'cover': {
         if (state.isCoverOpen) {
           onCoverClick();
@@ -2727,6 +2770,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // Remembered so the frame loop can light the part the learner is aiming at — the
       // tank while the plate is up and the rod is out of frame, the rod once it is back.
       dropHighlightRef.current = region?.highlight ?? null;
+      /*
+        And drawn, as a hologram at the seat itself.
+
+        Lighting the tank gold said "somewhere in here"; the disc-sized ring says where.
+        It is deliberately not a copy of the deflector: a solid gold disc floating at the
+        seat reads as a second real object the learner has to account for, which is the
+        complaint. A translucent pulsing ring cannot be mistaken for a part.
+      */
+      const centre = region ? region.box.getCenter(new THREE.Vector3()) : null;
+      const size = region ? region.box.getSize(new THREE.Vector3()) : null;
+      setDropSeat(
+        centre && size
+          ? { centre, radius: Math.max(Math.min(size.x, size.z) * 0.34, 0.012) }
+          : null
+      );
       return region !== null;
     },
 
@@ -2745,6 +2803,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     },
 
     onRelease: (session: DragSession, outcome: DropOutcome) => {
+      // However a gesture ends — dropped, refused, cancelled — the seat stops being shown.
+      setDropSeat(null);
       dropHighlightRef.current = null;
       const ghost = ghostsRef.current.find((g) => g.followsPointer);
       if (!ghost) return;
@@ -3072,11 +3132,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       }
     });
 
-    // Enough to read as "click me", not enough to repaint the part blue.
-    const pulse = Math.sin(t * 5.0) * 0.12 + 0.26;
+    /*
+      Enough to read as "click me", not enough to repaint the part blue — and, for a few
+      seconds after the learner asks for a hint, enough to find across the room.
+
+      The hint is the same mechanism turned up rather than a second one: no outline pass,
+      no overlay, no arrow to position. It is armed by `lesson.hintNonce`, which the panel
+      bumps when Hint is pressed and again after twenty seconds of nothing happening.
+    */
+    if (lesson.hintNonce !== lastHintNonce.current) {
+      lastHintNonce.current = lesson.hintNonce;
+      hintUntil.current = t + HINT_SECONDS;
+    }
+    const hinting = t < hintUntil.current;
+    const pulse = hinting
+      ? Math.sin(t * 9.0) * HINT_SWING + HINT_BASE
+      : Math.sin(t * 5.0) * PULSE_SWING + PULSE_BASE;
     wanted.forEach((key) => {
       highlighted.current.add(key);
-      setGlow(key, key === hoveredKey ? 0.7 : pulse);
+      setGlow(key, key === hoveredKey && !hinting ? 0.7 : pulse);
     });
 
     // --- Unscrew / re-seat sequence -------------------------------------------
@@ -3682,7 +3756,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
       })()}
 
-      {arrowPos && (
+      {/*
+        Where a carried deflector would land.
+
+        Semi-transparent and pulsing, per the brief's §4.6: a placement target has to be
+        unmistakably *not* an object. The gold glow it replaces lit the whole tank, which
+        answered "is this a valid drop" without answering "where does it go".
+      */}
+      {dropSeat && <PlacementGhost centre={dropSeat.centre} radius={dropSeat.radius} />}
+
+      {GUIDE_ARROW_ENABLED && arrowPos && (
         <group ref={arrowGroupRef} position={arrowPos}>
           <mesh position={[0, 0.055, 0]}>
             <cylinderGeometry args={[0.006, 0.006, 0.07, 12]} />
@@ -3798,3 +3881,67 @@ useGLTF.preload(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2);
 // loads the content-addressed one gives the two different cache keys, so every plume
 // was fetched twice in production — 8 redundant GLB requests per page load.
 Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(assetUrl(s.url)));
+
+/**
+ * A placement target, drawn as a hologram rather than as a thing.
+ *
+ * Two concentric rings and a faint disc, all additive and all pulsing together between
+ * 0.35 and 0.55 opacity as the brief specifies. `depthWrite: false` so it never occludes
+ * the apparatus behind it, and `toneMapped: false` so it keeps its brightness through ACES
+ * — a target that dims with the room is a target the learner loses.
+ */
+const PlacementGhost: React.FC<{ centre: THREE.Vector3; radius: number }> = ({
+  centre,
+  radius,
+}) => {
+  const ref = useRef<THREE.Group>(null);
+
+  useFrame((three) => {
+    const group = ref.current;
+    if (!group) return;
+    const pulse = 0.45 + 0.1 * Math.sin(three.clock.getElapsedTime() * 4.2);
+    group.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      const material = mesh.material as THREE.MeshBasicMaterial | undefined;
+      if (material?.isMaterial) material.opacity = pulse * (mesh.userData.weight ?? 1);
+    });
+  });
+
+  return (
+    <group ref={ref} position={centre} rotation={[-Math.PI / 2, 0, 0]}>
+      <mesh userData={{ weight: 1 }}>
+        <ringGeometry args={[radius * 0.92, radius, 40]} />
+        <meshBasicMaterial
+          color={GUIDANCE_HIGHLIGHT}
+          transparent
+          opacity={0.5}
+          depthWrite={false}
+          toneMapped={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh userData={{ weight: 0.7 }}>
+        <ringGeometry args={[radius * 0.55, radius * 0.62, 32]} />
+        <meshBasicMaterial
+          color={GUIDANCE_HIGHLIGHT}
+          transparent
+          opacity={0.35}
+          depthWrite={false}
+          toneMapped={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <mesh userData={{ weight: 0.22 }}>
+        <circleGeometry args={[radius * 0.92, 40]} />
+        <meshBasicMaterial
+          color={GUIDANCE_HIGHLIGHT}
+          transparent
+          opacity={0.12}
+          depthWrite={false}
+          toneMapped={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
+  );
+};

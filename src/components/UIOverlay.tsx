@@ -32,6 +32,7 @@ import {
 } from '../domain/volumetric';
 import { markReady } from '../lib/readiness';
 import { StepInstructionCard } from './StepInstructionCard';
+import { Modal } from './Modal';
 import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
 import { flowRateLMin } from '../domain/physics';
 import { PUMP_FLOW_RANGE_L_MIN } from '../domain/physicsConfig';
@@ -75,6 +76,8 @@ interface UIOverlayProps {
   onCoverClick: () => void;
   /** False while the intro panel is up: the guided dock must not show behind it. */
   started: boolean;
+  /** The worksheet overlay is on screen, so the HUD stands down with the others. */
+  showAnswerSheetOverlay: boolean;
   onToggleMonitor: () => void;
   /** The camera is parked at the printed board. */
   boardView: boolean;
@@ -83,6 +86,8 @@ interface UIOverlayProps {
   clearWarning: () => void;
   clearNotice: () => void;
   onOkClick: () => void;
+  /** Light the step's target for a few seconds. */
+  onHint: () => void;
   onOpenAnswerSheet: () => void;
 }
 
@@ -108,6 +113,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onToggleVolumetricValve,
   onCoverClick,
   started,
+  showAnswerSheetOverlay,
   onToggleMonitor,
   boardView,
   onToggleBoardView,
@@ -115,6 +121,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   clearWarning,
   clearNotice,
   onOkClick,
+  onHint,
   onOpenAnswerSheet,
 }) => {
   const [showVideo, setShowVideo] = useState(false);
@@ -179,6 +186,15 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   const show = (control: PanelControl) => !guided || lesson.panelControls.includes(control);
 
   const okVisible = lesson.canConfirm;
+
+  /**
+   * Is a full-surface overlay on screen?
+   *
+   * The video is this component's own; the monitor, the board view and the answer sheet are
+   * the app's. The docked monitor counts too — it takes a column beside the apparatus and
+   * the footer runs underneath it.
+   */
+  const overlayOpen = showVideo || boardView || state.showMonitor || showAnswerSheetOverlay;
 
   /**
    * The step's confirm lives in the weights panel, as "Record reading".
@@ -450,7 +466,20 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
       box and the live figures are all behind them. The global row stays, because that is
       where `Back to Step` lives.
     */
-    <div className={`ui-container ${isAr ? 'rtl' : ''}${boardView ? ' is-board-view' : ''}`}>
+    /*
+      The HUD stands down whenever an overlay is up.
+
+      The bottom toolbar sat over the Board view's own "Back to Step" and over the
+      readings row of the monitor docked beside it — the controls a learner reaches for
+      *because* an overlay is open were the ones it covered. One class, so a new overlay
+      cannot forget to do it: `overlayOpen` is every full-surface thing the app can put on
+      screen, and `.ui-container.has-overlay` hides the dock and the footer.
+    */
+    <div
+      className={`ui-container ${isAr ? 'rtl' : ''}${boardView ? ' is-board-view' : ''}${
+        overlayOpen ? ' has-overlay' : ''
+      }`}
+    >
       {/* Blocking guard from the state machine */}
       {warningMessage && (
         // `role="alert"` because this is the interlock's only feedback. A refused action —
@@ -841,6 +870,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 language={state.language}
                 okVisible={okVisible}
                 okInPanel={recordInPanel}
+                onHint={onHint}
                 onOkClick={onOkClick}
                 showAnswerSheet={show('answerSheet')}
                 onOpenAnswerSheet={onOpenAnswerSheet}
@@ -961,44 +991,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
       )}
 
 
-      {showVideo && (
-        <div
-          className="monitor-fullscreen"
-          style={{
-            zIndex: 1000,
-            background: 'rgba(20, 21, 23, 0.98)',
-            backdropFilter: 'blur(20px)',
-            padding: 24,
-          }}
-        >
-          <div className="monitor-header" style={{ marginBottom: 16, paddingBottom: 16 }}>
-            <div className="monitor-title-group">
-              <h1>{isAr ? 'فيديو توضيحي للتجربة' : 'Experiment Walkthrough Video'}</h1>
-            </div>
-            <button className="btn-secondary" onClick={() => setShowVideo(false)}>
-              {isAr ? 'إغلاق' : 'Close'}
-            </button>
-          </div>
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              background: '#000',
-              borderRadius: 16,
-              overflow: 'hidden',
-            }}
-          >
-            <video
-              src="/Bedo_Mesu_J.mp4"
-              controls
-              autoPlay
-              style={{ width: '100%', height: '100%', maxHeight: '72vh', objectFit: 'contain' }}
-            />
-          </div>
-        </div>
-      )}
+      {showVideo && <VideoModal isAr={isAr} onClose={() => setShowVideo(false)} />}
     </div>
   );
 };
@@ -1180,6 +1173,57 @@ const VolumetricReadout: React.FC<{
     </div>
   );
 };
+
+/**
+ * The walkthrough video.
+ *
+ * A native `<video>` in a dialog that can actually be dismissed. It used to render inside
+ * `.ui-container` — which withholds pointer events from anything not marked `interactive` —
+ * so its Close button took no clicks and there was no Escape handler either: the modal was
+ * a trap (`docs/28 §11`). `Modal` owns Escape, the focus trap and the restore.
+ *
+ * Captions are declared for both languages and default to the interface language. The
+ * tracks are not in the repository — nothing has supplied them — so the browser offers the
+ * control and finds nothing, which is the honest state: the player is ready for them. When
+ * they arrive they are two files and no code.
+ */
+const VideoModal: React.FC<{ isAr: boolean; onClose: () => void }> = ({ isAr, onClose }) => (
+  <Modal
+    title={isAr ? 'فيديو توضيحي للتجربة' : 'Experiment Walkthrough Video'}
+    onClose={onClose}
+    isAr={isAr}
+    data-testid="video-modal"
+  >
+    <div className="video-stage">
+      <video
+        src="/Bedo_Mesu_J.mp4"
+        poster="/bedo-logo-dark.png"
+        controls
+        // Not autoplaying. A dialog that starts making noise as it opens is what the
+        // "press SPACE to continue" player was disliked for, and autoplay with sound is
+        // blocked by every browser in any case.
+        preload="metadata"
+        playsInline
+        crossOrigin="anonymous"
+      >
+        <track
+          kind="captions"
+          srcLang="en"
+          label="English"
+          src="/captions/walkthrough.en.vtt"
+          default={!isAr}
+        />
+        <track
+          kind="captions"
+          srcLang="ar"
+          label="العربية"
+          src="/captions/walkthrough.ar.vtt"
+          default={isAr}
+        />
+      </video>
+    </div>
+  </Modal>
+);
 
 const getFactor = (list: DeflectorDef[], id: number) =>
   list.find((d) => d.id === id)?.momentumFactor.toFixed(3) ?? '—';

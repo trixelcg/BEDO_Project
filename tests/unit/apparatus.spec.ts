@@ -203,6 +203,7 @@ describe('mesh name table', () => {
         'powerLight',
         'powerSwitch',
         'rod',
+        'roomWalls',
         'screws',
         'sightGaugePlate',
         'sightGaugeWindow',

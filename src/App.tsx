@@ -36,6 +36,10 @@ import {
 } from './interaction/gate';
 import { FIRST_READING_VALVE, VALVE_SNAP_MARGIN } from './domain/physics';
 import { emptyMeasurement, type VolumetricMeasurement } from './domain/volumetric';
+import { IDLE_HINT_SECONDS } from './lib/guidance';
+
+/** How long the flow valve must be still before the camera returns to the apparatus. */
+const VALVE_SETTLE_MS = 900;
 import './index.css';
 
 /**
@@ -377,6 +381,7 @@ export default function App() {
         }
       }
 
+      lastActivity.current = Date.now();
       setUi((prev) => ({ ...prev, warningMessage: null }));
       if (expectation) {
         // The runner reads the state *after* the command, which is why this is not done
@@ -457,12 +462,41 @@ export default function App() {
    * value. Snapping only ever raises an opening that is already near the setpoint, so
    * gating the snapped value is identical to gating the raw one.
    */
+  /**
+   * The camera comes back to the apparatus once the valve has settled.
+   *
+   * Steps 5 and 7 frame the flow valve, under the bench — and then their own observation
+   * asks the learner to notice the jet pushing the deflector upward, which is out of that
+   * frame entirely. Rather than widen the framing (which would make the valve too small to
+   * aim at) or split the screen, the camera follows the gesture: down to the valve to set
+   * it, back up to the deflector to see what it did.
+   *
+   * Debounced on the last change rather than bound to a pointer release, because the slider
+   * is driven by `change` events from the keyboard as well as the mouse and a keyboard user
+   * has no release to bind to.
+   */
+  const valveSettleTimer = useRef<number | null>(null);
+  const [valveSettled, setValveSettled] = useState(false);
+
   const handleSetValve = (value: number) => {
     const setpoint = currentSetpoint();
     const opening =
       setpoint !== null && value >= setpoint - VALVE_SNAP_MARGIN ? setpoint : value;
-    act({ type: 'SET_VALVE', opening }, 'SET_VALVE');
+    if (!act({ type: 'SET_VALVE', opening }, 'SET_VALVE')) return;
+
+    setValveSettled(false);
+    if (valveSettleTimer.current !== null) window.clearTimeout(valveSettleTimer.current);
+    valveSettleTimer.current = window.setTimeout(
+      () => setValveSettled(true),
+      VALVE_SETTLE_MS
+    );
   };
+
+  // A step change re-arms it: the next flow step starts at the valve again.
+  useEffect(() => {
+    setValveSettled(false);
+    if (valveSettleTimer.current !== null) window.clearTimeout(valveSettleTimer.current);
+  }, [lessonState.currentStepId]);
 
   const handleFlowValveClick = () => handleSetValve(currentSetpoint() ?? FIRST_READING_VALVE);
 
@@ -496,6 +530,31 @@ export default function App() {
    * arithmetic is `src/domain/volumetric.ts`.
    */
   const [volumetric, setVolumetric] = useState<VolumetricMeasurement>(emptyMeasurement);
+
+  /**
+   * Hints: asked for, or offered after a stall.
+   *
+   * `hintNonce` is the event the scene watches. `lastActivity` is bumped by every
+   * interaction that reaches `interact`, and the timer below turns twenty seconds of
+   * silence into one hint — once, not once a second, because it re-arms only when
+   * something happens.
+   */
+  const [hintNonce, setHintNonce] = useState(0);
+  const lastActivity = useRef(Date.now());
+  const askForHint = useCallback(() => {
+    lastActivity.current = Date.now();
+    setHintNonce((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!hasStarted) return;
+    const id = window.setInterval(() => {
+      if (Date.now() - lastActivity.current < IDLE_HINT_SECONDS * 1000) return;
+      lastActivity.current = Date.now();
+      setHintNonce((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [hasStarted]);
 
   const handleAddWeight = (weight: number) => {
     if (!weights.canAdd) return;
@@ -695,7 +754,10 @@ export default function App() {
       cameraView: ui.boardView
         ? 'board'
         : isGuided
-          ? (currentStep.cameraView ?? currentStep.target)
+          ? valveSettled && currentStep.target === 'flowValve'
+            ? // The gesture is finished; go and watch what it did.
+              'pointer'
+            : (currentStep.cameraView ?? currentStep.target)
           : null,
       isSatisfied: runner.isSatisfied(context),
       canConfirm: runner.canConfirm(context),
@@ -713,6 +775,7 @@ export default function App() {
       // during that step; the fallback covers the one who just presses OK.
       hasInstalledDeflector: ui.deflectorInstalled || runner.hasCompleted('install-deflector'),
       runId: ui.runId,
+      hintNonce,
       readingsTaken: readings.length,
       recordsReading:
         currentStep.onComplete?.some((c) => c.type === 'RECORD_READING') === true,
@@ -733,6 +796,8 @@ export default function App() {
       // The Board view overrides `cameraView`; without this the memo keeps handing the
       // rig the step's own framing and the camera never leaves it.
       ui.boardView,
+      hintNonce,
+      valveSettled,
       readings,
       simulation,
       lessonState.isComplete,
@@ -800,6 +865,9 @@ export default function App() {
           onRemoveWeight={handleRemoveWeight}
           onWeightAvailability={setWeights}
           onVolumetricSample={setVolumetric}
+          onBoardClick={() => {
+            if (!ui.boardView) handleToggleBoardView();
+          }}
         />
 
         <UIOverlay
@@ -828,12 +896,14 @@ export default function App() {
           onTogglePower={handleTogglePower}
           onCoverClick={handleCoverClick}
           started={hasStarted}
+          showAnswerSheetOverlay={ui.showAnswerSheet}
           onToggleVolumetricValve={handleToggleVolumetricValve}
           onToggleMonitor={handleToggleMonitor}
           onReset={handleReset}
           clearWarning={clearWarning}
           clearNotice={clearNotice}
           onOkClick={handleStepOkClick}
+          onHint={askForHint}
           onOpenAnswerSheet={handleOpenAnswerSheet}
         />
 

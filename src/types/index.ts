@@ -94,6 +94,14 @@ export interface LessonView {
    * read without following a step number (`BEDO-021 §23`).
    */
   runId: number;
+  /**
+   * Bumped whenever a hint is asked for — by the Hint button, or by twenty seconds of
+   * nothing happening. The scene lights the step's target for a few seconds each time.
+   *
+   * A counter rather than a boolean because the *event* is what matters: pressing Hint
+   * twice should light it twice, and a flag that is already true says nothing happened.
+   */
+  hintNonce: number;
   /** How many readings the student has recorded. */
   readingsTaken: number;
   /**

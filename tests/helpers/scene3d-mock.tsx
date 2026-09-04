@@ -42,6 +42,8 @@ interface MockProps {
   onVolumetricValveClick: () => void;
   onAddWeight: (grams: number) => void;
   onRemoveWeight: (index: number) => void;
+  /** The printed wall chart, clickable in the real scene since BEDO-UX-19. */
+  onBoardClick: () => void;
 }
 
 export const Scene3D: React.FC<MockProps> = ({
@@ -54,6 +56,7 @@ export const Scene3D: React.FC<MockProps> = ({
   onVolumetricValveClick,
   onAddWeight,
   onRemoveWeight,
+  onBoardClick,
 }) => {
   // This double stands in for a scene that has finished loading, so it reaches the same
   // milestone the real `DeviceModel` reaches once the apparatus is in the scene graph.
@@ -75,6 +78,9 @@ export const Scene3D: React.FC<MockProps> = ({
     </button>
     <button data-testid="scene-volumetric-valve" onClick={onVolumetricValveClick}>
       volumetric valve
+    </button>
+    <button data-testid="scene-board" onClick={onBoardClick}>
+      experiment board
     </button>
     {DEFLECTORS.map((d) => (
       <button

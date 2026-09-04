@@ -57,11 +57,12 @@ describe('the production model resolves every name the runtime uses', () => {
     expect(exposed.has(wanted), describeMissing(label, authored, wanted, exposed)).toBe(true);
   });
 
-  it('resolves all 36 contract names, so the count itself cannot drift unnoticed', () => {
+  it('resolves all 37 contract names, so the count itself cannot drift unnoticed', () => {
     const names = contract();
-    // 17 MESH entries + 7 shelves + 7 installed + 5 weight discs. The three added by
-    // BEDO-WATER-16 are the sight gauge's two plates and the bench sink.
-    expect(names).toHaveLength(36);
+    // 18 MESH entries + 7 shelves + 7 installed + 5 weight discs. Three were added by
+    // BEDO-WATER-16 (the sight gauge's two plates and the bench sink) and one by the
+    // camera bounds (the room's interior walls).
+    expect(names).toHaveLength(37);
     const missing = names.filter(({ authored }) => !exposed.has(gltfName(authored)));
     expect(missing.map((m) => `${m.label} -> ${m.authored}`)).toEqual([]);
   });
