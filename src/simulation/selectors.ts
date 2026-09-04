@@ -19,7 +19,6 @@ import {
   type RecordRow,
 } from '../domain/physics';
 import { gramsToNewtons } from '../domain/units';
-import { ROW_VALVE_SETTINGS } from '../domain/physics';
 import { getExperiment } from '../domain/experiments';
 import type { DeflectorDef } from '../domain/apparatus';
 import { deflectorsFor } from '../domain/experiments';
@@ -27,29 +26,26 @@ import { getDeflector } from '../domain/apparatus';
 import type { SimulationState } from './state';
 
 /**
- * The four rows of the results table.
+ * The results table: one row per reading the student recorded, and nothing else.
  *
- * Each row is computed at its own fixed valve setting. The row being balanced follows the
- * tray; rows already taken show what they were balanced with; rows not yet reached are
- * empty.
+ * It used to map `ROW_VALVE_SETTINGS` — four rows that existed whether or not anyone had
+ * taken them. That produced the monitor's zero row and its 43.457 L/min row with no mass
+ * against it, and it is why the row being balanced moved as discs landed on the tray.
+ * Rows now come from `state.recordedReadings`, which only `RECORD_READING` writes to.
+ *
+ * Still derived: the reading stores its inputs and this recomputes Q, the velocities and
+ * the forces, so the table and the live panel are the same arithmetic.
  */
 export function selectReadings(state: SimulationState): RecordRow[] {
-  return ROW_VALVE_SETTINGS.map((valveOpening, index) => {
-    const weightsG =
-      index === state.activeReadingIndex
-        ? state.apparatus.loadedWeightsG
-        : index < state.committedReadingCount
-          ? (state.committedWeightsG[index] ?? [])
-          : [];
-
-    return computeRow(
+  return state.recordedReadings.map((reading, index) =>
+    computeRow(
       index,
-      valveOpening,
-      state.apparatus.selectedDeflectorId,
-      [...weightsG],
-      state.pumpFlowLMin
-    );
-  });
+      reading.valveOpening,
+      reading.deflectorId,
+      [...reading.loadedWeightsG],
+      reading.pumpFlowLMin
+    )
+  );
 }
 
 /**
@@ -84,17 +80,49 @@ export const selectLiveReadout = (state: SimulationState): LiveReadout => {
   };
 };
 
-/** The row the student is balancing right now, if any. */
-export const selectActiveReading = (state: SimulationState): RecordRow | undefined =>
-  state.activeReadingIndex === null
-    ? undefined
-    : selectReadings(state)[state.activeReadingIndex];
+/**
+ * The rig as one results row, right now — the row a `RECORD_READING` would write.
+ *
+ * This is what the balance indicator, the add/remove hint and the Record button all read.
+ * It is deliberately not a table row: nothing about it is recorded, and it changes with
+ * every disc and every turn of the valve.
+ */
+export const selectLiveRow = (state: SimulationState): RecordRow =>
+  computeRow(
+    state.recordedReadings.length,
+    state.apparatus.valveOpening,
+    state.apparatus.selectedDeflectorId,
+    [...state.apparatus.loadedWeightsG],
+    state.pumpFlowLMin
+  );
 
-/** How many of the two student readings carry weights — the "n / 2" the panel shows. */
+/**
+ * How many readings have been recorded — the "n / 2" the panel shows.
+ *
+ * Now simply a length. It used to count table rows carrying any mass at all, which is why
+ * it reached 2 / 2 while the panel beside it still read "Unbalanced".
+ */
 export const selectReadingsTaken = (state: SimulationState): number =>
-  selectReadings(state).filter((row, index) => index > 0 && row.loadedMassG > 0).length;
+  state.recordedReadings.length;
 
-/** Total mass on the tray, in grams. */
+/**
+ * Whether a reading may be taken right now.
+ *
+ * The same condition the runtime enforces, exposed so a control can be disabled rather
+ * than silently do nothing. The runtime remains the authority; this is the UI reading it.
+ */
+export const selectCanRecordReading = (state: SimulationState): boolean =>
+  selectLiveRow(state).isBalanced;
+
+/**
+ * Total mass on the tray, in grams.
+ *
+ * **The single authority for "Total Weight".** The board, the software monitor and the
+ * step panel all read this one selector. They used to each sum something of their own:
+ * the monitor summed the table's `loadedMassG` — which answers "how much have all the
+ * readings together carried" — and reported 0 g in free mode with a fully loaded tray,
+ * while the row beside it said 250 g.
+ */
 export const selectLoadedMassG = (state: SimulationState): number =>
   state.apparatus.loadedWeightsG.reduce((total, massG) => total + massG, 0);
 

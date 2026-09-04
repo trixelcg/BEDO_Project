@@ -20,7 +20,24 @@ import { buildStubGlb } from './stub-model';
  */
 export const sidebar = (page: Page) => page.locator('.ui-container');
 export const stepBadge = (page: Page) => page.locator('.step-badge');
-export const okButton = (page: Page) => page.locator('.ok-confirm-btn');
+/**
+ * The control that finishes the current step.
+ *
+ * On a balance step that is the weights panel's enabled "Record reading" rather than the
+ * card's OK — confirming the step is recording the reading, and there is one button for it.
+ */
+export const okButton = (page: Page) =>
+  page.locator('.ok-confirm-btn, .weights-actions .btn-primary:not([disabled])');
+
+/**
+ * The mass on the pan, read from its own attribute.
+ *
+ * Matching the visible "80 g" stopped being unambiguous once the weights panel gained a
+ * fixed row per denomination — "50 g" is now also the label of a row. The attribute is the
+ * value `selectLoadedMassG` produced, wherever it happens to be rendered.
+ */
+export const panMassG = async (page: Page): Promise<number> =>
+  Number(await page.locator('[data-bedo-loaded-weight]').first().getAttribute('data-bedo-loaded-weight'));
 export const popup = (page: Page) => page.locator('.warning-popup');
 export const button = (page: Page, name: string | RegExp): Locator =>
   page.getByRole('button', { name });

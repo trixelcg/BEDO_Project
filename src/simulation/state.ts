@@ -25,6 +25,26 @@ import type { ExperimentId } from '../domain/experiments';
 import { getExperiment } from '../domain/experiments';
 import { TOTAL_FLOW_L_MIN } from '../domain/physics';
 
+/**
+ * One reading, as the student took it.
+ *
+ * **Inputs only.** Q, the velocities, F_th and F_ac are not stored, because storing them
+ * would be storing the physics twice — `computeRow` derives every one of them from these
+ * four fields whenever the table is drawn. That is also what makes a recorded reading
+ * survive a change of force model: flipping `PHYSICS_MODEL` re-derives the row rather
+ * than leaving a stale number behind.
+ */
+export interface RecordedReading {
+  /** The valve opening the reading was taken at. */
+  readonly valveOpening: number;
+  /** The deflector on the rod at the time. */
+  readonly deflectorId: number;
+  /** Pump delivery at the time. */
+  readonly pumpFlowLMin: number;
+  /** What was on the tray, disc by disc, in grams. */
+  readonly loadedWeightsG: readonly number[];
+}
+
 export interface SimulationState {
   /** The rig: cover, power, valve, volumetric valve, deflector, tray. Owned by the state machine. */
   readonly apparatus: ApparatusState;
@@ -36,18 +56,18 @@ export interface SimulationState {
   readonly pumpFlowLMin: number;
 
   /**
-   * The results row currently being balanced, or null between readings.
+   * The readings the student has actually recorded, in the order they were taken.
    *
-   * While a reading is active its row shows the live tray; the moment it ends, whatever
-   * was on the tray is committed to `committedWeightsG` and stops moving.
+   * **The whole results table, and nothing else.** It used to be `activeReadingIndex` plus
+   * `committedReadingCount` plus `committedWeightsG`, over a table whose four rows were
+   * generated from `ROW_VALVE_SETTINGS` whether or not anyone had been there. That is
+   * where the monitor's zero row and its phantom 43.457 L/min row came from, and why the
+   * "recorded readings" counter climbed while the tray was still being loaded: the row
+   * being balanced *was* a table row, so it counted the moment a disc landed on it.
+   *
+   * A row exists here because `RECORD_READING` was dispatched, and for no other reason.
    */
-  readonly activeReadingIndex: number | null;
-
-  /** How many rows have been taken. Rows below this show their committed weights. */
-  readonly committedReadingCount: number;
-
-  /** The weights each finished reading was balanced with, by row index, in grams. */
-  readonly committedWeightsG: readonly (readonly number[])[];
+  readonly recordedReadings: readonly RecordedReading[];
 
   /** F_ac appears in the table only once the student has pressed Calculate. */
   readonly isActualForceRecorded: boolean;
@@ -67,9 +87,7 @@ export const createInitialSimulationState = (
     apparatus: restingState(getExperiment(experimentId).defaultAngle),
     experimentId,
     pumpFlowLMin,
-    activeReadingIndex: null,
-    committedReadingCount: 0,
-    committedWeightsG: [],
+    recordedReadings: [],
     isActualForceRecorded: false,
   });
 
@@ -83,7 +101,10 @@ export const createInitialSimulationState = (
 export function freezeSimulationState(state: SimulationState): SimulationState {
   Object.freeze(state.apparatus);
   Object.freeze(state.apparatus.loadedWeightsG);
-  state.committedWeightsG.forEach((row) => Object.freeze(row));
-  Object.freeze(state.committedWeightsG);
+  state.recordedReadings.forEach((reading) => {
+    Object.freeze(reading.loadedWeightsG);
+    Object.freeze(reading);
+  });
+  Object.freeze(state.recordedReadings);
   return Object.freeze(state);
 }

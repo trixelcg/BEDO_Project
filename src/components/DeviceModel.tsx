@@ -2026,12 +2026,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       theoreticalForceN: state.live.theoreticalForceN,
       loadedMassG: state.live.loadedMassG,
       measuredForceN: state.live.measuredForceN,
-      // Rows 1 and 2 of the printed table are the two student readings; the results
-      // array's index 0 is the zero-flow baseline the procedure does not record.
-      rows: state.recordedRows.slice(1, 3).map((r) => ({
-        // The reading exists once the learner has balanced it — the same test the software
-        // board's own row filter uses.
-        recorded: r.loadedMassG > 0,
+      // The printed table has two rows and the procedure takes two readings. Every row in
+      // `recordedRows` was recorded — that is now the only way one exists — so there is no
+      // longer a filter here deciding which of four generated rows count.
+      rows: state.recordedRows.slice(0, 2).map((r) => ({
+        recorded: true,
         flowLMin: r.flowRateLMin,
         flowM3S: r.flowRateM3S,
         nozzleVelocity: r.nozzleVelocityMS,

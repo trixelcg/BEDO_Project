@@ -63,7 +63,7 @@ test.describe('the tray discs answer for themselves', () => {
    * lands, so the marker is satisfied before anything has begun.
    */
   async function trayReady(page: Page): Promise<void> {
-    const clear = button(page, /Clear all weights/i);
+    const clear = button(page, /Clear pan/i);
     if (await clear.count()) await clear.click();
     await page.waitForFunction(
       () =>

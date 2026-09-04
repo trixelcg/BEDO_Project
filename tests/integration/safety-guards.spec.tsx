@@ -53,7 +53,7 @@ describe('error 1 — no weights while the tank is open', () => {
     openCover();
     expect(coverState()).toBe('Open');
 
-    click('+50g');
+    click('Add 50 g');
 
     expect(warningText()).toBe('You can’t add weights while the tank is open.');
     expect(loadedWeightG()).toBe(0);
@@ -67,7 +67,7 @@ describe('error 1 — no weights while the tank is open', () => {
   });
 
   it('accepts the weight once the tank is closed', () => {
-    click('+50g');
+    click('Add 50 g');
     expect(warning()).toBeNull();
     expect(loadedWeightG()).toBe(50);
   });
@@ -163,7 +163,7 @@ describe('error 4 — the pump stays off while the tank is open', () => {
 
 describe('error 5 — weights come off before the tank is opened', () => {
   it('refuses to open the cover while the tray is loaded', () => {
-    click('+100g');
+    click('Add 100 g');
     expect(loadedWeightG()).toBe(100);
 
     openCover();
@@ -174,10 +174,10 @@ describe('error 5 — weights come off before the tank is opened', () => {
   });
 
   it('opens once the tray is cleared', () => {
-    click('+100g');
+    click('Add 100 g');
     openCover();
     dismissPopup();
-    click('Clear all weights');
+    click('Clear pan');
 
     openCover();
 
@@ -189,7 +189,7 @@ describe('error 5 — weights come off before the tank is opened', () => {
 describe('guard precedence and behaviour', () => {
   it('reports the running pump before the loaded tray', () => {
     // Both conditions hold; App checks power first, and the message must match.
-    click('+100g');
+    click('Add 100 g');
     click(/Turn On Pump/);
 
     openCover();
@@ -210,7 +210,7 @@ describe('guard precedence and behaviour', () => {
 
   it('is dismissible, and dismissing it changes nothing else', () => {
     openCover();
-    click('+50g');
+    click('Add 50 g');
     expect(warning()).not.toBeNull();
 
     dismissPopup();

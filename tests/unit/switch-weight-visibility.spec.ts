@@ -300,19 +300,13 @@ describe('a loaded disc is visible because it is loaded, and for no other reason
     expect(deviceModel()).toMatch(/key: `\$\{idx\}-\$\{grams\}`/);
   });
 
-  it('is cleared only by the runtime, and the lesson is the only thing that clears it', () => {
-    // The measured cause of the reported "disappearance": the canonical lesson ends each
-    // reading step with REMOVE_ALL_WEIGHTS, so the pan empties as the camera flies to the
-    // next step. That is the lesson's own specification, not a rendering fault — recorded
-    // here so the coupling is visible rather than surprising. See `docs/42 §7`.
+  it('is never cleared by a step completing — the pan is cumulative', () => {
+    // The measured cause of the reported "disappearance" used to be here: the canonical
+    // lesson ended each reading step with REMOVE_ALL_WEIGHTS, so the pan emptied as the
+    // camera flew to the next step. On the apparatus the discs stay on and the student
+    // adds more, so no step clears the pan; Reset and loading another sheet do.
+    // See `docs/42 §7`.
     const lesson = readFileSync(path.join(REPO_ROOT, 'src/lesson/currentLesson.ts'), 'utf8');
-    const clears = [...lesson.matchAll(/REMOVE_ALL_WEIGHTS/g)];
-    expect(clears).toHaveLength(2);
-    for (const id of ['balance-reading-1', 'balance-reading-2']) {
-      const step = lesson.slice(lesson.indexOf(id), lesson.indexOf(id) + 700);
-      expect(step, `${id} should tidy the pan when it completes`).toMatch(
-        /onComplete:[\s\S]*REMOVE_ALL_WEIGHTS/
-      );
-    }
+    expect([...lesson.matchAll(/REMOVE_ALL_WEIGHTS/g)]).toHaveLength(0);
   });
 });

@@ -3,6 +3,7 @@ import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOTAL_STEPS } from '../../src/domain/experiments';
 import {
+  balanceHint,
   click,
   clickMesh,
   coverState,
@@ -78,24 +79,25 @@ describe('the guided lesson', () => {
   it('records exactly the two readings the student balanced', () => {
     walk(1, 10);
 
+    // Two rows, because two readings were recorded. It used to be four: a zero row and an
+    // untaken 43.457 L/min row were generated from the fixed valve settings and printed
+    // whether or not anyone had been there.
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(2);
 
     const massCell = (row: Element) => row.querySelectorAll('td')[5].textContent;
-    expect(massCell(rows[0])).toBe('0'); // closed-valve row
-    expect(massCell(rows[1])).toBe('80'); // reading 1, n = 0.4
-    expect(massCell(rows[2])).toBe('260'); // reading 2, n = 0.5
-    expect(massCell(rows[3])).toBe('0'); // untaken row
+    expect(massCell(rows[0])).toBe('80'); // reading 1, n = 0.4
+    expect(massCell(rows[1])).toBe('260'); // reading 2, n = 0.5, cumulative
 
     // F_th for the flat plate at n = 0.4 and n = 0.5, from BEDO's model.
     const theoreticalForceN = (row: Element) => Number(row.querySelectorAll('td')[6].textContent);
-    expect(theoreticalForceN(rows[1])).toBeCloseTo(0.8199, 4);
-    expect(theoreticalForceN(rows[2])).toBeCloseTo(2.5303, 4);
+    expect(theoreticalForceN(rows[0])).toBeCloseTo(0.8199, 4);
+    expect(theoreticalForceN(rows[1])).toBeCloseTo(2.5303, 4);
 
     // F_ac is the loaded mass x g, and only appears after Calculate.
     const fac = (row: Element) => Number(row.querySelectorAll('td')[7].textContent);
-    expect(fac(rows[1])).toBeCloseTo(0.7848, 4);
-    expect(fac(rows[2])).toBeCloseTo(2.5506, 4);
+    expect(fac(rows[0])).toBeCloseTo(0.7848, 4);
+    expect(fac(rows[1])).toBeCloseTo(2.5506, 4);
   });
 });
 
@@ -142,33 +144,40 @@ describe('the progression rules the lesson enforces', () => {
     walk(1, 5);
     expectStep(6, 'Balance the pointer (reading 1)');
 
-    expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
+    // The panel states the deviation and the grams that close it, not a rounded target:
+    // "Unbalanced (target ≈ 260 g)" was shown for 250 g, which was also being accepted.
+    expect(screen.getByText('Unbalanced')).toBeDefined();
+    expect(balanceHint()).toMatch(/add 84 g/);
     expect(okButton()).toBeNull();
 
-    click('+50g');
+    click('Add 50 g');
+    expect(balanceHint()).toMatch(/add 34 g/);
     expect(okButton()).toBeNull();
 
-    click('+20g');
-    click('+10g');
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
+    click('Add 20 g');
+    click('Add 10 g');
+    expect(screen.getByText('Pointer balanced')).toBeDefined();
     expect(okButton()).not.toBeNull();
   });
 
-  it('clears the tray between the two readings', () => {
+  it('keeps the tray loaded between the two readings', () => {
+    // Cumulative, as on the apparatus: the discs stay on and the student adds more. It is
+    // read from the guided footer, which shows the pan at every step.
     walk(1, 6);
     expectStep(7, 'Increase the flow rate');
-    expect(loadedWeightG()).toBe(0);
+    expect(loadedWeightG()).toBe(80);
   });
 
   it('asks for a heavier balance at the higher flow', () => {
     walk(1, 7);
     expectStep(8, 'Balance the pointer (reading 2)');
-    expect(screen.getByText(/Unbalanced \(target ≈ 260 g\)/)).toBeDefined();
+    // 80 g is on the pan and 257.9 g is now needed.
+    expect(balanceHint()).toMatch(/add 178 g/);
 
-    // The reading-1 mass is no longer enough now the flow has been increased.
-    click('+50g');
-    click('+20g');
-    click('+10g');
+    // Half of what is missing is still not enough.
+    click('Add 50 g');
+    click('Add 20 g');
+    click('Add 10 g');
     expect(okButton()).toBeNull();
   });
 
@@ -207,10 +216,11 @@ describe('the observations the experiment sheets specify', () => {
 
   it('raises the impingement notice after the first balance', () => {
     walk(1, 5);
-    click('+50g');
-    click('+20g');
-    click('+10g');
+    click('Add 50 g');
+    click('Add 20 g');
+    click('Add 10 g');
     clickOk();
+
 
     expect(document.querySelector('.warning-popup')?.textContent).toContain(
       'shape of water impinging the deflector'
@@ -228,7 +238,7 @@ describe('the observations the experiment sheets specify', () => {
 describe('reset', () => {
   it('returns the lesson to step 1 with the rig at rest', () => {
     walk(1, 5);
-    click('+50g');
+    click('Add 50 g');
     expect(loadedWeightG()).toBe(50);
 
     click('Reset simulator');

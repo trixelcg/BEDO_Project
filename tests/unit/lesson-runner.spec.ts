@@ -3,7 +3,7 @@ import { createLessonRunner } from '../../src/lesson/runner';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
 import type { LessonContext, StepId } from '../../src/lesson/schema';
 import { createSimulationRuntime, type SimulationCommand } from '../../src/simulation/runtime';
-import { selectReadings } from '../../src/simulation/selectors';
+import { selectLiveRow, selectReadings } from '../../src/simulation/selectors';
 
 /**
  * The lesson runner (BEDO-018).
@@ -20,6 +20,7 @@ const harness = () => {
   const context = (): LessonContext => ({
     simulation: simulation.getState(),
     readings: selectReadings(simulation.getState()),
+    liveRow: selectLiveRow(simulation.getState()),
   });
   const run = (commands: SimulationCommand[]) => {
     for (const command of commands) simulation.dispatch(command);
@@ -100,9 +101,11 @@ describe('progression', () => {
     // Jump the runner to the end by confirming through, then check the terminal state.
     while (!runner.getState().isComplete) {
       const step = runner.getCurrentStep();
+      const rest = createSimulationRuntime().getState();
       const forced: LessonContext = {
-        simulation: createSimulationRuntime().getState(),
+        simulation: rest,
         readings: [],
+        liveRow: selectLiveRow(rest),
       };
       // Force completion regardless of condition, to reach the end deterministically.
       const index = CURRENT_LESSON.steps.findIndex((s) => s.id === step.id);
@@ -249,7 +252,8 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
       { display: 5, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: 0.4 }]), finish: 'confirm' },
       { display: 6, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
       { display: 7, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: 0.5 }]), finish: 'confirm' },
-      { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
+      // Cumulative: the pan still carries the 80 g from reading 1, so this adds 180 g.
+      { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 100 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
       { display: 9, id: 'open-monitor', act: () => {}, finish: 'confirm' },
       { display: 10, id: 'record-actual-force', act: () => run([{ type: 'RECORD_ACTUAL_FORCE' }]), finish: 'action', expectation: 'RECORD_ACTUAL_FORCE' },
     ];
@@ -286,13 +290,15 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
     step(() => run([{ type: 'SET_VALVE', opening: 0.4 }]), 'confirm');
     step(() => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
     step(() => run([{ type: 'SET_VALVE', opening: 0.5 }]), 'confirm');
-    step(() => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
+    step(() => run([{ type: 'ADD_WEIGHT', massG: 100 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
 
+    // Two rows, because two readings were recorded — not four generated at fixed openings.
     const readings = context().readings;
-    expect(readings[1].loadedMassG).toBe(80);
-    expect(readings[2].loadedMassG).toBe(260);
+    expect(readings).toHaveLength(2);
+    expect(readings[0].loadedMassG).toBe(80);
+    expect(readings[1].loadedMassG).toBe(260);
+    expect(readings[0].isBalanced).toBe(true);
     expect(readings[1].isBalanced).toBe(true);
-    expect(readings[2].isBalanced).toBe(true);
   });
 
   it('opens the monitor step by either path, as it always could', () => {

@@ -93,8 +93,22 @@ export interface LessonView {
    * read without following a step number (`BEDO-021 §23`).
    */
   runId: number;
-  /** Which results row is being balanced, if any. */
-  activeReadingIndex: number | null;
+  /** How many readings the student has recorded. */
+  readingsTaken: number;
+  /**
+   * Confirming this step records a reading.
+   *
+   * Read off the step's own `onComplete`, never off its number, so the card can name the
+   * action ("Record reading") instead of saying OK to something the student cannot see.
+   */
+  recordsReading: boolean;
+  /**
+   * Whether a reading may be taken right now — i.e. the tray balances the jet.
+   *
+   * Read from `selectCanRecordReading`, which is the same condition the runtime enforces,
+   * so a Record control is disabled for the same reason a dispatch would be ignored.
+   */
+  canRecordReading: boolean;
   /** The numbered procedure is finished. Not a step — there is no step 12. */
   isComplete: boolean;
   /** The worksheet this experiment's closing step opens, or null if none shipped. */
@@ -111,15 +125,21 @@ export interface SimulationView {
   /** Weights currently on the pan, in grams (e.g. [50, 100]). */
   loadedWeightsG: readonly number[];
   isVolumetricValveOpen: boolean; // volumetric valve open state
+  /** The readings actually recorded, in order. Empty until the student records one. */
   recordedRows: RecordRow[];
   /**
    * The rig at this instant, for the software board.
    *
-   * Separate from `recordedRows` on purpose: those are the four fixed openings the
-   * procedure records at, and this is the opening, deflector and tray the learner is
-   * holding right now. Derived, never stored — see `selectLiveReadout`.
+   * Separate from `recordedRows` on purpose: those are readings already taken, and this is
+   * the opening, deflector and tray the learner is holding right now. Derived, never
+   * stored — see `selectLiveReadout`.
    */
   live: LiveReadout;
+  /**
+   * The same instant expressed as a results row — balancing mass, signed deviation and
+   * the tolerance that applies. What the balance indicator and the Record control read.
+   */
+  liveRow: RecordRow;
   showMonitor: boolean;
   /** Presentation only: the board is docked beside the apparatus, or expanded over it. */
   monitorExpanded: boolean;

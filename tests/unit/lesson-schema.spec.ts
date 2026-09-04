@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from '../../src/lesson/currentLesson';
 import { stepIndex, type LessonContext, type StepId } from '../../src/lesson/schema';
 import { createInitialSimulationState } from '../../src/simulation/state';
-import { selectReadings } from '../../src/simulation/selectors';
+import { selectLiveRow, selectReadings } from '../../src/simulation/selectors';
 import { buildSteps } from '../../src/domain/experiments';
 import { createSimulationRuntime, type SimulationCommand } from '../../src/simulation/runtime';
 
@@ -17,7 +17,8 @@ import { createSimulationRuntime, type SimulationCommand } from '../../src/simul
 const context = (commands: SimulationCommand[] = []): LessonContext => {
   const runtime = createSimulationRuntime(createInitialSimulationState());
   for (const command of commands) runtime.dispatch(command);
-  return { simulation: runtime.getState(), readings: selectReadings(runtime.getState()) };
+  const state = runtime.getState();
+  return { simulation: state, readings: selectReadings(state), liveRow: selectLiveRow(state) };
 };
 
 /**
@@ -85,18 +86,25 @@ describe('definition integrity', () => {
     }
   });
 
-  it('issues reading commands from the steps that own them, not from a step-number map', () => {
-    // `BALANCE_ROW = { 7: 1, 9: 2 }` is gone; the step that starts a reading says which.
+  it('records a reading only from the steps that balance one', () => {
+    // `BALANCE_ROW = { 7: 1, 9: 2 }` is gone, and so is the index it carried: a step no
+    // longer says *which* row it writes, only that confirming it takes a reading.
     const readingCommands = CURRENT_LESSON.steps.flatMap((step) =>
       (step.onComplete ?? []).map((command) => [step.id, command] as const)
     );
-    const begins = readingCommands.filter(([, c]) => c.type === 'BEGIN_READING');
-    expect(begins.map(([id, c]) => [id, (c as { index: number }).index])).toEqual([
-      ['set-flow-reading-1', 1],
-      ['increase-flow-reading-2', 2],
-    ]);
-    const ends = readingCommands.filter(([, c]) => c.type === 'END_READING').map(([id]) => id);
-    expect(ends).toEqual(['balance-reading-1', 'balance-reading-2']);
+    const records = readingCommands
+      .filter(([, c]) => c.type === 'RECORD_READING')
+      .map(([id]) => id);
+    expect(records).toEqual(['balance-reading-1', 'balance-reading-2']);
+  });
+
+  it('never empties the tray as a step completes', () => {
+    // The pan is cumulative across readings, as it is on the apparatus. Clearing it here
+    // is what made the board read "Total Weight 0 g" beside a recorded row of 250 g.
+    const clears = CURRENT_LESSON.steps.flatMap((step) =>
+      (step.onComplete ?? []).filter((c) => c.type === 'REMOVE_ALL_WEIGHTS')
+    );
+    expect(clears).toEqual([]);
   });
 });
 
@@ -132,9 +140,11 @@ describe('completion conditions', () => {
       satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }],
     },
     {
+      // 80 g against the 83.58 g the jet asks for at this opening.
       id: 'balance-reading-1',
       satisfyWith: [
-        { type: 'BEGIN_READING', index: 1 },
+        { type: 'POWER_ON' },
+        { type: 'SET_VALVE', opening: 0.4 },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 20 },
         { type: 'ADD_WEIGHT', massG: 10 },
@@ -145,9 +155,11 @@ describe('completion conditions', () => {
       satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.5 }],
     },
     {
+      // 260 g against 257.93 g at the second setpoint.
       id: 'balance-reading-2',
       satisfyWith: [
-        { type: 'BEGIN_READING', index: 2 },
+        { type: 'POWER_ON' },
+        { type: 'SET_VALVE', opening: 0.5 },
         { type: 'ADD_WEIGHT', massG: 200 },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 10 },

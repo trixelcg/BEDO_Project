@@ -12,6 +12,7 @@ import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
 import { restingState } from '../../src/domain/stateMachine';
 import { jetState, targetMassG } from '../../src/domain/physics';
 import { createSimulationRuntime } from '../../src/simulation/runtime';
+import { selectLiveRow } from '../../src/simulation/selectors';
 
 /**
  * BUG-05 — an experiment must not run on another experiment's deflector.
@@ -296,7 +297,8 @@ describe('the lesson step', () => {
     // Bypass the gate on purpose: this is the lesson's own rule being tested, and free
     // exploration is a real route to an out-of-scope deflector.
     runtime.dispatch({ type: 'SELECT_DEFLECTOR', deflectorId });
-    return { simulation: runtime.getState(), readings: [] };
+    const state = runtime.getState();
+    return { simulation: state, readings: [], liveRow: selectLiveRow(state) };
   };
 
   it.each(SHEETS)('confirms $id with any deflector its sheet names', (sheet) => {
@@ -318,7 +320,8 @@ describe('the lesson step', () => {
 
   it('still requires the tank to be open', () => {
     const runtime = createSimulationRuntime();
-    const context = { simulation: runtime.getState(), readings: [] };
+    const state = runtime.getState();
+    const context = { simulation: state, readings: [], liveRow: selectLiveRow(state) };
     expect(installStep.advance.kind === 'confirm' && installStep.advance.when(context)).toBe(false);
   });
 });

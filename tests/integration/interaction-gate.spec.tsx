@@ -145,7 +145,7 @@ describe('the two surfaces agree', () => {
     walkLesson(1, 5);
     expect(currentStep()).toBe(6); // weights
 
-    click('+50g');
+    click('Add 50 g');
     expect(loadedWeightG()).toBe(50);
 
     clickMesh('scene-weight-50');
@@ -157,7 +157,7 @@ describe('the two surfaces agree', () => {
     expect(currentStep()).toBe(5); // the flow valve
 
     // The panel does not render a weights section here at all...
-    expect(screen.queryByRole('button', { name: '+50g' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add 50 g' })).toBeNull();
     // ...and the scene, which cannot hide a weight, is refused instead of dispatching.
     clickMesh('scene-weight-50');
 

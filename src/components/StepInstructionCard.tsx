@@ -23,7 +23,16 @@ import type { Language, LessonView } from '../types/index';
 interface StepInstructionCardProps {
   lesson: LessonView;
   language: Language;
+  /** The step can be confirmed — drives the "press X to continue" line. */
   okVisible: boolean;
+  /**
+   * The confirming control lives in the contextual panel above, not on this card.
+   *
+   * True on the balance steps, where confirming *is* recording the reading and the Record
+   * button sits with the weights and the balance bar it belongs to. Two buttons doing the
+   * same thing, one on the card and one in the panel, is the duplication this avoids.
+   */
+  okInPanel: boolean;
   onOkClick: () => void;
   showAnswerSheet: boolean;
   onOpenAnswerSheet: () => void;
@@ -49,6 +58,7 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
   lesson,
   language,
   okVisible,
+  okInPanel,
   onOkClick,
   showAnswerSheet,
   onOpenAnswerSheet,
@@ -64,7 +74,15 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
   const secondary = [
     target ? (isAr ? target.ar : target.en) : null,
     notice,
-    okVisible ? (isAr ? 'اضغط موافق للمتابعة' : 'Press OK to continue') : null,
+    okVisible
+      ? lesson.recordsReading
+        ? isAr
+          ? 'اضغط "تسجيل القراءة" لحفظ هذه القراءة'
+          : 'Press Record reading to save this reading'
+        : isAr
+          ? 'اضغط موافق للمتابعة'
+          : 'Press OK to continue'
+      : null,
   ]
     .filter(Boolean)
     .join(isAr ? ' — ' : ' — ');
@@ -108,9 +126,20 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
             {isAr ? 'عرض ورقة الإجابة' : 'Open the answer sheet'}
           </button>
         )}
-        {okVisible && (
+        {/*
+          The class stays `ok-confirm-btn` — it is what the browser suite presses — but a
+          step that writes a results row says so. "OK" on a balance step gave no hint that
+          pressing it was the act of recording.
+        */}
+        {okVisible && !okInPanel && (
           <button className="btn-primary interactive ok-confirm-btn" onClick={onOkClick}>
-            {isAr ? 'موافق' : 'OK'}
+            {lesson.recordsReading
+              ? isAr
+                ? 'تسجيل القراءة'
+                : 'Record reading'
+              : isAr
+                ? 'موافق'
+                : 'OK'}
           </button>
         )}
       </div>

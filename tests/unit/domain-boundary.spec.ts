@@ -199,13 +199,15 @@ describe('src/simulation imports only the domain', () => {
   it('runs with no DOM present', async () => {
     const { createSimulationRuntime } = await import('../../src/simulation/runtime');
     const { selectReadings } = await import('../../src/simulation/selectors');
+    const { FIRST_READING_VALVE } = await import('../../src/domain/physics');
 
     expect(typeof document).toBe('undefined');
     const runtime = createSimulationRuntime();
     runtime.dispatch({ type: 'POWER_ON' });
-    runtime.dispatch({ type: 'BEGIN_READING', index: 1 });
+    runtime.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 80 });
-    expect(selectReadings(runtime.getState())[1].loadedMassG).toBe(80);
+    runtime.dispatch({ type: 'RECORD_READING' });
+    expect(selectReadings(runtime.getState())[0].loadedMassG).toBe(80);
   });
 
   it('is not imported by the domain — the dependency runs one way', () => {
@@ -428,9 +430,11 @@ describe('nothing bypasses the interaction gate', () => {
     // 3. `handleCalculate`, immediately after `interact` returned true
     // 4. `SELECT_EXPERIMENT` — session setup, resets the lesson, not an apparatus action
     // 5. `SET_PUMP_FLOW` — a Custom Parameters value, likewise not an apparatus action
+    // 6. `handleRecordReading` off a balance step — taking a reading is not an apparatus
+    //    action either, and the runtime refuses an unbalanced tray on its own
     // Each is recorded in `docs/36 §9`. If this number moves, the new call site needs an
     // entry there before this expectation is updated.
-    expect(sites.length).toBe(5);
+    expect(sites.length).toBe(6);
   });
 
   it('no component writes the rig’s state for itself', () => {

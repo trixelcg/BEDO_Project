@@ -95,9 +95,9 @@ describe('the exported CSV', () => {
     }
   });
 
-  it('writes one row per table row, four of them', async () => {
+  it('writes one row per recorded reading, and only those', async () => {
     const { lines } = await exportCsv();
-    expect(lines).toHaveLength(6); // comment + header + 4 rows
+    expect(lines).toHaveLength(4); // comment + header + the 2 readings
     expect(lines.slice(2).every((l) => l.split(',').length === 11)).toBe(true);
   });
 
@@ -105,23 +105,24 @@ describe('the exported CSV', () => {
     const { lines } = await exportCsv();
 
     // Reading 1 — n = 0.4, 80 g of weights on the tray.
-    expect(lines[3]).toBe('2,120.0,0.40,15.714,2.6191e-4,3.336,3.232,80,3.92,0.8199,0.7848');
-    // Reading 2 — n = 0.5, 260 g.
-    expect(lines[4]).toBe('3,120.0,0.50,27.024,4.5040e-4,5.738,5.677,260,12.75,2.5303,2.5506');
+    expect(lines[2]).toBe('1,120.0,0.40,15.714,2.6191e-4,3.336,3.232,80,3.92,0.8199,0.7848');
+    // Reading 2 — n = 0.5, 260 g. The pan is cumulative, so this is the running total.
+    expect(lines[3]).toBe('2,120.0,0.50,27.024,4.5040e-4,5.738,5.677,260,12.75,2.5303,2.5506');
   });
 
-  it('keeps the zero row and the untaken row', async () => {
+  it('exports no zero row and no untaken row', async () => {
+    // `BUG-14`, closed. The file used to carry a Q = 0 row the procedure never records and
+    // a fourth row at n = 0.6 with a full theoretical force and an F_ac of zero — both
+    // generated from `ROW_VALVE_SETTINGS` rather than measured by anyone.
     const { lines } = await exportCsv();
-    expect(lines[2]).toBe('1,120.0,0.00,0.000,0.0000e+0,0.000,0.000,0,0.00,0.0000,0.0000');
-    // Row 4 is never measured by the lesson, yet it is exported with a full theoretical
-    // force computed at n = 0.6 and an F_ac of zero. That is `BUG-14`; BEDO-005 pins it
-    // as it stands and BEDO-009 is where it changes.
-    expect(lines[5]).toBe('4,120.0,0.60,43.457,7.2428e-4,9.227,9.189,0,0.00,6.6287,0.0000');
+    const rows = lines.slice(2);
+    expect(rows.map((l) => l.split(',')[2])).toEqual(['0.40', '0.50']);
+    expect(rows.some((l) => l.split(',')[3] === '0.000')).toBe(false);
   });
 
   it('pins the numeric precision of every column', async () => {
     const { lines } = await exportCsv();
-    const [row, qTotal, n, q, qM3, vo, v, mass, spring, theoreticalForceN, fac] = lines[3].split(',');
+    const [row, qTotal, n, q, qM3, vo, v, mass, spring, theoreticalForceN, fac] = lines[2].split(',');
     expect(row).toMatch(/^\d+$/); // integer index, 1-based
     expect(qTotal).toMatch(/^\d+\.\d$/); // 1 dp
     expect(n).toMatch(/^\d\.\d{2}$/); // 2 dp
@@ -141,9 +142,9 @@ describe('the exported CSV', () => {
     const captured = captureDownload();
     click('Export Data');
     const lines = (await captured.blob!.text()).split('\n');
-    expect(lines[3].split(',')).toHaveLength(11);
-    expect(lines[3].split(',')[10]).toBe('');
-    expect(lines[3].split(',')[9]).toBe('0.8199'); // F_th is always present
+    expect(lines[2].split(',')).toHaveLength(11);
+    expect(lines[2].split(',')[10]).toBe('');
+    expect(lines[2].split(',')[9]).toBe('0.8199'); // F_th is always present
   });
 
   it('names the deflector of whichever experiment is loaded', async () => {
@@ -164,8 +165,9 @@ describe('the exported CSV', () => {
     // The header never varies by experiment or language.
     expect(lines[1].split(',')).toHaveLength(11);
     expect(lines[1].startsWith('Row,Q_total (L/min),n,')).toBe(true);
-    // ...and the theoretical force follows that experiment's deflector, not Exp. 1's.
-    expect(lines[3].split(',')[9]).toBe('1.6398'); // 2.0 x the flat plate at n = 0.4
+    // Nothing was recorded, so the file is its own header and nothing else — which is the
+    // honest export of an experiment that has taken no readings.
+    expect(lines).toHaveLength(2);
   });
 });
 
@@ -183,8 +185,11 @@ describe('the on-screen readings table', () => {
       'Row',
       'Q (L/min)',
       'Q (m³/s)',
-      'V₀ (m/s)',
-      'V (m/s)',
+      // `V_nozzle` / `V_impact`, matching the board and the live tiles. The same velocity
+      // used to be `V_o` on the board and `V₀` here, against a `V_th` in the printed
+      // artwork.
+      'V_nozzle (m/s)',
+      'V_impact (m/s)',
       'Mass (g)',
       'F_th (N)',
       'F_ac (N)',
@@ -193,26 +198,25 @@ describe('the on-screen readings table', () => {
 
   it('shows the readings with their current formatting', () => {
     walkLesson(1, 10);
-    expect(cells(1)).toEqual(['2', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848']);
-    expect(cells(2)).toEqual(['3', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506']);
+    expect(cells(0)).toEqual(['1', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848']);
+    expect(cells(1)).toEqual(['2', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506']);
   });
 
   it('shows a dash for F_ac until Calculate is pressed', () => {
     walkLesson(1, 9);
-    expect(cells(1)[7]).toBe('—');
+    expect(cells(0)[7]).toBe('—');
   });
 
   it('prints the mass on the tray, not the sum of the recorded rows', () => {
     walkLesson(1, 10);
     /*
-      0 g, not 340 g.
+      260 g, not 340 g.
 
       This readout used to sum `loadedMassG` across every recorded row, so after both
       readings it printed 80 + 260 = 340 g — a mass that was never on the pan at one time.
-      BEDO-UX-12 makes it what its label says: what is on the tray right now. By step 10
-      that is nothing, because a reading step ends with `REMOVE_ALL_WEIGHTS` — the lesson
-      tidying the pan between readings — so an empty pan is the honest reading. Each
-      reading's own mass is still carried by the table's Mass column.
+      It is now `selectLoadedMassG`, the same selector the board and the step panel read,
+      and by step 10 the pan carries the 260 g that balanced reading 2: the discs stay on,
+      as they do on the apparatus.
 
       That it tracks the tray while weights are going on and coming off is pinned
       separately, in `monitor-live.spec.tsx`.
@@ -220,7 +224,7 @@ describe('the on-screen readings table', () => {
     const card = Array.from(document.querySelectorAll('.indicator-card')).find((el) =>
       el.textContent?.includes('Total Weight')
     );
-    expect(card?.textContent).toContain('0 g × g = 0.000 N');
+    expect(card?.textContent).toContain('260 g × g = 2.551 N');
   });
 
   it('uses the Arabic headers when the lesson is in Arabic', () => {
@@ -230,8 +234,8 @@ describe('the on-screen readings table', () => {
       'القراءة',
       'Q (L/min)',
       'Q (m³/s)',
-      'V₀ (m/s)',
-      'V (m/s)',
+      'V_nozzle (m/s)',
+      'V_impact (m/s)',
       'الكتلة (g)',
       'F_th (N)',
       'F_ac (N)',

@@ -54,8 +54,21 @@ export const click = (name: string | RegExp) =>
 /** Clicks one of the mock scene's meshes. */
 export const clickMesh = (testId: string) => fireEvent.click(screen.getByTestId(testId));
 
-/** The guided panel's confirm button, distinct from a popup's own OK. */
-export const okButton = () => document.querySelector('.ok-confirm-btn');
+/**
+ * The control that finishes the current step, or null when the step cannot be finished.
+ *
+ * Usually the card's OK. On a balance step it is the weights panel's "Record reading" —
+ * confirming the step *is* recording the reading, so there is one button for it and it
+ * sits beside the balance bar that says whether it may be pressed.
+ */
+export const okButton = (): Element | null => {
+  const card = document.querySelector('.ok-confirm-btn');
+  if (card) return card;
+  const record = Array.from(
+    document.querySelectorAll<HTMLButtonElement>('.weights-actions button')
+  ).find((b) => /Record reading|تسجيل القراءة/.test(b.textContent ?? ''));
+  return record && !record.disabled ? record : null;
+};
 
 export const clickOk = () => {
   const button = okButton();
@@ -122,19 +135,22 @@ export const walkLesson = (from: number, to: number) => {
       clickOk();
     },
     6: () => {
-      click('+50g');
-      click('+20g');
-      click('+10g');
+      click('Add 50 g');
+      click('Add 20 g');
+      click('Add 10 g');
       clickOk();
     },
     7: () => {
       setValve(0.5);
       clickOk();
     },
+    // The pan is cumulative now — it still carries the 80 g from reading 1, and the second
+    // reading needs 257.9 g in total, so this adds 180 g rather than starting from empty.
     8: () => {
-      click('+200g');
-      click('+50g');
-      click('+10g');
+      click('Add 100 g');
+      click('Add 50 g');
+      click('Add 20 g');
+      click('Add 10 g');
       clickOk();
     },
     9: () => click('Open Data Monitor'),
@@ -148,6 +164,16 @@ export const walkLesson = (from: number, to: number) => {
     dismissPopup();
   }
 };
+
+/**
+ * The balance readout's figures — "−16.2 % · add 14 g".
+ *
+ * Read from the element rather than by matching the whole sentence: the deviation, the
+ * direction and the grams are one string, and a test that asserts on a rounded target
+ * cannot see any of them.
+ */
+export const balanceHint = (): string =>
+  document.querySelector('.balance-bar-figures')?.textContent ?? '';
 
 export const powerLabel = (): string =>
   screen.getByRole('button', { name: /Turn (On|Off) Pump/ }).textContent ?? '';

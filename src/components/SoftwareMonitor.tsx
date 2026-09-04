@@ -12,7 +12,7 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { GRAVITY_MS2, NOZZLE_AREA_M2 } from '../domain/physics';
+import { GRAVITY_MS2, NOZZLE_AREA_M2, jetState } from '../domain/physics';
 import { getDeflector } from '../domain/apparatus';
 import { DeflectorBoard } from './DeflectorBoard';
 import { csvFilename, toCsv } from '../lib/exportSchema';
@@ -58,11 +58,6 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   const isAr = state.language === 'ar';
   const { recordedRows, isCalculated, quizAnswer, live } = state;
 
-  // Only the rows the student actually balanced are readings.
-  const rows = useMemo(
-    () => recordedRows.filter((r, i) => i > 0 && (r.loadedMassG > 0 || r.valveOpening > 0)),
-    [recordedRows]
-  );
 
   /*
     The tray, not the table.
@@ -84,9 +79,33 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
     const step = 10 ** Math.floor(Math.log10(Math.max(v, 1e-6)));
     return Math.ceil(v / step) * step;
   };
-  const maxFlow = niceCeil(Math.max(10, ...recordedRows.map((r) => r.flowRateLMin)) * 1.1);
+  /*
+    The theoretical curve, computed rather than joined up between readings.
+
+    The chart used to be a polyline through the four pre-generated table rows, so with the
+    table now holding only what the student recorded it would be a single dot — or, before
+    a first reading, nothing at all. `F_th(Q)` is a known function of the valve opening, so
+    it is sampled directly: 40 points from shut to fully open, at the deflector and pump
+    delivery in force right now.
+  */
+  const CURVE_SAMPLES = 40;
+  const curve = useMemo(
+    () =>
+      Array.from({ length: CURVE_SAMPLES + 1 }, (_, i) => {
+        const opening = i / CURVE_SAMPLES;
+        const jet = jetState(opening, state.selectedDeflectorId, state.params.pumpFlowLMin);
+        return { flowRateLMin: jet.flowRateLMin, forceN: jet.theoreticalForceN };
+      }),
+    [state.selectedDeflectorId, state.params.pumpFlowLMin]
+  );
+
+  const maxFlow = niceCeil(Math.max(10, ...curve.map((p) => p.flowRateLMin)) * 1.05);
   const maxForce = niceCeil(
-    Math.max(0.5, ...recordedRows.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))) * 1.15
+    Math.max(
+      0.5,
+      ...curve.map((p) => p.forceN),
+      ...recordedRows.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))
+    ) * 1.1
   );
 
   const paddingX = 40;
@@ -99,20 +118,19 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
     y: paddingY + chartH - (force / maxForce) * chartH,
   });
 
-  const path = (
-    source: typeof recordedRows,
-    pick: (r: (typeof recordedRows)[number]) => number
-  ) =>
-    source
-      .map((r, i) => {
-        const c = coords(r.flowRateLMin, pick(r));
+  const path = (points: { flowRateLMin: number; forceN: number }[]) =>
+    points
+      .map((p, i) => {
+        const c = coords(p.flowRateLMin, p.forceN);
         return `${i === 0 ? 'M' : 'L'} ${c.x},${c.y}`;
       })
       .join(' ');
 
-  // F_ac only exists where the student actually balanced the pointer — drawing the
-  // untouched rows as zeroes would drag the measured curve back down to the axis.
-  const measured = recordedRows.filter((r, i) => i === 0 || r.loadedMassG > 0);
+  /** The recorded readings as measured points, in the order they were taken. */
+  const measured = recordedRows.map((r) => ({
+    flowRateLMin: r.flowRateLMin,
+    forceN: r.measuredForceN,
+  }));
 
   /**
    * Step 11 — the readings the student captured, as CSV.
@@ -315,14 +333,14 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               </div>
 
               <div className="mon-cell">
-                <span className="mon-lbl">V₀ {isAr ? '(الفوهة)' : '(nozzle)'}</span>
+                <span className="mon-lbl">V_nozzle {isAr ? '(عند الفوهة)' : '(at the nozzle)'}</span>
                 <span className="mon-val" style={NUMERIC_READOUT}>
                   {live.nozzleVelocityMS.toFixed(3)} m/s
                 </span>
               </div>
 
               <div className="mon-cell">
-                <span className="mon-lbl">V {isAr ? '(الاصطدام)' : '(impact)'}</span>
+                <span className="mon-lbl">V_impact {isAr ? '(عند الاصطدام)' : '(at the vane)'}</span>
                 <span className="mon-val" style={NUMERIC_READOUT}>
                   {live.impactVelocityMS.toFixed(3)} m/s
                 </span>
@@ -369,14 +387,31 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                   <th>{isAr ? 'القراءة' : 'Row'}</th>
                   <th>Q (L/min)</th>
                   <th>Q (m³/s)</th>
-                  <th>V₀ (m/s)</th>
-                  <th>V (m/s)</th>
+                  <th>V_nozzle (m/s)</th>
+                  <th>V_impact (m/s)</th>
                   <th>{isAr ? 'الكتلة (g)' : 'Mass (g)'}</th>
                   <th className="highlight-cell">F_th (N)</th>
                   <th className="highlight-cell">F_ac (N)</th>
                 </tr>
               </thead>
               <tbody>
+                {recordedRows.length === 0 && (
+                  <tr>
+                    {/*
+                      An empty table, said plainly.
+
+                      It used to be pre-populated from the four fixed valve settings, so a
+                      student who had recorded nothing still saw a zero row and a
+                      43.457 L/min row that nobody had taken. Nothing is printed here until
+                      a reading is recorded.
+                    */}
+                    <td colSpan={8} className="data-table-empty">
+                      {isAr
+                        ? 'لا توجد قراءات بعد — وازن المؤشر ثم اضغط "تسجيل القراءة".'
+                        : 'No readings yet — balance the pointer, then press Record reading.'}
+                    </td>
+                  </tr>
+                )}
                 {recordedRows.map((row, idx) => (
                   <tr key={idx}>
                     <td>{idx + 1}</td>
@@ -503,16 +538,19 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 Q (L/min)
               </text>
 
+              {/* F_th(Q), sampled across the valve's whole range. Always drawn. */}
               <path
-                d={path(recordedRows, (r) => r.theoreticalForceN)}
+                d={path(curve)}
                 fill="none"
                 stroke="var(--accent-blue)"
                 strokeWidth={2}
                 strokeDasharray="4 3"
+                data-testid="chart-theoretical"
               />
-              {isCalculated && (
+              {/* The recorded readings, as markers on that curve. */}
+              {measured.length > 1 && isCalculated && (
                 <path
-                  d={path(measured, (r) => r.measuredForceN)}
+                  d={path(measured)}
                   fill="none"
                   stroke="var(--accent-gold)"
                   strokeWidth={2.5}
@@ -534,9 +572,18 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 );
               })}
               {isCalculated &&
-                rows.map((r, i) => {
-                  const c = coords(r.flowRateLMin, r.measuredForceN);
-                  return <circle key={`ac-${i}`} cx={c.x} cy={c.y} r={4} fill="var(--accent-gold)" />;
+                measured.map((p, i) => {
+                  const c = coords(p.flowRateLMin, p.forceN);
+                  return (
+                    <circle
+                      key={`ac-${i}`}
+                      cx={c.x}
+                      cy={c.y}
+                      r={4}
+                      fill="var(--accent-gold)"
+                      data-testid="chart-measured-point"
+                    />
+                  );
                 })}
             </svg>
           </div>

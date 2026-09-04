@@ -5,13 +5,18 @@ import {
 } from '../../src/simulation/runtime';
 import { createInitialSimulationState } from '../../src/simulation/state';
 import {
-  selectActiveReading,
+  selectCanRecordReading,
   selectJetForceN,
+  selectLiveRow,
   selectLoadedMassG,
   selectReadings,
   selectReadingsTaken,
 } from '../../src/simulation/selectors';
-import { TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
+import {
+  FIRST_READING_VALVE,
+  SECOND_READING_VALVE,
+  TOTAL_FLOW_L_MIN,
+} from '../../src/domain/physics';
 
 /**
  * The simulation runtime (BEDO-008).
@@ -47,9 +52,7 @@ describe('initial state', () => {
       },
       experimentId: 'flat',
       pumpFlowLMin: TOTAL_FLOW_L_MIN,
-      activeReadingIndex: null,
-      committedReadingCount: 0,
-      committedWeightsG: [],
+      recordedReadings: [],
       isActualForceRecorded: false,
     });
   });
@@ -107,11 +110,12 @@ describe('apparatus commands defer to the state machine', () => {
 
 describe('simulation commands', () => {
   it('sets the pump flow, which every derived figure follows', () => {
-    const r = runtime();
+    const r = drive([{ type: 'POWER_ON' }]);
     r.dispatch({ type: 'SET_PUMP_FLOW', lPerMin: 60 });
     expect(r.getState().pumpFlowLMin).toBe(60);
     // Half the pump delivery, half the flow at any opening.
-    expect(selectReadings(r.getState())[1].flowRateLMin).toBeCloseTo(15.714470 / 2, 6);
+    r.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
+    expect(selectLiveRow(r.getState()).flowRateLMin).toBeCloseTo(15.714470 / 2, 6);
   });
 
   it('switching experiment reloads the rig with that sheet’s deflector', () => {
@@ -146,60 +150,97 @@ describe('simulation commands', () => {
 });
 
 describe('readings', () => {
-  it('shows the live tray in the row being balanced', () => {
-    const r = drive([
+  /** Power on, open to a setpoint, load the tray. Nothing recorded yet. */
+  const balanced = (opening: number, discs: number[]) =>
+    drive([
       { type: 'POWER_ON' },
-      { type: 'SET_VALVE', opening: 0.4 },
-      { type: 'BEGIN_READING', index: 1 },
-      { type: 'ADD_WEIGHT', massG: 50 },
-      { type: 'ADD_WEIGHT', massG: 20 },
-      { type: 'ADD_WEIGHT', massG: 10 },
+      { type: 'SET_VALVE', opening },
+      ...discs.map((massG) => ({ type: 'ADD_WEIGHT', massG }) as const),
     ]);
-    expect(selectActiveReading(r.getState())?.loadedMassG).toBe(80);
-    expect(selectActiveReading(r.getState())?.isBalanced).toBe(true);
+
+  it('records nothing until RECORD_READING is dispatched', () => {
+    // The regression this pins: the table used to be generated from the fixed valve
+    // settings and the row being balanced followed the tray, so loading a disc — or
+    // merely dragging the valve past a setpoint — put figures in the results.
+    const r = balanced(FIRST_READING_VALVE, [50, 20, 10]);
+    expect(selectReadings(r.getState())).toEqual([]);
+    expect(selectReadingsTaken(r.getState())).toBe(0);
   });
 
-  it('freezes the row when the reading ends, and the tray goes back to zero', () => {
-    const r = drive([
-      { type: 'POWER_ON' },
-      { type: 'BEGIN_READING', index: 1 },
-      { type: 'ADD_WEIGHT', massG: 50 },
-      { type: 'ADD_WEIGHT', massG: 20 },
-      { type: 'ADD_WEIGHT', massG: 10 },
-      { type: 'END_READING' },
-      { type: 'REMOVE_ALL_WEIGHTS' },
-    ]);
+  it('creates exactly one row per record, holding the tray as it stood', () => {
+    const r = balanced(FIRST_READING_VALVE, [50, 20, 10]);
+    expect(selectCanRecordReading(r.getState())).toBe(true);
 
-    expect(selectLoadedMassG(r.getState())).toBe(0);
-    // The reading keeps what it was balanced with.
-    expect(selectReadings(r.getState())[1].loadedMassG).toBe(80);
-    expect(r.getState().activeReadingIndex).toBeNull();
-  });
-
-  it('keeps earlier readings while a later one is being taken', () => {
-    const r = drive([
-      { type: 'POWER_ON' },
-      { type: 'BEGIN_READING', index: 1 },
-      { type: 'ADD_WEIGHT', massG: 80 },
-      { type: 'END_READING' },
-      { type: 'REMOVE_ALL_WEIGHTS' },
-      { type: 'BEGIN_READING', index: 2 },
-      { type: 'ADD_WEIGHT', massG: 260 },
-    ]);
+    r.dispatch({ type: 'RECORD_READING' });
 
     const readings = selectReadings(r.getState());
-    expect(readings[1].loadedMassG).toBe(80);
-    expect(readings[2].loadedMassG).toBe(260);
+    expect(readings).toHaveLength(1);
+    expect(readings[0].loadedMassG).toBe(80);
+    expect(readings[0].valveOpening).toBe(FIRST_READING_VALVE);
+    expect(readings[0].flowRateLMin).toBeCloseTo(15.7144704, 6);
+    expect(selectReadingsTaken(r.getState())).toBe(1);
+  });
+
+  it('refuses to record an unbalanced tray, and says nothing changed', () => {
+    const r = balanced(FIRST_READING_VALVE, [50]); // 50 g against 83.58 g
+    expect(selectCanRecordReading(r.getState())).toBe(false);
+
+    const result = r.dispatch({ type: 'RECORD_READING' });
+    expect(result.ok && result.changed).toBe(false);
+    expect(selectReadings(r.getState())).toEqual([]);
+  });
+
+  it('refuses to record a rig at rest, however empty the tray', () => {
+    const r = runtime();
+    r.dispatch({ type: 'RECORD_READING' });
+    expect(selectReadings(r.getState())).toEqual([]);
+  });
+
+  it('leaves the tray exactly as it was — readings are cumulative', () => {
+    // The pan used to be emptied between readings, which is not what the apparatus does
+    // and made the board read "Total Weight 0 g" beside a row saying 80 g.
+    const r = balanced(FIRST_READING_VALVE, [50, 20, 10]);
+    r.dispatch({ type: 'RECORD_READING' });
+    expect(selectLoadedMassG(r.getState())).toBe(80);
+
+    // Reading two: open further, add to what is already on the pan.
+    r.dispatch({ type: 'SET_VALVE', opening: SECOND_READING_VALVE });
+    for (const massG of [100, 50, 20, 10]) r.dispatch({ type: 'ADD_WEIGHT', massG });
+    expect(selectLoadedMassG(r.getState())).toBe(260);
+    r.dispatch({ type: 'RECORD_READING' });
+
+    const readings = selectReadings(r.getState());
+    expect(readings.map((row) => row.loadedMassG)).toEqual([80, 260]);
     expect(selectReadingsTaken(r.getState())).toBe(2);
   });
 
-  it('leaves untouched rows empty, including the row past the last reading', () => {
-    const r = drive([{ type: 'BEGIN_READING', index: 1 }, { type: 'ADD_WEIGHT', massG: 80 }]);
-    const readings = selectReadings(r.getState());
-    expect(readings[0].loadedMassG).toBe(0);
-    expect(readings[3].loadedMassG).toBe(0);
-    // Row 3 still carries a theoretical force, which is `BUG-14` — preserved, not fixed.
-    expect(readings[3].theoreticalForceN).toBeCloseTo(6.6287, 4);
+  it('does not rewrite a recorded row when the tray moves on', () => {
+    const r = balanced(FIRST_READING_VALVE, [50, 20, 10]);
+    r.dispatch({ type: 'RECORD_READING' });
+    r.dispatch({ type: 'ADD_WEIGHT', massG: 200 });
+    expect(selectReadings(r.getState())[0].loadedMassG).toBe(80);
+    expect(selectLoadedMassG(r.getState())).toBe(280);
+  });
+
+  it('undoes the last reading and nothing else', () => {
+    const r = balanced(FIRST_READING_VALVE, [50, 20, 10]);
+    r.dispatch({ type: 'RECORD_READING' });
+    r.dispatch({ type: 'RECORD_READING' });
+    expect(selectReadingsTaken(r.getState())).toBe(2);
+
+    r.dispatch({ type: 'UNDO_READING' });
+    expect(selectReadingsTaken(r.getState())).toBe(1);
+    const empty = runtime().dispatch({ type: 'UNDO_READING' });
+    expect(empty.ok && empty.changed).toBe(false);
+  });
+
+  it('reports the live row without recording it', () => {
+    const r = balanced(FIRST_READING_VALVE, [50, 20]);
+    const live = selectLiveRow(r.getState());
+    expect(live.loadedMassG).toBe(70);
+    expect(live.isBalanced).toBe(false);
+    expect(live.deviationG).toBeCloseTo(-13.5805, 3);
+    expect(selectReadings(r.getState())).toEqual([]);
   });
 
   it('has no idea what a lesson step is', async () => {
@@ -306,22 +347,29 @@ describe('immutability', () => {
     expect(r.getState().apparatus.loadedWeightsG).toEqual([50]);
   });
 
-  it('freezes committed readings too', () => {
+  it('freezes recorded readings too', () => {
     const r = drive([
-      { type: 'BEGIN_READING', index: 1 },
-      { type: 'ADD_WEIGHT', massG: 50 },
-      { type: 'END_READING' },
+      { type: 'POWER_ON' },
+      { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
+      { type: 'ADD_WEIGHT', massG: 80 },
+      { type: 'RECORD_READING' },
     ]);
     const state = r.getState();
-    expect(Object.isFrozen(state.committedWeightsG)).toBe(true);
-    expect(Object.isFrozen(state.committedWeightsG[1])).toBe(true);
+    expect(Object.isFrozen(state.recordedReadings)).toBe(true);
+    expect(Object.isFrozen(state.recordedReadings[0])).toBe(true);
+    expect(Object.isFrozen(state.recordedReadings[0].loadedWeightsG)).toBe(true);
   });
 
   it('gives selectors their own arrays, so a reading cannot be edited in place', () => {
-    const r = drive([{ type: 'BEGIN_READING', index: 1 }, { type: 'ADD_WEIGHT', massG: 50 }]);
-    const reading = selectReadings(r.getState())[1];
+    const r = drive([
+      { type: 'POWER_ON' },
+      { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
+      { type: 'ADD_WEIGHT', massG: 80 },
+      { type: 'RECORD_READING' },
+    ]);
+    const reading = selectReadings(r.getState())[0];
     reading.loadedWeightsG.push(999);
-    expect(selectReadings(r.getState())[1].loadedMassG).toBe(50);
+    expect(selectReadings(r.getState())[0].loadedMassG).toBe(80);
   });
 });
 
@@ -332,7 +380,6 @@ describe('reset', () => {
       { type: 'POWER_ON' },
       { type: 'SET_VALVE', opening: 0.5 },
       { type: 'ADD_WEIGHT', massG: 200 },
-      { type: 'BEGIN_READING', index: 1 },
       { type: 'RECORD_ACTUAL_FORCE' },
     ]);
 
@@ -372,9 +419,10 @@ describe('determinism', () => {
       { type: 'CLOSE_COVER' },
       { type: 'POWER_ON' },
       { type: 'SET_VALVE', opening: 0.4 },
-      { type: 'BEGIN_READING', index: 1 },
       { type: 'ADD_WEIGHT', massG: 50 },
-      { type: 'END_READING' },
+      { type: 'ADD_WEIGHT', massG: 20 },
+      { type: 'ADD_WEIGHT', massG: 10 },
+      { type: 'RECORD_READING' },
     ];
     expect(drive(script).getState()).toEqual(drive(script).getState());
   });
@@ -399,21 +447,36 @@ describe('selectors', () => {
   it('follow the deflector on the rod', () => {
     // Fitting a deflector needs the tank open, which needs the pump off — the runtime
     // enforces that through the state machine, so the sequence has to be a legal one.
-    const r = drive([{ type: 'OPEN_COVER' }]);
-    const before = selectReadings(r.getState())[1].theoreticalForceN;
+    const r = drive([{ type: 'OPEN_COVER' }, { type: 'CLOSE_COVER' }, { type: 'POWER_ON' }]);
+    r.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
+    const before = selectLiveRow(r.getState()).theoreticalForceN;
 
+    r.dispatch({ type: 'POWER_OFF' });
+    r.dispatch({ type: 'OPEN_COVER' });
     r.dispatch({ type: 'SELECT_DEFLECTOR', deflectorId: 180 });
+    r.dispatch({ type: 'CLOSE_COVER' });
+    r.dispatch({ type: 'POWER_ON' });
+    r.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
 
     // The 180 deg deflector turns the jet through twice the momentum change of the flat
-    // plate, and every row of the table follows it.
-    expect(selectReadings(r.getState())[1].theoreticalForceN).toBeCloseTo(before * 2, 9);
+    // plate.
+    expect(selectLiveRow(r.getState()).theoreticalForceN).toBeCloseTo(before * 2, 9);
   });
 
-  it('compute each row at its own fixed valve setting, not the live valve', () => {
-    // A detail worth pinning: the table's four rows are computed at 0, 0.4, 0.5 and 0.6
-    // whatever the valve is actually doing. Only the weights follow the student.
-    const r = drive([{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.9 }]);
-    expect(selectReadings(r.getState()).map((row) => row.valveOpening)).toEqual([0, 0.4, 0.5, 0.6]);
+  it('hold a recorded row at the setting it was taken at, not the live valve', () => {
+    // The counterpart of the old "each row at its own fixed setting": a row is now the
+    // reading it was, so moving the valve afterwards cannot rewrite it.
+    const r = drive([
+      { type: 'POWER_ON' },
+      { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
+      { type: 'ADD_WEIGHT', massG: 80 },
+      { type: 'RECORD_READING' },
+      { type: 'SET_VALVE', opening: 0.9 },
+    ]);
+    expect(selectReadings(r.getState()).map((row) => row.valveOpening)).toEqual([
+      FIRST_READING_VALVE,
+    ]);
+    expect(selectLiveRow(r.getState()).valveOpening).toBe(0.9);
   });
 });
 
@@ -440,33 +503,32 @@ describe('apparatus sequences', () => {
       },
     },
     {
+      // The tray is never emptied: the second reading is balanced by adding to the first.
       name: 'both readings, start to finish',
       commands: [
         { type: 'POWER_ON' },
         { type: 'SET_VALVE', opening: 0.4 },
-        { type: 'BEGIN_READING', index: 1 },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 20 },
         { type: 'ADD_WEIGHT', massG: 10 },
-        { type: 'END_READING' },
-        { type: 'REMOVE_ALL_WEIGHTS' },
+        { type: 'RECORD_READING' },
         { type: 'SET_VALVE', opening: 0.5 },
-        { type: 'BEGIN_READING', index: 2 },
-        { type: 'ADD_WEIGHT', massG: 200 },
+        { type: 'ADD_WEIGHT', massG: 100 },
         { type: 'ADD_WEIGHT', massG: 50 },
+        { type: 'ADD_WEIGHT', massG: 20 },
         { type: 'ADD_WEIGHT', massG: 10 },
-        { type: 'END_READING' },
-        { type: 'REMOVE_ALL_WEIGHTS' },
+        { type: 'RECORD_READING' },
         { type: 'RECORD_ACTUAL_FORCE' },
       ],
       expect: (s) => {
         const readings = selectReadings(s);
-        expect(readings[1].loadedMassG).toBe(80);
-        expect(readings[2].loadedMassG).toBe(260);
+        expect(readings).toHaveLength(2);
+        expect(readings[0].loadedMassG).toBe(80);
+        expect(readings[1].loadedMassG).toBe(260);
+        expect(readings[0].isBalanced).toBe(true);
         expect(readings[1].isBalanced).toBe(true);
-        expect(readings[2].isBalanced).toBe(true);
         expect(s.isActualForceRecorded).toBe(true);
-        expect(s.committedReadingCount).toBe(3);
+        expect(selectLoadedMassG(s)).toBe(260);
       },
     },
     {
@@ -497,12 +559,18 @@ describe('apparatus sequences', () => {
     {
       name: 'clearing the tray recovers from an over-loaded reading',
       commands: [
-        { type: 'BEGIN_READING', index: 1 },
+        { type: 'POWER_ON' },
+        { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
         { type: 'ADD_WEIGHT', massG: 500 },
+        { type: 'RECORD_READING' }, //      refused: 500 g is nowhere near balance
         { type: 'REMOVE_ALL_WEIGHTS' },
         { type: 'ADD_WEIGHT', massG: 80 },
+        { type: 'RECORD_READING' },
       ],
-      expect: (s) => expect(selectReadings(s)[1].loadedMassG).toBe(80),
+      expect: (s) => {
+        expect(selectReadings(s)).toHaveLength(1);
+        expect(selectReadings(s)[0].loadedMassG).toBe(80);
+      },
     },
   ];
 

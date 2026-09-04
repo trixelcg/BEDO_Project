@@ -73,7 +73,7 @@ describe('the Board view', () => {
 
   it('leaves the tray exactly as it was', () => {
     walkLesson(1, 5);
-    click('+50g');
+    click('Add 50 g');
     const mass = loadedMass();
 
     click(/^Board$/);

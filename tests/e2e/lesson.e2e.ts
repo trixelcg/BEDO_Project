@@ -1,5 +1,6 @@
 import { expect, test } from './fixture';
 import {
+  panMassG,
   button,
   confirmStep,
   currentStep,
@@ -73,13 +74,14 @@ test.describe('guided walkthrough', () => {
     await dismissPopup(page); // "the water jet pushes the deflector upward"
     await expectStep(page, 6);
 
-    // 6 — balance the pointer, reading 1 (target 80 g)
-    await expect(page.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeVisible();
+    // 6 — balance the pointer, reading 1 (83.6 g required, 80 g reachable)
+    await expect(page.getByText('Unbalanced')).toBeVisible();
+    await expect(page.locator('.balance-bar-figures')).toContainText('add 84 g');
     await expect(okButton(page)).toHaveCount(0);
-    for (const weight of ['+50g', '+20g', '+10g']) {
+    for (const weight of ['Add 50 g', 'Add 20 g', 'Add 10 g']) {
       await button(page, weight).click();
     }
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
+    await expect(page.getByText('Pointer balanced')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page); // "the shape of water impinging the deflector"
     await expectStep(page, 7);
@@ -91,12 +93,13 @@ test.describe('guided walkthrough', () => {
     await dismissPopup(page);
     await expectStep(page, 8);
 
-    // 8 — balance the pointer, reading 2 (target 260 g)
-    await expect(page.getByText(/Unbalanced \(target ≈ 260 g\)/)).toBeVisible();
-    for (const weight of ['+200g', '+50g', '+10g']) {
+    // 8 — balance the pointer, reading 2. The pan is cumulative: it still carries the
+    // 80 g from reading 1, and 257.9 g is now needed, so 180 g goes on.
+    await expect(page.locator('.balance-bar-figures')).toContainText('add 178 g');
+    for (const weight of ['Add 100 g', 'Add 50 g', 'Add 20 g', 'Add 10 g']) {
       await button(page, weight).click();
     }
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
+    await expect(page.getByText('Pointer balanced')).toBeVisible();
     await confirmStep(page);
     await expectStep(page, 9);
 
@@ -109,21 +112,23 @@ test.describe('guided walkthrough', () => {
     await expectStep(page, 10);
 
     // 10 — record the actual force
+    // Two rows, one per recorded reading — not the four the fixed valve settings used to
+    // generate whether or not anyone had taken them.
     const rows = page.locator('.data-table tbody tr');
-    await expect(rows).toHaveCount(4);
-    await expect(rows.nth(1).locator('td').nth(7)).toHaveText('—'); // F_ac not yet recorded
+    await expect(rows).toHaveCount(2);
+    await expect(rows.nth(0).locator('td').nth(7)).toHaveText('—'); // F_ac not yet recorded
     await button(page, 'Calculate').click();
     await expect(button(page, 'F_ac recorded')).toBeDisabled();
     await dismissPopup(page);
     await expectStep(page, 11);
 
     // The table now holds both readings and their measured force.
-    await expect(rows.nth(1).locator('td').nth(5)).toHaveText('80');
-    await expect(rows.nth(2).locator('td').nth(5)).toHaveText('260');
-    await expect(rows.nth(1).locator('td').nth(6)).toHaveText('0.8199'); // F_th, BEDO n = 0.4
-    await expect(rows.nth(2).locator('td').nth(6)).toHaveText('2.5303'); // F_th, n = 0.5
-    await expect(rows.nth(1).locator('td').nth(7)).toHaveText('0.7848'); // F_ac = 80 g x g
-    await expect(rows.nth(2).locator('td').nth(7)).toHaveText('2.5506'); // F_ac = 260 g x g
+    await expect(rows.nth(0).locator('td').nth(5)).toHaveText('80');
+    await expect(rows.nth(1).locator('td').nth(5)).toHaveText('260');
+    await expect(rows.nth(0).locator('td').nth(6)).toHaveText('0.8199'); // F_th, BEDO n = 0.4
+    await expect(rows.nth(1).locator('td').nth(6)).toHaveText('2.5303'); // F_th, n = 0.5
+    await expect(rows.nth(0).locator('td').nth(7)).toHaveText('0.7848'); // F_ac = 80 g x g
+    await expect(rows.nth(1).locator('td').nth(7)).toHaveText('2.5506'); // F_ac = 260 g x g
 
     // The assessment is still here, and still unnumbered.
     await expect(
@@ -251,13 +256,13 @@ test.describe('guided walkthrough', () => {
     await setValve(page, 0.4);
     await confirmStep(page);
     await dismissPopup(page);
-    for (const weight of ['+50g', '+20g', '+10g']) await button(page, weight).click();
+    for (const weight of ['Add 50 g', 'Add 20 g', 'Add 10 g']) await button(page, weight).click();
     await confirmStep(page);
     await dismissPopup(page);
     await setValve(page, 0.5);
     await confirmStep(page);
     await dismissPopup(page);
-    for (const weight of ['+200g', '+50g', '+10g']) await button(page, weight).click();
+    for (const weight of ['Add 200 g', 'Add 50 g', 'Add 10 g']) await button(page, weight).click();
     await confirmStep(page);
     await expectStep(page, 9);
     await button(page, 'Open Data Monitor').click();
@@ -287,27 +292,29 @@ test.describe('guided walkthrough', () => {
     await expectStep(page, 6); // balance reading 1, target 80 g
 
     // Overshoot, the way a learner does.
-    await button(page, '+200g').click();
-    await button(page, '+50g').click();
-    await expect(sidebar(page).getByText('250 g')).toBeVisible();
+    await button(page, 'Add 200 g').click();
+    await button(page, 'Add 50 g').click();
+    expect(await panMassG(page)).toBe(250);
     await expect(okButton(page)).toHaveCount(0);
 
     // Take off only the 200 g disc. The 50 g one stays.
     await button(page, 'Remove 200 g').click();
-    await expect(sidebar(page).getByText('50 g')).toBeVisible();
-    await expect(button(page, 'Remove 50 g')).toBeVisible();
-    await expect(button(page, 'Remove 200 g')).toHaveCount(0);
+    expect(await panMassG(page)).toBe(50);
+    await expect(button(page, 'Remove 50 g')).toBeEnabled();
+    // Every denomination keeps its row: the minus is disabled, not removed, so the panel
+    // never reflows under the pointer.
+    await expect(button(page, 'Remove 200 g')).toBeDisabled();
 
     // Two identical discs are two discs: add a second 10 g and take one back off.
-    await button(page, '+10g').click();
-    await button(page, '+10g').click();
-    await expect(sidebar(page).getByText('70 g')).toBeVisible();
-    await button(page, 'Remove 10 g').first().click();
-    await expect(sidebar(page).getByText('60 g')).toBeVisible();
+    await button(page, 'Add 10 g').click();
+    await button(page, 'Add 10 g').click();
+    expect(await panMassG(page)).toBe(70);
+    await button(page, 'Remove 10 g').click();
+    expect(await panMassG(page)).toBe(60);
 
     // Finish balancing and carry on — the derived state followed every removal.
-    await button(page, '+20g').click();
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
+    await button(page, 'Add 20 g').click();
+    await expect(page.getByText('Pointer balanced')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page);
     await expectStep(page, 7);
@@ -320,11 +327,11 @@ test.describe('guided walkthrough', () => {
 
     // Free mode puts the weights on the panel while the tank is still open.
     await button(page, 'Free Mode').click();
-    await button(page, '+50g').click();
+    await button(page, 'Add 50 g').click();
 
     await expect(page.locator('.warning-popup')).toContainText(
       'You can’t add weights while the tank is open.'
     );
-    await expect(page.getByText('0 g')).toBeVisible();
+    expect(await panMassG(page)).toBe(0);
   });
 });

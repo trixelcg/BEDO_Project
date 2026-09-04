@@ -142,15 +142,15 @@ describe('the live software board', () => {
     setValve(0.35);
     openBoard();
     const low = {
-      v0: liveValue('V₀'),
-      v: liveValue('V'),
+      v0: liveValue('V_nozzle'),
+      v: liveValue('V_impact'),
       f: liveValue('F_th'),
     };
     closeBoard();
     setValve(0.6);
     openBoard();
-    expect(liveValue('V₀')).not.toBe(low.v0);
-    expect(liveValue('V')).not.toBe(low.v);
+    expect(liveValue('V_nozzle')).not.toBe(low.v0);
+    expect(liveValue('V_impact')).not.toBe(low.v);
     expect(liveValue('F_th')).not.toBe(low.f);
     // Higher flow, larger force — the direction the equation gives.
     expect(parseFloat(liveValue('F_th'))).toBeGreaterThan(parseFloat(low.f));
@@ -162,17 +162,17 @@ describe('the live software board', () => {
     // Whatever is on the pan when the board is opened is what it must report. Before this
     // change the board summed `recordedRows`, which read 0 g in free mode and the sum of
     // both readings once they were taken.
-    click('+50g');
+    click('Add 50 g');
     openBoard();
     expect(totalWeightG()).toBe(50);
 
     closeBoard();
-    click('+20g');
+    click('Add 20 g');
     openBoard();
     expect(totalWeightG()).toBe(70);
 
     closeBoard();
-    click(/Clear all weights/);
+    click(/Clear pan/);
     openBoard();
     expect(totalWeightG()).toBe(0);
   });
@@ -240,7 +240,7 @@ describe('the live software board', () => {
   it('returns the live board to rest after Reset', () => {
     freeRig();
     setValve(0.6);
-    click('+50g');
+    click('Add 50 g');
     openBoard();
     expect(liveValue('Valve opening')).toBe('60 %');
     expect(totalWeightG()).toBe(50);
@@ -290,7 +290,7 @@ describe('the docked software board', () => {
     // The valve, the weight buttons and the cover are all still in the document and
     // operable — before this they were behind an opaque full-viewport panel.
     expect(document.querySelector('.valve-slider-container input[type="range"]')).not.toBeNull();
-    expect(screen.getByRole('button', { name: '+50g' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Add 50 g' })).toBeDefined();
     expect(screen.getByRole('button', { name: /Open tank cover/i })).toBeDefined();
   });
 
@@ -312,11 +312,11 @@ describe('the docked software board', () => {
     freeRig();
     openBoard();
 
-    click('+50g');
+    click('Add 50 g');
     expect(totalWeightG()).toBe(50);
-    click('+100g');
+    click('Add 100 g');
     expect(totalWeightG()).toBe(150);
-    click(/Clear all weights/);
+    click(/Clear pan/);
     expect(totalWeightG()).toBe(0);
   });
 
@@ -426,11 +426,11 @@ describe('the board during the guided experiment', () => {
     walkLesson(1, 5);
     openUtility();
 
-    click('+50g');
+    click('Add 50 g');
     expect(totalWeightG()).toBe(50);
-    click('+20g');
+    click('Add 20 g');
     expect(totalWeightG()).toBe(70);
-    click(/Clear all weights/);
+    click(/Clear pan/);
     expect(totalWeightG()).toBe(0);
   });
 

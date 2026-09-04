@@ -1,5 +1,6 @@
 import { expect, test } from './fixture';
 import {
+  panMassG,
   FULL_MODEL,
   button,
   distance,
@@ -65,12 +66,12 @@ test.describe('carrying a weight to the holder', () => {
 
     // --- On to the holder --------------------------------------------------------
     const sent = Date.now();
-    const outbound = await probe.record(() => button(page, '+50g').click());
+    const outbound = await probe.record(() => button(page, 'Add 50 g').click());
     expect(Date.now() - sent, 'the disc appeared instead of moving').toBeGreaterThan(1500);
 
     // The rig changed state on the click — that is what the storyboard's Transition column
     // says — so the disc was loaded even while it was still on its way.
-    await expect(sidebar(page).getByText('50 g')).toBeVisible();
+    expect(await panMassG(page)).toBe(50);
     expect(outbound.length, 'no frame showed a disc in the air').toBeGreaterThan(0);
 
     for (const frame of outbound) {
@@ -110,7 +111,7 @@ test.describe('carrying a weight to the holder', () => {
       expect(frame.seats).toHaveLength(0);
     }
     expect(await probe.flying()).toHaveLength(0);
-    await expect(button(page, 'Remove 50 g')).toHaveCount(0);
+    await expect(button(page, 'Remove 50 g')).toBeDisabled();
   });
 
   test('gives each disc of a duplicate pair its own seat', async ({ page }) => {
@@ -118,9 +119,9 @@ test.describe('carrying a weight to the holder', () => {
     // discs, and the second one flies to the seat above the first.
     const probe = await openFreeMode(page);
 
-    await button(page, '+50g').click();
+    await button(page, 'Add 50 g').click();
     await transfersIdle(page);
-    await button(page, '+50g').click();
+    await button(page, 'Add 50 g').click();
     await transfersIdle(page);
 
     const seats = await probe.seats();
@@ -132,7 +133,7 @@ test.describe('carrying a weight to the holder', () => {
     expect(Math.hypot(upper[0] - lower[0], upper[2] - lower[2])).toBeLessThan(1e-6);
 
     // Taking one off leaves exactly one, still where it was.
-    await button(page, 'Remove 50 g').first().click();
+    await button(page, 'Remove 50 g').click();
     await transfersIdle(page);
     const left = await probe.seats();
     expect(left).toHaveLength(1);
@@ -148,10 +149,10 @@ test.describe('carrying a weight to the holder', () => {
     // balancing a reading means several discs in a row.
     const probe = await openFreeMode(page);
 
-    await button(page, '+100g').click();
+    await button(page, 'Add 100 g').click();
     await transfersIdle(page);
 
-    const midFlight = await probe.record(() => button(page, '+200g').click());
+    const midFlight = await probe.record(() => button(page, 'Add 200 g').click());
     expect(midFlight.length).toBeGreaterThan(0);
     for (const frame of midFlight) {
       expect(frame.flying).toHaveLength(1);
@@ -161,7 +162,7 @@ test.describe('carrying a weight to the holder', () => {
       ).toBe(false);
     }
     // Adding is still on the table.
-    await expect(button(page, '+50g')).toBeEnabled();
+    await expect(button(page, 'Add 50 g')).toBeEnabled();
     await expect(button(page, 'Remove 100 g')).toBeEnabled();
     const seats = await probe.seats();
     expect(seats).toHaveLength(2);
@@ -180,7 +181,7 @@ test.describe('carrying a weight to the holder', () => {
 
     // One disc, two of the same denomination, and a third of another: single, duplicate and
     // multiple all in one stack.
-    for (const w of ['+50g', '+50g', '+100g']) {
+    for (const w of ['Add 50 g', 'Add 50 g', 'Add 100 g']) {
       await button(page, w).click();
       await transfersIdle(page);
     }
@@ -248,7 +249,7 @@ test.describe('carrying a weight to the holder', () => {
     // §16. No cancelled flight may arrive after the rig has been put back.
     const probe = await openFreeMode(page);
 
-    await button(page, '+200g').click();
+    await button(page, 'Add 200 g').click();
     await transfersIdle(page);
     await expect(button(page, 'Remove 200 g')).toBeEnabled();
 
@@ -269,15 +270,15 @@ test.describe('carrying a weight to the holder', () => {
       };
       requestAnimationFrame(tick);
     });
-    await button(page, '+100g').click();
+    await button(page, 'Add 100 g').click();
     await transfersIdle(page);
 
     // The flight was abandoned, the rig is back to nothing, and no arrival was reported for
     // a disc that never landed.
     expect(await probe.flying()).toHaveLength(0);
     expect(await probe.seats()).toHaveLength(0);
-    await expect(button(page, 'Remove 100 g')).toHaveCount(0);
-    await expect(button(page, 'Remove 200 g')).toHaveCount(0);
+    await expect(button(page, 'Remove 100 g')).toBeDisabled();
+    await expect(button(page, 'Remove 200 g')).toBeDisabled();
     // Still nothing after the flight's two seconds would long since have elapsed.
     await expect(sidebar(page).getByText('0 g').first()).toBeVisible();
     expect(await probe.seats()).toHaveLength(0);

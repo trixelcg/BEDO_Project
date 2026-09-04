@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BALANCE_TOLERANCE_G,
+  BALANCE_TOLERANCE_FLOOR_G,
+  BALANCE_TOLERANCE_FRACTION,
+  balanceDeviation,
+  balanceToleranceG,
   FIRST_READING_VALVE,
   GRAVITY_MS2,
   NOZZLE_AREA_M2,
@@ -79,8 +82,40 @@ describe('constants', () => {
     expect((0.4905 / SPRING_RATE_N_PER_M) * 1000).toBeCloseTo(2.4525, 9);
   });
 
-  it('balance tolerance is measured against the exact mass, in grams', () => {
-    expect(BALANCE_TOLERANCE_G).toBe(10);
+  it('balance tolerance is 2 % of the exact mass, floored at half the smallest disc', () => {
+    expect(BALANCE_TOLERANCE_FRACTION).toBe(0.02);
+    expect(BALANCE_TOLERANCE_FLOOR_G).toBe(5);
+    // The floor binds at the first reading and the fraction binds at the second.
+    expect(balanceToleranceG(83.5804)).toBeCloseTo(5, 9);
+    expect(balanceToleranceG(257.9307)).toBeCloseTo(5.158614, 6);
+  });
+
+  it('a strict 2 % would make the first reading unreachable with the stocked weights', () => {
+    // Why the floor exists, stated as a fact rather than left in a comment: the tray is
+    // stocked in 10 g steps, so 80 g and 90 g are the only loads either side of 83.58 g,
+    // and both are further than 2 % away.
+    const exact = 83.5804;
+    const strict = BALANCE_TOLERANCE_FRACTION * exact;
+    expect(Math.abs(80 - exact)).toBeGreaterThan(strict);
+    expect(Math.abs(90 - exact)).toBeGreaterThan(strict);
+    // With the floor, exactly one of them is reachable.
+    expect(balanceDeviation(80, exact).isBalanced).toBe(true);
+    expect(balanceDeviation(90, exact).isBalanced).toBe(false);
+  });
+
+  it('reports the deviation signed, so the panel can say add or remove', () => {
+    expect(balanceDeviation(70, 83.5804).deviationG).toBeCloseTo(-13.5804, 4);
+    expect(balanceDeviation(100, 83.5804).deviationG).toBeCloseTo(16.4196, 4);
+    expect(balanceDeviation(100, 83.5804).deviationFraction).toBeCloseTo(0.196453, 6);
+  });
+
+  it('never reports a rig at rest as balanced', () => {
+    // 0 g on the tray against a jet asking for 0 g is arithmetically inside any window,
+    // and calling it balanced is what let a reading be taken before the pump delivered.
+    const rest = balanceDeviation(0, 0);
+    expect(rest.deviationG).toBe(0);
+    expect(rest.deviationFraction).toBe(0);
+    expect(rest.isBalanced).toBe(false);
   });
 
   it('pins the four table valve settings and the snap margin', () => {
@@ -316,23 +351,31 @@ describe('computeRow', () => {
     expect(r.targetMassG).toBe(80);
   });
 
-  it('balances within 10 g of the exact mass, not of the rounded target', () => {
-    // The regression this pins: judged against the rounded target, an empty tray
-    // "balanced" any target under 30 g and adding a weight made it worse.
+  it('balances against the exact mass, not the rounded target', () => {
+    // Exact mass 83.5804 g; the window is the 5 g floor, so 78.58 - 88.58 g.
     expect(row([]).isBalanced).toBe(false);
     expect(row([50, 20, 10]).isBalanced).toBe(true); // 80 g, 3.6 g from exact
-    expect(row([50, 20, 20]).isBalanced).toBe(true); // 90 g, 6.4 g from exact
+    expect(row([50, 20, 20]).isBalanced).toBe(false); // 90 g, 6.4 g from exact
     expect(row([50, 50]).isBalanced).toBe(false); // 100 g, 16.4 g from exact
     expect(row([50, 20]).isBalanced).toBe(false); // 70 g, 13.6 g from exact
   });
 
-  it('balances the second reading at 260 g', () => {
-    // Exact mass here is 257.9 g, so the 10 g window spans 247.9 - 267.9 g.
+  it('balances the second reading at 260 g and rejects 250 g', () => {
+    // Exact mass 257.9307 g, window +/-5.159 g: 252.77 - 263.09 g. 250 g used to pass
+    // against a flat 10 g window while the panel still displayed "target 260 g" — the
+    // defect this replaces.
     expect(row([200, 50, 10], SECOND_READING_VALVE).isBalanced).toBe(true); // 260 g
-    expect(row([200, 50], SECOND_READING_VALVE).isBalanced).toBe(true); // 250 g
+    expect(row([200, 50], SECOND_READING_VALVE).isBalanced).toBe(false); // 250 g
     expect(row([200, 20, 10], SECOND_READING_VALVE).isBalanced).toBe(false); // 230 g
     expect(row([200], SECOND_READING_VALVE).isBalanced).toBe(false); // 200 g
     expect(row([], SECOND_READING_VALVE).balancingMassG).toBeCloseTo(257.9307, 3);
+  });
+
+  it('carries the signed deviation onto the row the panel renders', () => {
+    const r = row([50, 20]); // 70 g against 83.5804 g
+    expect(r.deviationG).toBeCloseTo(-13.5805, 3);
+    expect(r.deviationFraction).toBeCloseTo(-0.1624842, 6);
+    expect(r.toleranceG).toBeCloseTo(5, 9);
   });
 
   it('treats the closed-valve row as a zero row', () => {
@@ -342,7 +385,8 @@ describe('computeRow', () => {
     expect(r.impactVelocityMS).toBe(0);
     expect(r.theoreticalForceN).toBe(0);
     expect(r.targetMassG).toBe(0);
-    expect(r.isBalanced).toBe(true);
+    // A shut valve asks for nothing, and nothing is not a balanced reading.
+    expect(r.isBalanced).toBe(false);
   });
 
   it('is deterministic: the same inputs give the same row', () => {

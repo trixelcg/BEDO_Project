@@ -115,7 +115,8 @@ describe('BUG-05 — the tray cannot install another experiment’s deflector', 
     dismissPopup();
     walkLesson(2, 9);
 
-    const cells = [...document.querySelectorAll('.data-table tbody tr')][1]?.querySelectorAll('td');
+    // Row 1 is now the first reading itself, not the generated zero row above it.
+    const cells = [...document.querySelectorAll('.data-table tbody tr')][0]?.querySelectorAll('td');
     expect(cells?.[6].textContent).toBe('0.8199');
   });
 
@@ -181,8 +182,8 @@ describe('taking one disc off the holder', () => {
 
   it('removes only the disc that was clicked, from the panel', () => {
     reachBalanceStep();
-    click('+50g');
-    click('+20g');
+    click('Add 50 g');
+    click('Add 20 g');
     expect(pan()).toBe(70);
 
     click('Remove 50 g');
@@ -192,8 +193,8 @@ describe('taking one disc off the holder', () => {
 
   it('removes only the disc that was clicked, from the scene', () => {
     reachBalanceStep();
-    click('+50g');
-    click('+20g');
+    click('Add 50 g');
+    click('Add 20 g');
 
     clickMesh('scene-loaded-weight-0'); // the 50 g disc, at the bottom of the stack
 
@@ -202,8 +203,8 @@ describe('taking one disc off the holder', () => {
 
   it('takes exactly one of two identical discs', () => {
     reachBalanceStep();
-    click('+50g');
-    click('+50g');
+    click('Add 50 g');
+    click('Add 50 g');
     expect(pan()).toBe(100);
 
     clickMesh('scene-loaded-weight-1');
@@ -215,16 +216,16 @@ describe('taking one disc off the holder', () => {
     // The recovery the gate has to allow: overshoot the 80 g target, take the excess off,
     // and finish the step.
     reachBalanceStep();
-    click('+200g');
-    click('+50g');
+    click('Add 200 g');
+    click('Add 50 g');
     expect(okButton()).toBeNull();
 
     click('Remove 200 g');
-    click('+20g');
-    click('+10g');
+    click('Add 20 g');
+    click('Add 10 g');
 
     expect(pan()).toBe(80);
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
+    expect(screen.getByText('Pointer balanced')).toBeDefined();
     clickOk();
     dismissPopup();
     expect(currentStep()).toBe(7);
@@ -232,22 +233,30 @@ describe('taking one disc off the holder', () => {
 
   it('keeps clear-all working alongside it', () => {
     reachBalanceStep();
-    click('+50g');
-    click('+20g');
-    click('Clear all weights');
+    click('Add 50 g');
+    click('Add 20 g');
+    click('Clear pan');
     expect(pan()).toBe(0);
   });
 
-  it('offers no remove buttons when the pan is empty', () => {
+  it('disables, rather than hides, the remove buttons when the pan is empty', () => {
+    // The panel's layout is fixed now: every denomination keeps its row whatever is on the
+    // pan, because a row that appears on the first click moves every button under the
+    // pointer. So the minus is present and disabled rather than absent.
     reachBalanceStep();
-    expect(screen.queryByRole('button', { name: /^Remove/ })).toBeNull();
-    click('+50g');
-    expect(screen.getByRole('button', { name: 'Remove 50 g' })).toBeDefined();
+    const remove50 = screen.getByRole('button', { name: 'Remove 50 g' }) as HTMLButtonElement;
+    expect(remove50.disabled).toBe(true);
+
+    click('Add 50 g');
+    expect((screen.getByRole('button', { name: 'Remove 50 g' }) as HTMLButtonElement).disabled).toBe(
+      false
+    );
   });
 
-  it('does not disturb a reading that is already committed', () => {
+  it('does not disturb a reading that is already recorded', () => {
     // Reading 1 is settled at 80 g. Taking a disc off *during reading 2* must not touch
-    // it — committed rows are snapshots (BEDO-022 §19).
+    // it — recorded rows are snapshots (BEDO-022 §19). The pan is cumulative, so it still
+    // carries reading 1's 80 g throughout.
     walkLesson(1, 6);
     expect(currentStep()).toBe(7);
     setValve(0.5);
@@ -255,28 +264,30 @@ describe('taking one disc off the holder', () => {
     dismissPopup();
     expect(currentStep()).toBe(8);
 
-    click('+500g');
+    click('Add 500 g');
     click('Remove 500 g'); // a wrong disc, taken back off
-    expect(pan()).toBe(0);
+    expect(pan()).toBe(80);
 
-    click('+200g');
-    click('+50g');
-    click('+10g');
+    click('Add 100 g');
+    click('Add 50 g');
+    click('Add 20 g');
+    click('Add 10 g');
     clickOk();
     dismissPopup();
     click('Open Data Monitor');
 
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows[1].querySelectorAll('td')[5].textContent).toBe('80'); // reading 1, intact
-    expect(rows[2].querySelectorAll('td')[5].textContent).toBe('260'); // reading 2
+    expect(rows).toHaveLength(2);
+    expect(rows[0].querySelectorAll('td')[5].textContent).toBe('80'); // reading 1, intact
+    expect(rows[1].querySelectorAll('td')[5].textContent).toBe('260'); // reading 2
   });
 
   it('is refused at a step that is not about the pan', () => {
     // The guided procedure clears the holder between readings, so the reachable way to
     // stand at a non-weight step with discs loaded is to load them in free mode first.
     click('Free Mode');
-    click('+50g');
-    click('+20g');
+    click('Add 50 g');
+    click('Add 20 g');
     expect(pan()).toBe(70);
     click('Guided Mode');
     expect(currentStep()).toBe(1); // step 1 is about the cover

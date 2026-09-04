@@ -19,7 +19,13 @@ import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
 import type { LessonContext, LessonExpectation } from './lesson/schema';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
-import { selectExperiment, selectLiveReadout, selectReadings } from './simulation/selectors';
+import {
+  selectCanRecordReading,
+  selectExperiment,
+  selectLiveReadout,
+  selectLiveRow,
+  selectReadings,
+} from './simulation/selectors';
 import {
   availableAffordances,
   deflectorsSelectableIn,
@@ -242,11 +248,23 @@ export default function App() {
     return buildSteps(d.nameEn, d.nameAr);
   }, [simulation.apparatus.selectedDeflectorId]);
 
+  /**
+   * The rig as one results row — what the balance indicator reads, and the row a
+   * `RECORD_READING` would write. Derived, never stored.
+   */
+  const liveRow = useMemo(() => selectLiveRow(simulation), [simulation]);
+
   /** Everything a completion condition may look at. */
   const context: LessonContext = useMemo(
-    () => ({ simulation, readings }),
-    [simulation, readings]
+    () => ({ simulation, readings, liveRow }),
+    [simulation, readings, liveRow]
   );
+
+  /** The same context, rebuilt from the runtime after a command has landed. */
+  const contextNow = useCallback((): LessonContext => {
+    const next = runtime.getState();
+    return { simulation: next, readings: selectReadings(next), liveRow: selectLiveRow(next) };
+  }, [runtime]);
 
   const clearWarning = useCallback(() => setUi((prev) => ({ ...prev, warningMessage: null })), []);
   const clearNotice = useCallback(() => setUi((prev) => ({ ...prev, notice: null })), []);
@@ -362,11 +380,11 @@ export default function App() {
       if (expectation) {
         // The runner reads the state *after* the command, which is why this is not done
         // from the memoised context above.
-        applyAdvance(runner.notify(expectation, { simulation: runtime.getState(), readings: selectReadings(runtime.getState()) }));
+        applyAdvance(runner.notify(expectation, contextNow()));
       }
       return true;
     },
-    [runtime, runner, showRejection, showLessonBlock, applyAdvance]
+    [runtime, runner, showRejection, showLessonBlock, applyAdvance, contextNow]
   );
 
   /** Shorthand for the common case: an apparatus intent. */
@@ -476,6 +494,26 @@ export default function App() {
   const handleClearWeights = () => act({ type: 'REMOVE_ALL_WEIGHTS' });
 
   /**
+   * Take the reading that is on screen — the single explicit event that creates a row.
+   *
+   * In guided mode the balance step already *is* this action: its confirmation carries
+   * `RECORD_READING` in `onComplete`. Routing through the runner there keeps one path, so
+   * the panel's button and the step's OK cannot record twice or disagree about when. Off
+   * a balance step — free mode, or a learner recording an extra point — it goes straight
+   * to the runtime, which refuses an unbalanced tray on its own.
+   */
+  const stepRecordsReading = () =>
+    runner.getCurrentStep().onComplete?.some((c) => c.type === 'RECORD_READING') === true;
+
+  const handleRecordReading = () => {
+    if (lessonState.mode === 'guided' && stepRecordsReading() && runner.canConfirm(context)) {
+      applyAdvance(runner.confirm(context));
+      return;
+    }
+    runtime.dispatch({ type: 'RECORD_READING' });
+  };
+
+  /**
    * Take one disc back off the holder.
    *
    * By stack position, which is what the storyboard's *"click on the weight on holder"*
@@ -497,12 +535,7 @@ export default function App() {
   const handleCalculate = () => {
     if (!interact({ kind: 'presentation', action: 'RECORD_ACTUAL_FORCE' })) return;
     runtime.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
-    applyAdvance(
-      runner.notify('RECORD_ACTUAL_FORCE', {
-        simulation: runtime.getState(),
-        readings: selectReadings(runtime.getState()),
-      })
-    );
+    applyAdvance(runner.notify('RECORD_ACTUAL_FORCE', contextNow()));
   };
 
   const handleAnswerQuiz = (choice: number) => setUi((prev) => ({ ...prev, quizAnswer: choice }));
@@ -668,7 +701,10 @@ export default function App() {
       // during that step; the fallback covers the one who just presses OK.
       hasInstalledDeflector: ui.deflectorInstalled || runner.hasCompleted('install-deflector'),
       runId: ui.runId,
-      activeReadingIndex: simulation.activeReadingIndex,
+      readingsTaken: readings.length,
+      recordsReading:
+        currentStep.onComplete?.some((c) => c.type === 'RECORD_READING') === true,
+      canRecordReading: selectCanRecordReading(simulation),
       isComplete: lessonState.isComplete,
       answerSheetUrl: answerSheetFor(simulation.experimentId),
     }),
@@ -685,8 +721,8 @@ export default function App() {
       // The Board view overrides `cameraView`; without this the memo keeps handing the
       // rig the step's own framing and the camera never leaves it.
       ui.boardView,
-      simulation.activeReadingIndex,
-      simulation.experimentId,
+      readings,
+      simulation,
       lessonState.isComplete,
     ]
   );
@@ -710,6 +746,7 @@ export default function App() {
       isVolumetricValveOpen: simulation.apparatus.isVolumetricValveOpen,
       recordedRows: readings,
       live: selectLiveReadout(simulation),
+      liveRow,
       showMonitor: ui.showMonitor,
       monitorExpanded: ui.monitorExpanded,
       isCalculated: simulation.isActualForceRecorded,
@@ -718,7 +755,7 @@ export default function App() {
       warningMessage: ui.warningMessage,
       notice: ui.notice,
     }),
-    [ui, simulation, readings, lessonState.mode]
+    [ui, simulation, readings, liveRow, lessonState.mode]
   );
 
   const deflector = getDeflector(simulation.apparatus.selectedDeflectorId);
@@ -772,6 +809,7 @@ export default function App() {
           canRemoveWeights={weights.canRemove}
           onAddWeight={handleAddWeight}
           onClearWeights={handleClearWeights}
+          onRecordReading={handleRecordReading}
           onRemoveWeight={handleRemoveWeight}
           onTogglePower={handleTogglePower}
           onCoverClick={handleCoverClick}

@@ -171,16 +171,18 @@ describe('the lesson ends at eleven', () => {
     setValve(0.4); //                   5 flow
     clickOk();
     dismissPopup();
-    click('+100g'); //                  6 balance 1 — target 167 g
-    click('+50g');
-    click('+20g');
+    click('Add 100 g'); //                  6 balance 1 — needs 167.2 g, 170 g is inside
+    click('Add 50 g');
+    click('Add 20 g');
     clickOk();
     dismissPopup();
     setValve(0.5); //                   7 flow again
     clickOk();
     dismissPopup();
-    click('+500g'); //                  8 balance 2 — target 516 g
-    click('+20g');
+    // 8 balance 2 — needs 515.9 g in total, and the pan already carries 170 g.
+    click('Add 200 g');
+    click('Add 100 g');
+    click('Add 50 g');
     clickOk();
     dismissPopup();
     click('Open Data Monitor'); //      9 monitor

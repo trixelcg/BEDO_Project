@@ -21,6 +21,7 @@ import {
   ListChecks,
 } from 'lucide-react';
 import { WEIGHTS, type DeflectorDef } from '../domain/apparatus';
+import type { RecordRow } from '../domain/physics';
 import { markReady } from '../lib/readiness';
 import { StepInstructionCard } from './StepInstructionCard';
 import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
@@ -40,6 +41,14 @@ interface UIOverlayProps {
   onSetValve: (val: number) => void;
   onAddWeight: (weight: number) => void;
   onClearWeights: () => void;
+  /**
+   * Take the reading that is on screen.
+   *
+   * The single explicit event that creates a results row (Phase 1.1/1.2). In guided mode
+   * it is the balance step's confirmation, so this control and the step's OK are the same
+   * action; in free mode it is the only way to record one.
+   */
+  onRecordReading: () => void;
   /** Take one disc off the holder, by its position in the stack. */
   onRemoveWeight: (index: number) => void;
   /**
@@ -83,6 +92,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
   onSetValve,
   onAddWeight,
   onClearWeights,
+  onRecordReading,
   onRemoveWeight,
   canRemoveWeights,
   onTogglePower,
@@ -119,7 +129,6 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     isPowerOn,
     valveOpening,
     loadedWeightsG,
-    recordedRows,
     warningMessage,
     notice,
     params,
@@ -141,21 +150,35 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
    */
   const asideForWeights = lesson.isGuided && lesson.target === 'weights';
 
-  const totalLoadedWeight = loadedWeightsG.reduce((a, b) => a + b, 0);
+  /*
+    One authority for the mass on the pan.
+
+    `state.live.loadedMassG` is `selectLoadedMassG`, the same selector the board and the
+    software monitor read. This used to re-sum `loadedWeightsG` here, which happened to
+    agree — but the monitor summed the results table instead and did not, so the three
+    surfaces printed three different Total Weights.
+  */
+  const totalLoadedWeight = state.live.loadedMassG;
   const flow = flowRateLMin(valveOpening, params.pumpFlowLMin);
 
-  // Which reading is being balanced is simulation state, and whether the step is ready to
-  // confirm is the lesson runner's answer. Both used to be worked out here from the step
-  // number, in a predicate that disagreed with the one in `DeviceModel`.
-  const activeRow =
-    lesson.activeReadingIndex !== null ? recordedRows[lesson.activeReadingIndex] : undefined;
-  const readingsTaken = [1, 2].filter((i) => (recordedRows[i]?.loadedMassG ?? 0) > 0).length;
+  /** The rig as one row: balancing mass, signed deviation, tolerance. Never a table row. */
+  const liveRow = state.liveRow;
+  const readingsTaken = lesson.readingsTaken;
 
   // In Free mode every control is on the panel at once; in Guided mode only the ones the
   // current step asks for.
   const show = (control: PanelControl) => !guided || lesson.panelControls.includes(control);
 
   const okVisible = lesson.canConfirm;
+
+  /**
+   * The step's confirm lives in the weights panel, as "Record reading".
+   *
+   * A balance step is finished by recording the reading, and the Record button belongs
+   * beside the balance bar that says whether it may be pressed. Without this the card
+   * offers a second button with the same label and the same effect.
+   */
+  const recordInPanel = lesson.recordsReading && show('weights');
 
   const weightOptions = [...WEIGHTS.map((w) => w.grams), params.customWeightG].filter(
     (g, i, arr) => g > 0 && arr.indexOf(g) === i
@@ -284,82 +307,99 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
 
       {/* Weights */}
       {show('weights') && (
-        <div
-          className="glass-card"
-          style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-            <span>{isAr ? 'الأوزان المضافة:' : 'Added weights:'}</span>
+        <div className="glass-card weights-panel">
+          <div className="weights-total">
+            <span>{isAr ? 'الأوزان على القاعدة' : 'Weights on pan'}</span>
             <span
               // A stable hook, like the cover's. Matching on the visible words breaks in
               // Arabic and moved with the control when the guided dock replaced the
               // sidebar; the value should be readable wherever the row is rendered.
               data-bedo-loaded-weight={totalLoadedWeight}
-              style={{ color: 'var(--accent-gold)', fontWeight: 700 }}
             >
               {totalLoadedWeight} g
             </span>
           </div>
 
-          <div className="weight-pan-grid">
-            {weightOptions.map((g) => (
-              <button key={g} className="weight-add-btn" onClick={() => onAddWeight(g)}>
-                +{g}g
-              </button>
-            ))}
+          {/*
+            One fixed row per denomination: minus, mass, count, plus.
+
+            **The layout never reflows.** The panel used to render the add buttons, and
+            then a *second* grid of remove buttons that only existed once something was on
+            the pan. Adding the first disc grew the panel by a row and shoved every button
+            up by about 56 px, so the student's next click — aimed at the same place —
+            landed on a different denomination. Intending 50 + 20 + 10 produced 750 g.
+            Every row is present from the first paint, with a count of zero, so nothing
+            moves for the whole of the balancing step.
+          */}
+          <div className="weight-rows">
+            {weightOptions.map((g) => {
+              const count = loadedWeightsG.filter((disc) => disc === g).length;
+              // By stack position, not by mass: two 50 g discs are two discs, and the one
+              // taken off is the one on top.
+              const topIndex = loadedWeightsG.lastIndexOf(g);
+              return (
+                <div className="weight-row" key={g}>
+                  <button
+                    type="button"
+                    className="weight-step"
+                    disabled={count === 0 || !canRemoveWeights}
+                    onClick={() => onRemoveWeight(topIndex)}
+                    aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
+                    title={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
+                  >
+                    −
+                  </button>
+                  <span className="weight-row-mass">{g} g</span>
+                  <span className={`weight-row-count${count > 0 ? ' is-loaded' : ''}`}>
+                    ×{count}
+                  </span>
+                  <button
+                    type="button"
+                    className="weight-step"
+                    onClick={() => onAddWeight(g)}
+                    aria-label={isAr ? `إضافة ${g} غرام` : `Add ${g} g`}
+                    title={isAr ? `إضافة ${g} غرام` : `Add ${g} g`}
+                  >
+                    +
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
-          {/*
-            The discs on the holder, in the order they were stacked. Clicking one
-            takes that one off — the storyboard's "click on the weight on holder"
-            (sl. 32), which the panel had no equivalent for. Position, not mass:
-            two 50 g discs are two discs.
-          */}
-          {loadedWeightsG.length > 0 && (
-            <div className="weight-pan-grid">
-              {loadedWeightsG.map((g, index) => (
-                <button
-                  key={`${index}-${g}`}
-                  className="weight-add-btn"
-                  disabled={!canRemoveWeights}
-                  onClick={() => onRemoveWeight(index)}
-                  title={isAr ? `إزالة ${g} غ` : `Remove ${g} g`}
-                  aria-label={isAr ? `إزالة ${g} غرام` : `Remove ${g} g`}
-                  style={{ borderColor: 'var(--danger-red)', color: 'var(--danger-red)' }}
-                >
-                  −{g}g
-                </button>
-              ))}
-            </div>
-          )}
+          <BalanceBar row={liveRow} isAr={isAr} />
 
-          <button
-            className="btn-secondary"
-            disabled={!canRemoveWeights}
-            onClick={onClearWeights}
-            style={{ color: 'var(--danger-red)' }}
-          >
-            {isAr ? 'إزالة كافة الأوزان' : 'Clear all weights'}
-          </button>
-
-          {activeRow && (
-            <div
-              className={`indicator-card ${
-                activeRow.isBalanced ? 'indicator-balanced' : 'indicator-unbalanced'
-              }`}
+          <div className="weights-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={!canRemoveWeights || totalLoadedWeight === 0}
+              onClick={onClearWeights}
             >
-              <Scale size={16} />
-              <span>
-                {activeRow.isBalanced
-                  ? isAr
-                    ? 'المؤشر متوازن!'
-                    : 'Pointer balanced!'
-                  : isAr
-                    ? `غير متوازن (الهدف ≈ ${activeRow.targetMassG.toFixed(0)} غ)`
-                    : `Unbalanced (target ≈ ${activeRow.targetMassG.toFixed(0)} g)`}
-              </span>
-            </div>
-          )}
+              {isAr ? 'إفراغ القاعدة' : 'Clear pan'}
+            </button>
+            {/*
+              The one explicit event that creates a results row.
+
+              Disabled while the tray is off balance, for the same reason the runtime
+              ignores the command then: a recorded reading is a balanced reading. The
+              counter beside it used to climb on every disc, because the row being
+              balanced *was* a table row.
+            */}
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!lesson.canRecordReading}
+              onClick={onRecordReading}
+              style={{
+                background: lesson.canRecordReading ? 'var(--success-green)' : undefined,
+                color: lesson.canRecordReading ? '#0b1416' : undefined,
+              }}
+            >
+              <ClipboardList size={15} />
+              {isAr ? 'تسجيل القراءة' : 'Record reading'}
+            </button>
+          </div>
         </div>
       )}
 
@@ -771,6 +811,7 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                 lesson={lesson}
                 language={state.language}
                 okVisible={okVisible}
+                okInPanel={recordInPanel}
                 onOkClick={onOkClick}
                 showAnswerSheet={show('answerSheet')}
                 onOpenAnswerSheet={onOpenAnswerSheet}
@@ -795,6 +836,20 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
               {isAr ? 'القراءات المسجلة:' : 'Recorded readings:'}{' '}
               <span style={{ color: readingsTaken >= 2 ? 'var(--success-green)' : '#fff' }}>
                 {readingsTaken} / 2
+              </span>
+            </span>
+            {/*
+              The mass on the pan, on screen at every step rather than only at the two that
+              show the weights panel. Same selector as the board and the monitor — this is
+              the third of the three surfaces that used to disagree about Total Weight.
+            */}
+            <span className="guided-cover-state">
+              {isAr ? 'على القاعدة:' : 'On pan:'}{' '}
+              <span
+                data-bedo-loaded-weight={totalLoadedWeight}
+                style={{ color: 'var(--accent-gold)', direction: 'ltr', unicodeBidi: 'isolate' }}
+              >
+                {totalLoadedWeight} g
               </span>
             </span>
             <button className="guided-footer-btn" onClick={onCoverClick}>
@@ -918,6 +973,103 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
     </div>
   );
 };
+
+
+/**
+ * How far the tray is from balancing the jet, and which way.
+ *
+ * Replaces a boolean and a rounded target. "Unbalanced (target ≈ 260 g)" was true of
+ * 250 g and of 0 g alike, and the 250 g case was also being *accepted* as balanced — a
+ * 4 % error against a window the panel never showed. This states the deviation, the
+ * direction and the number of grams that closes it.
+ *
+ * The bar's full width is +/-20 % of the required mass; beyond that the marker pins to the
+ * end rather than leaving the track. The green band is the tolerance actually in force,
+ * which is 2 % or the 5 g floor, whichever is wider — so the band a student aims at is
+ * the band the rig judges them by.
+ */
+const DEVIATION_SCALE = 0.2;
+
+const BalanceBar: React.FC<{ row: RecordRow; isAr: boolean }> = ({ row, isAr }) => {
+  // No jet, nothing to balance. Saying "unbalanced" here would be a complaint about a rig
+  // that has not been asked to do anything yet.
+  if (!(row.balancingMassG > 0)) {
+    return (
+      <div className="balance-bar is-idle" role="status">
+        <Scale size={15} />
+        <span>{isAr ? 'افتح صمام التدفق لتحميل العاكس' : 'Open the flow valve to load the deflector'}</span>
+      </div>
+    );
+  }
+
+  const pct = row.deviationFraction * 100;
+  const bandPct = (row.toleranceG / row.balancingMassG) * 100;
+  const clamp = (v: number) => Math.max(-1, Math.min(1, v));
+  const markerPct = 50 + clamp(row.deviationFraction / DEVIATION_SCALE) * 50;
+  const bandHalf = Math.min(50, (bandPct / 100 / DEVIATION_SCALE) * 50);
+  const missingG = Math.round(Math.abs(row.deviationG));
+
+  const hint = row.isBalanced
+    ? isAr
+      ? 'متوازن'
+      : 'Balanced'
+    : row.deviationG < 0
+      ? isAr
+        ? `أضف ${missingG} غرام`
+        : `add ${missingG} g`
+      : isAr
+        ? `أزل ${missingG} غرام`
+        : `remove ${missingG} g`;
+
+  return (
+    <div
+      className={`balance-bar ${row.isBalanced ? 'is-balanced' : 'is-unbalanced'}`}
+      // Polite, not assertive: the value changes with every disc, and a student loading
+      // the pan should not be interrupted on each one.
+      role="status"
+      aria-live="polite"
+    >
+      <div className="balance-bar-head">
+        <span className="balance-bar-state">
+          <Scale size={15} />
+          {row.isBalanced
+            ? isAr
+              ? 'المؤشر متوازن'
+              : 'Pointer balanced'
+            : isAr
+              ? 'غير متوازن'
+              : 'Unbalanced'}
+        </span>
+        <span className="balance-bar-figures" style={NUMERIC_LTR}>
+          {pct >= 0 ? '+' : '−'}
+          {Math.abs(pct).toFixed(1)} % · {hint}
+        </span>
+      </div>
+
+      <div className="balance-bar-track" aria-hidden="true">
+        <span
+          className="balance-bar-band"
+          style={{ left: `${50 - bandHalf}%`, width: `${bandHalf * 2}%` }}
+        />
+        <span className="balance-bar-datum" />
+        <span className="balance-bar-marker" style={{ left: `${markerPct}%` }} />
+      </div>
+
+      <div className="balance-bar-foot" style={NUMERIC_LTR}>
+        {isAr ? 'المطلوب' : 'Required'} {row.balancingMassG.toFixed(1)} g ·{' '}
+        {isAr ? 'السماحية' : 'tolerance'} ±{row.toleranceG.toFixed(1)} g
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Numbers stay left-to-right inside an Arabic panel.
+ *
+ * Without the isolate the bidi algorithm reorders the neutral characters in a mixed run
+ * and "−16.2 % · add 14 g" comes out with the value detached from its unit.
+ */
+const NUMERIC_LTR: React.CSSProperties = { direction: 'ltr', unicodeBidi: 'isolate' };
 
 const getFactor = (list: DeflectorDef[], id: number) =>
   list.find((d) => d.id === id)?.momentumFactor.toFixed(3) ?? '—';

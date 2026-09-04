@@ -15,9 +15,15 @@ import type { Lesson, LessonContext } from './schema';
 const valveAtLeast = (setpoint: number) => (context: LessonContext) =>
   context.simulation.apparatus.valveOpening >= setpoint - VALVE_SNAP_MARGIN;
 
-/** The tray balances the jet for a given results row. */
-const readingBalanced = (index: number) => (context: LessonContext) =>
-  context.readings[index]?.isBalanced === true;
+/**
+ * The tray balances the jet at the setting the rig is holding right now.
+ *
+ * One predicate for both balance steps, because the question is the same one: is what is
+ * on the pan the mass this jet asks for? It was `readingBalanced(1)` and
+ * `readingBalanced(2)` against a pre-generated table, which meant the row — and the
+ * "recorded readings" counter over it — moved while the student was still balancing.
+ */
+const trayBalanced = (context: LessonContext) => context.liveRow.isBalanced;
 
 const never = () => false;
 const always = () => true;
@@ -107,11 +113,10 @@ export const CURRENT_LESSON: Lesson = {
       expectation: { type: 'SET_VALVE' },
       isSatisfied: valveAtLeast(FIRST_READING_VALVE),
       advance: { kind: 'confirm', when: valveAtLeast(FIRST_READING_VALVE) },
-      // Settle on the exact setpoint the first row is computed at, and start that reading.
-      onComplete: [
-        { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
-        { type: 'BEGIN_READING', index: 1 },
-      ],
+      // Settle on the exact setpoint the first reading is taken at. Nothing is recorded
+      // here — the reading is created by the balance step that follows, and only if the
+      // student actually balances it.
+      onComplete: [{ type: 'SET_VALVE', opening: FIRST_READING_VALVE }],
     },
     {
       id: 'balance-reading-1',
@@ -120,9 +125,15 @@ export const CURRENT_LESSON: Lesson = {
       highlight: ['weights'],
       panelControls: ['weights'],
       expectation: { type: 'ADD_WEIGHT' },
-      isSatisfied: readingBalanced(1),
-      advance: { kind: 'confirm', when: readingBalanced(1) },
-      onComplete: [{ type: 'END_READING' }, { type: 'REMOVE_ALL_WEIGHTS' }],
+      isSatisfied: trayBalanced,
+      advance: { kind: 'confirm', when: trayBalanced },
+      // Confirming *is* recording, and the tray is left exactly as it is.
+      //
+      // The pan used to be emptied here. On the real apparatus the discs stay on and the
+      // student adds more for the next reading, and clearing it also made the board and
+      // the monitor read "Total Weight 0 g" beside a table row saying 250 g. The pan is
+      // cleared by Reset and by loading another sheet, and by nothing else.
+      onComplete: [{ type: 'RECORD_READING' }],
     },
     {
       id: 'increase-flow-reading-2',
@@ -133,10 +144,7 @@ export const CURRENT_LESSON: Lesson = {
       expectation: { type: 'SET_VALVE' },
       isSatisfied: valveAtLeast(SECOND_READING_VALVE),
       advance: { kind: 'confirm', when: valveAtLeast(SECOND_READING_VALVE) },
-      onComplete: [
-        { type: 'SET_VALVE', opening: SECOND_READING_VALVE },
-        { type: 'BEGIN_READING', index: 2 },
-      ],
+      onComplete: [{ type: 'SET_VALVE', opening: SECOND_READING_VALVE }],
     },
     {
       id: 'balance-reading-2',
@@ -145,9 +153,11 @@ export const CURRENT_LESSON: Lesson = {
       highlight: ['weights'],
       panelControls: ['weights'],
       expectation: { type: 'ADD_WEIGHT' },
-      isSatisfied: readingBalanced(2),
-      advance: { kind: 'confirm', when: readingBalanced(2) },
-      onComplete: [{ type: 'END_READING' }, { type: 'REMOVE_ALL_WEIGHTS' }],
+      isSatisfied: trayBalanced,
+      advance: { kind: 'confirm', when: trayBalanced },
+      // Cumulative, like the first: the tray already carries the first reading's discs and
+      // the student adds to them until it balances the stronger jet.
+      onComplete: [{ type: 'RECORD_READING' }],
     },
     {
       id: 'open-monitor',

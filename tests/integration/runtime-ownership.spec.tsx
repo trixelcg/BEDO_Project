@@ -2,6 +2,8 @@
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  setValve,
+  balanceHint,
   click,
   clickMesh,
   coverState,
@@ -50,20 +52,21 @@ describe('one source of truth', () => {
   it('weights added from the scene and from the panel land on one tray', () => {
     click('Free Mode');
     clickMesh('scene-weight-100'); // 3D
-    click('+50g'); //                 panel
+    click('Add 50 g'); //                 panel
     expect(loadedWeightG()).toBe(150);
 
-    click('Clear all weights');
+    click('Clear pan');
     expect(loadedWeightG()).toBe(0);
   });
 
-  it('the results table follows the tray without a second copy of the weights', () => {
+  it('the balance readout follows the tray without a second copy of the weights', () => {
     walkLesson(1, 5); // through to the first balance step
-    click('+50g');
-    expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
-    click('+20g');
-    click('+10g');
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
+    click('Add 50 g');
+    expect(screen.getByText('Unbalanced')).toBeDefined();
+    expect(balanceHint()).toMatch(/add 34 g/);
+    click('Add 20 g');
+    click('Add 10 g');
+    expect(screen.getByText('Pointer balanced')).toBeDefined();
   });
 
   it('a refused action changes nothing anywhere', () => {
@@ -83,29 +86,30 @@ describe('one source of truth', () => {
     walkLesson(1, 10);
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
     const mass = (row: number) => rows[row].querySelectorAll('td')[5].textContent;
-    expect(mass(1)).toBe('80');
-    expect(mass(2)).toBe('260');
+    expect(rows).toHaveLength(2);
+    expect(mass(0)).toBe('80');
+    expect(mass(1)).toBe('260');
   });
 
   it('reset returns the rig, the lesson and the table together', () => {
     walkLesson(1, 5);
-    click('+50g');
+    click('Add 50 g');
     expect(loadedWeightG()).toBe(50);
 
     click('Reset simulator');
 
     expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 11');
     expect(coverState()).toBe('Closed');
-    // The table is derived, so it resets with the rig rather than needing its own clear.
+    // The table is derived from the recorded readings, so it empties with the rig rather
+    // than needing its own clear — and an empty table now prints nothing at all.
     click('Free Mode');
     click('Open Data Monitor');
-    const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows.map((r) => r.querySelectorAll('td')[5].textContent)).toEqual(['0', '0', '0', '0']);
+    expect(document.querySelectorAll('.data-table tbody tr td[colspan]')).toHaveLength(1);
   });
 
   it('switching experiment reloads the rig and the readings', () => {
     walkLesson(1, 5);
-    click('+50g');
+    click('Add 50 g');
 
     click('Experiments');
     click('Exp. 3 — Conical surface deflector');
@@ -129,8 +133,14 @@ describe('one source of truth', () => {
     fireEvent.change(slider, { target: { value: '60' } });
 
     click('Steps');
+    click(/Turn On Pump/);
+    setValve(0.4);
     click('Open Data Monitor');
-    const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows[1].querySelectorAll('td')[1].textContent).toBe('7.857'); // 15.714 / 2
+    // Read from the live panel rather than the table: the table now holds only readings
+    // the student recorded, and this is a question about the physics, not about recording.
+    const q = Array.from(document.querySelectorAll('.mon-cell')).find(
+      (el) => el.querySelector('.mon-lbl')?.textContent?.trim() === 'Q'
+    );
+    expect(q?.querySelector('.mon-val')?.textContent).toContain('7.857'); // 15.714 / 2
   });
 });

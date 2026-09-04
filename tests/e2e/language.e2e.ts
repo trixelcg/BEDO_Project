@@ -62,7 +62,7 @@ test('a guard message renders right-to-left in Arabic and left-to-right in Engli
   await button(page, 'العربية').click();
   await button(page, 'الوضع الحر').click(); // Free mode
   await pressCover(page);
-  await button(page, '+50g').click();
+  await button(page, 'Add 50 g').click();
 
   const arabicPopup = popup(page);
   await expect(arabicPopup).toContainText('لا يمكن إضافة الأوزان أثناء فتح الخزان.');
@@ -125,7 +125,7 @@ test('the deflector-scope refusal and the remove control are bilingual', async (
   await page.locator('.ok-confirm-btn').click();
   await popup(page).getByRole('button').dispatchEvent('click');
 
-  await button(page, '+50g').click();
+  await button(page, 'Add 50 g').click();
   await expect(button(page, 'إزالة 50 غرام')).toBeVisible();
   await button(page, 'إزالة 50 غرام').click();
   await expect(button(page, 'إزالة 50 غرام')).toHaveCount(0);

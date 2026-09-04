@@ -230,31 +230,210 @@ input[type="range"]::-webkit-slider-thumb:hover {
   box-shadow: 0 0 12px rgba(0, 229, 255, 0.9);
 }
 
-/* Weight tray selector list */
-.weight-pan-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin-top: 12px;
+/*
+  The weights panel.
+
+  Fixed layout, by construction: one row per denomination, always rendered, whatever is on
+  the pan. The old panel drew the add buttons and then a second grid of remove buttons that
+  only appeared once a disc was on the tray — so the first click grew the panel by a row and
+  moved every button under the pointer.
+*/
+.weights-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
-.weight-add-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.weights-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.weights-total > span:last-child {
+  color: var(--accent-gold);
+  font-weight: 700;
+  font-size: 15px;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.weight-rows {
+  display: grid;
+  /* Two columns of rows at panel width, one in a narrow dock. */
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 6px;
+}
+
+.weight-row {
+  display: grid;
+  /* Fixed tracks: the count never changes the width of anything around it. */
+  grid-template-columns: 30px 1fr 34px 30px;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
-  padding: 8px 4px;
-  font-size: 11px;
+  padding: 3px 5px;
+}
+
+.weight-step {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
   color: #fff;
   cursor: pointer;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 6px 0;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.weight-step:hover:not(:disabled) {
+  background: rgba(0, 229, 255, 0.12);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.weight-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.weight-row-mass {
+  font-size: 12px;
+  font-weight: 600;
   text-align: center;
-  transition: all 0.2s;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.weight-row-count {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  color: #6d8790;
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.weight-row-count.is-loaded {
+  color: var(--accent-gold);
+}
+
+.weights-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.weights-actions .btn-secondary {
+  color: var(--danger-red);
+}
+
+/*
+  The balance readout.
+
+  A signed deviation and the grams that close it, not a boolean and a rounded target. The
+  green band is the tolerance actually in force, so what a student aims at is what the rig
+  judges them by.
+*/
+.balance-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 9px 11px;
+}
+
+.balance-bar.is-idle {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #8fa7ad;
+}
+
+.balance-bar.is-balanced {
+  border-color: var(--success-green);
+  background: rgba(0, 214, 143, 0.08);
+}
+
+.balance-bar.is-unbalanced {
+  border-color: var(--accent-gold);
+  background: rgba(245, 130, 32, 0.07);
+}
+
+.balance-bar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
-.weight-add-btn:hover {
-  background: rgba(0, 229, 255, 0.1);
-  border-color: var(--accent-blue);
-  color: var(--accent-blue);
+.balance-bar-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.balance-bar.is-balanced .balance-bar-state { color: var(--success-green); }
+.balance-bar.is-unbalanced .balance-bar-state { color: var(--accent-gold); }
+
+.balance-bar-figures {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.balance-bar-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.balance-bar-band {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 214, 143, 0.32);
+}
+
+.balance-bar-datum {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.balance-bar-marker {
+  position: absolute;
+  top: -2px;
+  width: 3px;
+  height: 12px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: #fff;
+  transition: left 0.2s ease-out;
+}
+
+.balance-bar-foot {
+  font-size: 10.5px;
+  color: #8fa7ad;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .balance-bar-marker { transition: none; }
 }
 
 /* Balanced indicator */
@@ -808,7 +987,9 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .guided-controls,
 .guided-controls .glass-card { font-size: 14px; }
 .guided-controls button { font-size: 14px; padding: 9px 14px; }
-.guided-controls .weight-add-btn { font-size: 14px; padding: 10px 12px; min-width: 60px; }
+.guided-controls .weight-step { font-size: 17px; padding: 9px 0; }
+.guided-controls .weight-row-mass,
+.guided-controls .weight-row-count { font-size: 13px; }
 
 /* The instruction card itself. */
 .step-card {
@@ -1282,18 +1463,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
   force-vs-flow plot, the quiz, the seven-deflector list and the three families that are not
   installed. Nothing live is hidden (BEDO-UX-12B §8).
 */
-.monitor-docked .plot-header,
-.monitor-docked .plot-canvas,
 .monitor-docked .dfl-list-wrap,
 .monitor-docked .dfl-fig:not(.is-active) { display: none; }
 
 /*
-  The plot goes, the assessment stays.
+  The plot is drawn in the dock too.
 
-  Both live inside `.plot-container`, so hiding the container took the closing step's
-  question with it and the learner could not answer without expanding the board. The chart
-  is reference material; the question is part of the lesson.
+  It used to be `display: none` here, so the chart section rendered as a header and a
+  legend with nothing between them — the monitor always opens docked, and the plot only
+  appeared if the learner happened to press Expand. It is the point of the closing steps,
+  so it stays; the dock gives it a shorter canvas instead of removing it.
 */
+.monitor-docked .plot-canvas { min-height: 170px; }
+.monitor-docked .plot-header { margin-bottom: 10px; font-size: 13px; }
 .monitor-docked .plot-container { background: none; border: none; padding: 0; }
 
 .monitor-docked .dfl-board { display: block; padding: 0; }
@@ -1327,3 +1509,12 @@ input[type="range"]::-webkit-slider-thumb:hover {
   row stays, because `Back to Step` is in it and leaving must always be one click away.
 */
 .ui-container.is-board-view .guided-dock { display: none; }
+
+/* The empty results table says why it is empty rather than showing invented rows. */
+.data-table-empty {
+  text-align: center;
+  color: #8fa7ad;
+  font-size: 11.5px;
+  padding: 18px 10px;
+  font-style: italic;
+}

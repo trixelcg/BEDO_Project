@@ -181,8 +181,20 @@ export function drawBoard(
   write(FIELD.liveForce.u, FIELD.liveForce.v, `F_th  ${values.theoreticalForceN.toFixed(4)} N`, {
     size: 30,
   });
-  write(FIELD.liveV0.u, FIELD.liveV0.v, `V₀  ${values.nozzleVelocity.toFixed(3)} m/s`, { size: 30 });
-  write(FIELD.liveV.u, FIELD.liveV.v, `V  ${values.impactVelocity.toFixed(3)} m/s`, { size: 30 });
+  /*
+    `V_nozzle` and `V_impact`, not `V₀` and `V`.
+
+    The board, the monitor's live tiles and its table headers each named these two
+    velocities differently, so the same 3.336 m/s appeared as `V_o` in one place and `V_th`
+    in another. One pair of names, everywhere: `V_nozzle` is Q/A at the bore, `V_impact` is
+    what is left after the 35 mm climb to the vane.
+  */
+  write(FIELD.liveV0.u, FIELD.liveV0.v, `V_nozzle  ${values.nozzleVelocity.toFixed(3)} m/s`, {
+    size: 26,
+  });
+  write(FIELD.liveV.u, FIELD.liveV.v, `V_impact  ${values.impactVelocity.toFixed(3)} m/s`, {
+    size: 26,
+  });
 
   /*
     The installed deflector, marked rather than repainted.

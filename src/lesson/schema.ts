@@ -50,6 +50,7 @@ export type LessonExpectation =
   | { readonly type: 'SET_VALVE' }
   | { readonly type: 'ADD_WEIGHT' }
   | { readonly type: 'OPEN_MONITOR' }
+  | { readonly type: 'RECORD_READING' }
   | { readonly type: 'RECORD_ACTUAL_FORCE' }
   | { readonly type: 'OPEN_ANSWER_SHEET' };
 
@@ -75,8 +76,17 @@ export type PanelControl =
 /** Everything a completion condition is allowed to look at. */
 export interface LessonContext {
   readonly simulation: SimulationState;
-  /** The results table, derived — a balance step is complete when its row balances. */
+  /** The results table: one row per reading actually recorded. */
   readonly readings: readonly RecordRow[];
+  /**
+   * The rig as one row, right now.
+   *
+   * A balance step completes on this, not on a table row. It used to read
+   * `readings[1]` / `readings[2]` — rows that existed before anyone took them and that
+   * followed the tray, which is the same conflation that made the readings counter climb
+   * during balancing.
+   */
+  readonly liveRow: RecordRow;
 }
 
 /**
@@ -142,8 +152,9 @@ export interface LessonStepDefinition {
   /**
    * Simulation commands the step issues as it completes.
    *
-   * This is where the last index-keyed rule went: `BEGIN_READING { index }` is *data on
-   * the step that starts a reading*, so the simulation never learns a step number.
+   * This is where the last index-keyed rule went: a balance step carries `RECORD_READING`,
+   * so the simulation never learns a step number — and, since the runtime refuses to
+   * record an unbalanced tray, a step cannot write a row the student did not earn.
    */
   readonly onComplete?: readonly SimulationCommand[];
 }

@@ -1,5 +1,6 @@
 import { expect, test } from './fixture';
 import {
+  panMassG,
   FULL_MODEL,
   button,
   confirmStep,
@@ -229,9 +230,9 @@ test.describe('taking a weight off the holder', () => {
     await expectStep(page, 6); // balance reading 1, target 80 g
 
     // Two discs on, deliberately overshooting the target.
-    await button(page, '+200g').click();
-    await button(page, '+50g').click();
-    await expect(sidebar(page).getByText('250 g')).toBeVisible();
+    await button(page, 'Add 200 g').click();
+    await button(page, 'Add 50 g').click();
+    expect(await panMassG(page)).toBe(250);
     await expect(okButton(page)).toHaveCount(0);
     await transfersIdle(page);
 
@@ -239,17 +240,17 @@ test.describe('taking a weight off the holder', () => {
     // sends — and watch it fly home.
     const released = Date.now();
     await button(page, 'Remove 50 g').click();
-    await expect(sidebar(page).getByText('200 g')).toBeVisible();
+    expect(await panMassG(page)).toBe(200);
     await transfersIdle(page);
     expect(Date.now() - released, 'the disc vanished instead of moving').toBeGreaterThan(1500);
 
     // Exactly one instance left, and the lesson carries on from there.
-    await expect(button(page, 'Remove 200 g')).toBeVisible();
-    await expect(button(page, 'Remove 50 g')).toHaveCount(0);
+    await expect(button(page, 'Remove 200 g')).toBeEnabled();
+    await expect(button(page, 'Remove 50 g')).toBeDisabled();
     await button(page, 'Remove 200 g').click();
     await transfersIdle(page);
-    for (const weight of ['+50g', '+20g', '+10g']) await button(page, weight).click();
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
+    for (const weight of ['Add 50 g', 'Add 20 g', 'Add 10 g']) await button(page, weight).click();
+    await expect(page.getByText('Pointer balanced')).toBeVisible();
     await confirmStep(page);
     await dismissPopup(page);
     await expectStep(page, 7);

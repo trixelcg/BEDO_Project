@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { attempt, restingState, type ApparatusState } from '../../src/domain/stateMachine';
 import { createSimulationRuntime } from '../../src/simulation/runtime';
-import { selectLoadedMassG, selectReadings } from '../../src/simulation/selectors';
+import { selectLiveRow, selectLoadedMassG, selectReadings } from '../../src/simulation/selectors';
 import { evaluateInteraction } from '../../src/interaction/gate';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
 
@@ -148,43 +148,40 @@ describe('through the runtime', () => {
     expect(selectLoadedMassG(runtime.getState())).toBe(70);
   });
 
-  it('keeps the live reading in step with the pan', () => {
+  it('keeps the live row in step with the pan', () => {
     const runtime = createSimulationRuntime();
     runtime.dispatch({ type: 'OPEN_COVER' });
     runtime.dispatch({ type: 'CLOSE_COVER' });
     runtime.dispatch({ type: 'POWER_ON' });
     runtime.dispatch({ type: 'SET_VALVE', opening: 0.4 });
-    runtime.dispatch({ type: 'BEGIN_READING', index: 1 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 50 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 20 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 10 });
-    expect(selectReadings(runtime.getState())[1].isBalanced).toBe(true);
+    expect(selectLiveRow(runtime.getState()).isBalanced).toBe(true);
 
     runtime.dispatch({ type: 'REMOVE_WEIGHT', index: 0 });
 
-    const row = selectReadings(runtime.getState())[1];
+    const row = selectLiveRow(runtime.getState());
     expect(row.loadedMassG).toBe(30);
     expect(row.isBalanced).toBe(false);
   });
 
-  it('does not rewrite a reading that has already been committed', () => {
-    // BEDO-022 §19: committed rows are snapshots. Emptying the pan for the next reading
-    // must not erase the last one — which is exactly what the lesson does between
-    // readings 1 and 2.
+  it('does not rewrite a reading that has already been recorded', () => {
+    // BEDO-022 §19: recorded rows are snapshots. Taking a disc back off after the reading
+    // was taken changes the pan, not the row.
     const runtime = createSimulationRuntime();
     runtime.dispatch({ type: 'POWER_ON' });
     runtime.dispatch({ type: 'SET_VALVE', opening: 0.4 });
-    runtime.dispatch({ type: 'BEGIN_READING', index: 1 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 50 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 20 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 10 });
-    runtime.dispatch({ type: 'END_READING' });
-    const committed = selectReadings(runtime.getState())[1].loadedMassG;
-    expect(committed).toBe(80);
+    runtime.dispatch({ type: 'RECORD_READING' });
+    expect(selectReadings(runtime.getState())[0].loadedMassG).toBe(80);
 
     runtime.dispatch({ type: 'REMOVE_WEIGHT', index: 0 });
 
-    expect(selectReadings(runtime.getState())[1].loadedMassG).toBe(80);
+    expect(selectReadings(runtime.getState())[0].loadedMassG).toBe(80);
+    expect(selectLoadedMassG(runtime.getState())).toBe(30);
   });
 });
 

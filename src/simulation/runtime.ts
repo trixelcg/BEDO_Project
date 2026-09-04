@@ -33,18 +33,31 @@ import { getExperiment } from '../domain/experiments';
 import {
   createInitialSimulationState,
   freezeSimulationState,
+  type RecordedReading,
   type SimulationState,
 } from './state';
+import { computeRow } from '../domain/physics';
 
 /** Commands the simulation understands beyond the apparatus itself. */
 export type SimulationCommand =
   | ApparatusAction
   | { readonly type: 'SET_PUMP_FLOW'; readonly lPerMin: number }
   | { readonly type: 'SELECT_EXPERIMENT'; readonly experimentId: ExperimentId }
-  /** Start balancing a results row; its row follows the tray until the reading ends. */
-  | { readonly type: 'BEGIN_READING'; readonly index: number }
-  /** Finish the active reading: whatever is on the tray is committed to its row. */
-  | { readonly type: 'END_READING' }
+  /**
+   * Take a reading: the valve, the deflector and the tray, as they stand, become a row.
+   *
+   * **The only way a results row is ever created.** `BEGIN_READING` / `END_READING`
+   * replaced it: those bracketed a row that already existed and already followed the
+   * tray, so the table and its counter moved while the student was still balancing.
+   *
+   * Refused — as a no-op, not an error — unless the tray actually balances the jet. That
+   * is not a safety rule and produces no message; it is the invariant that makes "a
+   * recorded reading is a balanced reading" true by construction rather than by the UI
+   * remembering to disable a button.
+   */
+  | { readonly type: 'RECORD_READING' }
+  /** Discard the last recorded reading. */
+  | { readonly type: 'UNDO_READING' }
   /** Press Calculate: F_ac joins the table. */
   | { readonly type: 'RECORD_ACTUAL_FORCE' };
 
@@ -91,6 +104,22 @@ const APPARATUS_COMMANDS = new Set([
 const isApparatusAction = (command: SimulationCommand): command is ApparatusAction =>
   APPARATUS_COMMANDS.has(command.type);
 
+/**
+ * The rig as one results row, right now.
+ *
+ * Duplicated from `selectors.liveRow` on purpose — the runtime may not import the
+ * selector layer, which is built on top of it. Both call the same `computeRow`, so there
+ * is still one implementation of the physics.
+ */
+const liveRow = (state: SimulationState) =>
+  computeRow(
+    state.recordedReadings.length,
+    state.apparatus.valveOpening,
+    state.apparatus.selectedDeflectorId,
+    [...state.apparatus.loadedWeightsG],
+    state.pumpFlowLMin
+  );
+
 /** Applies a simulation-level command. Returns the same object when nothing changed. */
 function applyCommand(state: SimulationState, command: SimulationCommand): SimulationState {
   switch (command.type) {
@@ -105,28 +134,23 @@ function applyCommand(state: SimulationState, command: SimulationCommand): Simul
       return createInitialSimulationState(command.experimentId, state.pumpFlowLMin);
     }
 
-    case 'BEGIN_READING': {
-      if (state.activeReadingIndex === command.index) return state;
-      return {
-        ...state,
-        activeReadingIndex: command.index,
-        // Every row before this one is settled, whether or not it carried weights.
-        committedReadingCount: Math.max(state.committedReadingCount, command.index),
+    case 'RECORD_READING': {
+      // The one check, made here rather than in the caller, because "recorded implies
+      // balanced" has to hold for every route into the runtime — the panel, the monitor
+      // and a step's own onComplete alike.
+      if (!liveRow(state).isBalanced) return state;
+      const reading: RecordedReading = {
+        valveOpening: state.apparatus.valveOpening,
+        deflectorId: state.apparatus.selectedDeflectorId,
+        pumpFlowLMin: state.pumpFlowLMin,
+        loadedWeightsG: [...state.apparatus.loadedWeightsG],
       };
+      return { ...state, recordedReadings: [...state.recordedReadings, reading] };
     }
 
-    case 'END_READING': {
-      const index = state.activeReadingIndex;
-      if (index === null) return state;
-      const committedWeightsG = [...state.committedWeightsG];
-      while (committedWeightsG.length <= index) committedWeightsG.push([]);
-      committedWeightsG[index] = [...state.apparatus.loadedWeightsG];
-      return {
-        ...state,
-        activeReadingIndex: null,
-        committedReadingCount: Math.max(state.committedReadingCount, index + 1),
-        committedWeightsG,
-      };
+    case 'UNDO_READING': {
+      if (state.recordedReadings.length === 0) return state;
+      return { ...state, recordedReadings: state.recordedReadings.slice(0, -1) };
     }
 
     case 'RECORD_ACTUAL_FORCE':
