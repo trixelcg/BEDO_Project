@@ -1518,3 +1518,111 @@ input[type="range"]::-webkit-slider-thumb:hover {
   padding: 18px 10px;
   font-style: italic;
 }
+
+/*
+  The volumetric measuring tank.
+
+  The control and its readout are one block: the button used to sit alone and toggle a
+  label, which is why it read as dead. What it does is start and stop the measurement
+  below it, so the two are shown together.
+*/
+.volumetric-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.vol-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vol-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #8fa7ad;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vol-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #8fa7ad;
+}
+
+.vol-badge.is-collecting {
+  border-color: var(--success-green);
+  color: var(--success-green);
+  background: rgba(0, 214, 143, 0.1);
+}
+
+.vol-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 6px;
+}
+
+.vol-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.vol-cell-accent {
+  border-color: rgba(0, 229, 255, 0.3);
+  background: rgba(0, 229, 255, 0.06);
+}
+
+.vol-lbl {
+  font-size: 10px;
+  color: #8fa7ad;
+}
+
+.vol-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.vol-cell-accent .vol-val {
+  color: var(--accent-blue);
+}
+
+.vol-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.vol-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(0, 229, 255, 0.5), var(--accent-blue));
+  transition: width 0.2s linear;
+}
+
+.vol-note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #8fa7ad;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vol-fill { transition: none; }
+}

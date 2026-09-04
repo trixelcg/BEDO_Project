@@ -72,6 +72,7 @@ describe('src/domain imports nothing from the outside world', () => {
       'spring.ts',
       'stateMachine.ts',
       'units.ts',
+      'volumetric.ts',
     ]);
   });
 

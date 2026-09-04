@@ -75,8 +75,14 @@ describeBuilt('the production bundle', () => {
     // drei's `extendLoader` is synchronous and `KHR_texture_basisu` sits in
     // `extensionsRequired`, so the loader must be attached before the GLB is parsed.
     // That buys a 420 MB reduction in GPU texture residency. Headroom is kept tight.
+    //
+    // Raised a second time for the remediation phases: the balance readout, the volumetric
+    // tank and its readout, the sight-gauge column and the computed chart curve together
+    // measure about +7 KB (+1.7 KB gzip). No dependency was added — the ceiling moves for
+    // application code, and the point of keeping it tight is that a library slipping into
+    // the initial chunk would blow through it rather than hide inside the slack.
     expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
-      1_380_000
+      1_400_000
     );
   });
 

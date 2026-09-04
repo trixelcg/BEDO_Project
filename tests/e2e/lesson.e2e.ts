@@ -64,8 +64,8 @@ test.describe('guided walkthrough', () => {
 
     // The volumetric valve is no longer a step — it is an affordance, still on the panel
     // and still operable, and operating it must not move the lesson (`docs/35 §3`).
-    await expect(button(page, 'Open volumetric valve')).toBeVisible();
-    await button(page, 'Open volumetric valve').click();
+    await expect(button(page, /dump valve/i)).toBeVisible();
+    await button(page, /dump valve/i).click();
     await expectStep(page, 5);
 
     // 5 — open the flow valve to the first reading setpoint
@@ -204,7 +204,7 @@ test.describe('guided walkthrough', () => {
     await dismissPopup(page);
 
     // The valve is always available, so it is *not* refused here — and does not advance.
-    await button(page, 'Open volumetric valve').click();
+    await button(page, /dump valve/i).click();
     await expectStep(page, 2);
 
     // And the lesson continues normally from the step it was always on.

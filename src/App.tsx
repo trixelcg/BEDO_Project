@@ -35,6 +35,7 @@ import {
   type LessonBlockReason,
 } from './interaction/gate';
 import { FIRST_READING_VALVE, VALVE_SNAP_MARGIN } from './domain/physics';
+import { emptyMeasurement, type VolumetricMeasurement } from './domain/volumetric';
 import './index.css';
 
 /**
@@ -486,6 +487,16 @@ export default function App() {
    */
   const [weights, setWeights] = useState<WeightAvailability>({ canAdd: true, canRemove: true });
 
+  /**
+   * The volumetric measurement, as the panel sees it.
+   *
+   * Owned by the scene's frame loop — the tank fills continuously and React must not follow
+   * it — and pushed here five times a second, which is the resolution a stopwatch is read
+   * at. Presentation state: nothing in the domain or the lesson depends on it, and the
+   * arithmetic is `src/domain/volumetric.ts`.
+   */
+  const [volumetric, setVolumetric] = useState<VolumetricMeasurement>(emptyMeasurement);
+
   const handleAddWeight = (weight: number) => {
     if (!weights.canAdd) return;
     act({ type: 'ADD_WEIGHT', massG: weight }, 'ADD_WEIGHT');
@@ -630,6 +641,7 @@ export default function App() {
   const handleReset = () => {
     runtime.reset();
     runner.reset();
+    setVolumetric(emptyMeasurement());
     setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
 
@@ -752,10 +764,11 @@ export default function App() {
       isCalculated: simulation.isActualForceRecorded,
       quizAnswer: ui.quizAnswer,
       params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: ui.customWeightG },
+      volumetric,
       warningMessage: ui.warningMessage,
       notice: ui.notice,
     }),
-    [ui, simulation, readings, liveRow, lessonState.mode]
+    [ui, simulation, readings, liveRow, volumetric, lessonState.mode]
   );
 
   const deflector = getDeflector(simulation.apparatus.selectedDeflectorId);
@@ -786,6 +799,7 @@ export default function App() {
           onAddWeight={handleAddWeight}
           onRemoveWeight={handleRemoveWeight}
           onWeightAvailability={setWeights}
+          onVolumetricSample={setVolumetric}
         />
 
         <UIOverlay

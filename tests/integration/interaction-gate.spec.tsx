@@ -34,9 +34,14 @@ vi.mock('../../src/components/Scene3D', async () => await import('../helpers/sce
  * and whether the two surfaces agree.
  */
 
-/** The volumetric valve's panel button says which way it is. */
+/**
+ * The volumetric valve's panel button says which way it is.
+ *
+ * The label names the next action, as the tank cover's does: an open dump valve offers to
+ * close it and start timing, a shut one offers to open it and empty the tank.
+ */
 const volumetricValveIsOpen = () =>
-  screen.queryByRole('button', { name: 'Volumetric valve open' }) !== null;
+  screen.queryByRole('button', { name: /Close the dump valve/i }) !== null;
 
 const valvePercent = (): number => {
   const readout = document.querySelector('.valve-slider-container .slider-val');
@@ -241,12 +246,12 @@ describe('the volumetric valve survives having no step number', () => {
   });
 
   it('is on the panel at every step, and works from there too', () => {
-    click('Open volumetric valve');
+    click(/dump valve/i);
     expect(volumetricValveIsOpen()).toBe(true);
 
     walkLesson(1, 4);
     expect(currentStep()).toBe(5);
-    expect(screen.getByRole('button', { name: 'Volumetric valve open' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Close the dump valve/i })).toBeDefined();
   });
 });
 

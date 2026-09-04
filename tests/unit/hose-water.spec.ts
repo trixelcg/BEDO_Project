@@ -54,10 +54,16 @@ describe('E/F — hose water follows the authoritative flow', () => {
     expect(hoseBlock).toMatch(/shader\.uniforms\.uHoseFlow = hoseFlow\.current/);
   });
 
-  it('that uniform is the valve opening, and is zeroed when nothing flows', () => {
-    // Same authority the jet reads. A dry rig must show a dry hose — the brief forbids
-    // inventing startup flow, and equally forbids a hose that runs while the pump is off.
-    expect(deviceModel).toMatch(/hoseFlow\.current\.value = state\.valveOpening/);
+  it('that uniform is the delivered flow, and is zeroed when nothing flows', () => {
+    // Same authority the jet reads. It was the valve *opening*, which is a different
+    // quantity: under Q = Q_max n^1.5 a half-open valve delivers 35 % of the pump, so the
+    // hose ran fuller than the water it was carrying (brief §3.1). A dry rig must still
+    // show a dry hose — the brief forbids inventing startup flow, and equally forbids a
+    // hose that runs while the pump is off.
+    expect(deviceModel).toMatch(/hoseFlow\.current\.value = flowFraction/);
+    expect(deviceModel).toMatch(
+      /const flowFraction = Math\.min\(\s*1,\s*state\.live\.flowRateLMin \/ Math\.max\(state\.params\.pumpFlowLMin/
+    );
     expect(deviceModel).toMatch(/hoseFlow\.current\.value = 0/);
   });
 

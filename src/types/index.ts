@@ -1,3 +1,4 @@
+import type { VolumetricMeasurement } from '../domain/volumetric';
 import type { RecordRow } from '../domain/physics';
 import type { LiveReadout } from '../simulation/selectors';
 import type { ExperimentId, ExperimentStep, StepId } from '../domain/experiments';
@@ -148,6 +149,12 @@ export interface SimulationView {
   /** Index into the experiment's quiz options, or null if unanswered. */
   quizAnswer: number | null;
   params: CustomParams;
+  /**
+   * The volumetric measuring tank, as the frame loop last reported it.
+   *
+   * Presentation state, sampled rather than owned here — see `App`'s `onVolumetricSample`.
+   */
+  volumetric: VolumetricMeasurement;
   warningMessage: { en: string; ar: string; code: ErrorCode } | null;
   /** Observation popup raised when a step is satisfied. */
   notice: { en: string; ar: string } | null;

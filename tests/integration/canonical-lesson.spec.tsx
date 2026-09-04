@@ -51,33 +51,33 @@ describe('the volumetric valve is an affordance, not a step', () => {
     // BEDO's state machine gives it a transition in every state: it turns, and nothing
     // changes. Removing the step must not remove the control.
     expect(CURRENT_LESSON.alwaysAvailable).toContain('volumetricValve');
-    expect(screen.getByRole('button', { name: 'Open volumetric valve' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /dump valve/i })).toBeDefined();
 
     walkLesson(1, 3);
-    expect(screen.getByRole('button', { name: 'Open volumetric valve' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /dump valve/i })).toBeDefined();
   });
 
   it('still works — the rig responds', () => {
-    click('Open volumetric valve');
-    expect(screen.getByRole('button', { name: 'Volumetric valve open' })).toBeDefined();
+    click(/dump valve/i);
+    expect(screen.getByRole('button', { name: /Close the dump valve/i })).toBeDefined();
   });
 
   it('is still clickable in the 3D scene', () => {
     clickMesh('scene-volumetric-valve');
-    expect(screen.getByRole('button', { name: 'Volumetric valve open' })).toBeDefined();
+    expect(screen.getByRole('button', { name: /Close the dump valve/i })).toBeDefined();
   });
 
   it('does not advance the lesson on its own', () => {
     // The heart of the change: operating it is legal and inert, exactly as the state
     // machine specifies. It must not push the learner forward.
     expect(currentStep()).toBe(1);
-    click('Open volumetric valve');
+    click(/dump valve/i);
     expect(currentStep()).toBe(1);
 
     walkLesson(1, 4);
     expect(currentStep()).toBe(5);
-    click('Volumetric valve open'); // close it
-    click('Open volumetric valve'); // and open it again
+    click(/dump valve/i); // close it
+    click(/dump valve/i); // and open it again
     expect(currentStep()).toBe(5);
   });
 });

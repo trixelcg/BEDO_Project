@@ -193,6 +193,7 @@ describe('mesh name table', () => {
   it('names every part the runtime drives', () => {
     expect(Object.keys(MESH).sort()).toEqual(
       [
+        'benchSink',
         'flowValve',
         'liquid',
         'nozzle',
@@ -203,6 +204,8 @@ describe('mesh name table', () => {
         'powerSwitch',
         'rod',
         'screws',
+        'sightGaugePlate',
+        'sightGaugeWindow',
         'spring',
         'tank',
         'tankCover',

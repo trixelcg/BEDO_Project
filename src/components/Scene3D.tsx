@@ -1,3 +1,4 @@
+import type { VolumetricMeasurement } from '../domain/volumetric';
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
@@ -34,6 +35,8 @@ interface Scene3DProps {
   onRemoveWeight: (index: number) => boolean;
   /** What the weights will accept while discs are in flight. See `WeightAvailability`. */
   onWeightAvailability: (availability: WeightAvailability) => void;
+  /** The volumetric measurement, sampled from the frame loop for the panel. */
+  onVolumetricSample: (measurement: VolumetricMeasurement) => void;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
@@ -593,6 +596,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onAddWeight,
   onRemoveWeight,
   onWeightAvailability,
+  onVolumetricSample,
 }) => {
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
@@ -687,6 +691,7 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             onAddWeight={onAddWeight}
             onRemoveWeight={onRemoveWeight}
             onWeightAvailability={onWeightAvailability}
+            onVolumetricSample={onVolumetricSample}
             position={sceneConfig.characterPosition}
             rotation={[
               (sceneConfig.characterRotation[0] * Math.PI) / 180,

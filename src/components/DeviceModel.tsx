@@ -43,6 +43,15 @@ import {
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
 import { NOZZLE_AREA_M2, jetState } from '../domain/physics';
+import {
+  advance as advanceVolumetric,
+  dump as dumpVolumetric,
+  emptyMeasurement,
+  gaugeFraction,
+  startCollecting,
+  type VolumetricMeasurement,
+} from '../domain/volumetric';
+import { attachSightGauge } from '../lib/sightGauge';
 import { attachBoardReadout, type BoardValues } from './boardReadout';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
@@ -115,6 +124,12 @@ type Action =
 
 /** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
 const QUARTER_TURN = Math.PI / 2;
+
+/** How often the volumetric measurement is published to React, in seconds. */
+const VOLUMETRIC_SAMPLE_S = 0.2;
+
+/** How long the water takes to fade in when the valve opens, and out when it shuts. */
+const WATER_FADE_S = 0.3;
 
 /** The printed wall chart the live values are drawn onto. */
 const BOARD_MESH = 'Pitot';
@@ -313,6 +328,15 @@ interface DeviceModelProps {
    * gate: nothing is being disallowed, it simply has not finished happening yet.
    */
   onWeightAvailability: (availability: WeightAvailability) => void;
+  /**
+   * The volumetric measurement, sampled for the panel.
+   *
+   * Pushed from the frame loop rather than held in React: the tank fills continuously and
+   * the panel needs a stopwatch, so the state lives in a ref that `useFrame` advances and
+   * only a throttled sample crosses into React. Putting it in `SimulationView` would
+   * re-render this component — and its several hundred hooks — ten times a second.
+   */
+  onVolumetricSample: (measurement: VolumetricMeasurement) => void;
   position: [number, number, number];
   rotation: [number, number, number];
   scale: [number, number, number];
@@ -352,6 +376,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   onAddWeight,
   onRemoveWeight,
   onWeightAvailability,
+  onVolumetricSample,
   position,
   rotation,
   scale,
@@ -448,6 +473,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * forms when that column reaches the deflector. See `src/lib/waterCache.ts`.
    */
   const jetClock = useRef(createCacheClock());
+
+  /**
+   * The volumetric measurement, and the column that shows it.
+   *
+   * Refs, not state: the tank fills every frame and React must not follow it. The panel is
+   * fed by `onVolumetricSample` at `VOLUMETRIC_SAMPLE_S`, which is fast enough for a
+   * stopwatch a person reads and slow enough to cost nothing.
+   */
+  const volumetric = useRef<VolumetricMeasurement>(emptyMeasurement());
+  const volumetricValveWasOpen = useRef(true);
+  const sinceVolumetricSample = useRef(0);
+  const sightGauge = useRef<ReturnType<typeof attachSightGauge>>(null);
   const plumeClock = useRef(createCacheClock());
   /**
    * The tank's measured interior.
@@ -720,6 +757,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * rather than as a second material.
    */
   const plumeCutUniform = useRef({ value: new THREE.Vector2(-1e9, -1e9 + 1) });
+  /**
+   * How far the water has faded in, 0..1.
+   *
+   * A uniform rather than `material.opacity`, because the water's alpha is computed
+   * per-fragment from its own path length and multiplying the result is the only place a
+   * whole-body fade can be applied without flattening that.
+   */
+  const waterFade = useRef({ value: 0 });
+  /** Accumulated ripple phase. See where it is advanced for why it is not `t * speed`. */
+  const waterPhase = useRef(0);
 
   /** The hose's own world y range, so the flow coordinate is measured and not assumed. */
   const hoseSpanUniform = useRef({ value: new THREE.Vector2(0, 1) });
@@ -899,6 +946,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       shader.uniforms.uTime = waterTime.current;
       shader.uniforms.uFlow = waterFlow.current;
       shader.uniforms.uPlumeCut = plumeCutUniform.current;
+      shader.uniforms.uFade = waterFade.current;
       shader.uniforms.uWaterTex = { value: waterTex };
 
       const tiles = {
@@ -955,7 +1003,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         );
 
       shader.fragmentShader =
-        'uniform float uTime;\nuniform float uFlow;\nuniform vec2 uPlumeCut;\n' +
+        'uniform float uTime;\nuniform float uFlow;\nuniform float uFade;\nuniform vec2 uPlumeCut;\n' +
         'uniform sampler2D uWaterTex;\n' +
         'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
         'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
@@ -1131,6 +1179,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                // untouched. Parked out of range for the pre-impact column, which is short and
                // must keep its full length.
                gl_FragColor.a *= smoothstep(uPlumeCut.x, uPlumeCut.y, vWPos.y);
+
+               // The water fades in and out over WATER_FADE_S rather than appearing.
+               //
+               // The caches emerge from a nub, which reads as growth; but the *material*
+               // used to switch on at full strength the instant the valve passed zero, so
+               // the first frame of that growth arrived already opaque. A short ramp is all
+               // it takes for the column to arrive rather than to be there (brief §3.2).
+               gl_FragColor.a *= uFade;
              }`
           );
     };
@@ -2007,6 +2063,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     return () => {
       boardReadout.current?.dispose();
       boardReadout.current = null;
+    };
+  }, [scene, pick]);
+
+  /**
+   * The water column in the bench's sight gauge.
+   *
+   * Attached the same way the board readout is — to the authored plate, so it inherits its
+   * transform — and null on the stub model the browser suite mostly runs against.
+   */
+  useEffect(() => {
+    if (!scene) return;
+    sightGauge.current = attachSightGauge(pick(MESH.sightGaugeWindow));
+    return () => {
+      sightGauge.current?.dispose();
+      sightGauge.current = null;
     };
   }, [scene, pick]);
 
@@ -3156,11 +3227,32 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       jetGroupRef.current.visible = !impacting;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
 
-      // Ripple with the flow, but gently — see the material for the amplitude.
-      waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
-      waterFlow.current.value = state.valveOpening;
+      /*
+        The water moves at the rate water is arriving, not at the valve's position.
+
+        Those are not the same thing: under `Q = Q_max n^1.5` a half-open valve delivers
+        35 % of the pump, and the water is a picture of the flow. `state.live.flowRateLMin`
+        is the domain's own figure, over the pump delivery in force — the same normalisation
+        the hose, the ripple and the fade all read, so they cannot disagree (brief §3.1).
+      */
+      const flowFraction = Math.min(
+        1,
+        state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9)
+      );
+
+      /*
+        The phase is accumulated, not `t * speed`.
+
+        Multiplying elapsed time by a speed that changes jumps the phase every time the
+        student moves the valve — the ripple visibly snapped. Integrating the speed instead
+        makes the rate change and the pattern continue.
+      */
+      waterPhase.current += delta * (0.6 + flowFraction * 1.6);
+      waterTime.current.value = waterPhase.current;
+      waterFlow.current.value = flowFraction;
       // The hose carries whatever the pump is delivering, on the same authority.
-      hoseFlow.current.value = state.valveOpening;
+      hoseFlow.current.value = flowFraction;
+      waterFade.current.value = Math.min(1, waterFade.current.value + delta / WATER_FADE_S);
 
       (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
         const gltf = (water as any)[key];
@@ -3191,6 +3283,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       plumeClock.current.advance(false, delta);
       waterFlow.current.value = 0;
       hoseFlow.current.value = 0;
+      // Fades out over the same window rather than vanishing between frames.
+      waterFade.current.value = Math.max(0, waterFade.current.value - delta / WATER_FADE_S);
+      waterPhase.current += delta * 0.6;
     }
 
     // --- The tank fills once more arrives than the drain can carry -------------
@@ -3203,6 +3298,43 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // measured — the same moment it always started. The level no longer *uses* the interior's
     // dimensions, because nothing is drawn from them, but the measurement is still what says
     // the apparatus is ready.
+    // --- The volumetric measuring tank ----------------------------------------
+    //
+    // The dump valve, made to mean something (BEDO-WATER-16, brief §1.5/§3.6). Shutting it
+    // starts a timed collection from zero; opening it empties the tank and stops the clock.
+    // That is the direction the apparatus works in — a dump valve collects when it is shut —
+    // and it is why the control now has an effect either way it is pressed.
+    //
+    // The arithmetic is `src/domain/volumetric.ts` and none of it is here.
+    {
+      const valveOpen = state.isVolumetricValveOpen;
+      if (valveOpen !== volumetricValveWasOpen.current) {
+        volumetric.current = valveOpen ? dumpVolumetric() : startCollecting();
+        volumetricValveWasOpen.current = valveOpen;
+        // Publish the transition immediately: a student who presses the button expects the
+        // stopwatch to zero on the press, not up to a fifth of a second later.
+        sinceVolumetricSample.current = VOLUMETRIC_SAMPLE_S;
+      }
+
+      const previous = volumetric.current;
+      volumetric.current = advanceVolumetric(
+        previous,
+        flowing ? state.live.flowRateLMin : 0,
+        delta
+      );
+      sightGauge.current?.setFill(gaugeFraction(volumetric.current));
+
+      sinceVolumetricSample.current += delta;
+      if (
+        sinceVolumetricSample.current >= VOLUMETRIC_SAMPLE_S &&
+        volumetric.current !== previous
+      ) {
+        sinceVolumetricSample.current = 0;
+        onVolumetricSample(volumetric.current);
+      }
+    }
+
+    // --- The tank fills once more arrives than the drain can carry -------------
     if (tankInterior) {
       // The same flow the shape selection above reads, so the column/plume switch and the
       // tank's fill can never straddle `DRAIN_CAPACITY_L_MIN` differently. Recomputed rather

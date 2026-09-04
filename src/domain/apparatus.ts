@@ -40,6 +40,18 @@ export const MESH = {
    * its valve body (1_086) sits right beside it.
    */
   volumetricValve: 'hydrolic bensh 1_087',
+  /**
+   * The bench's graduated sight gauge — the scale plate and the window inside it.
+   *
+   * Two co-planar zero-thickness plates at x = -0.510, standing in the sink volume:
+   * `Rectangle002` is 529 mm tall and `Rectangle003`, the window the level shows through,
+   * is 465 mm and inset within it. Measured from the shipped GLB, not guessed; both are
+   * checked by `tests/unit/glb-contract.spec.ts`.
+   */
+  sightGaugePlate: 'Rectangle002',
+  sightGaugeWindow: 'Rectangle003',
+  /** The bench basin the tank and the gauge drain into. */
+  benchSink: 'Bing Sink',
   powerSwitch: 'Power_Switch',
   powerButtonBody: 'power_button_body001',
   powerLight: 'Diagram_Green_light_off',

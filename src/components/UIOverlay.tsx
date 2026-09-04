@@ -22,6 +22,14 @@ import {
 } from 'lucide-react';
 import { WEIGHTS, type DeflectorDef } from '../domain/apparatus';
 import type { RecordRow } from '../domain/physics';
+import {
+  CAPACITY_L,
+  flowErrorPercent,
+  gaugeFraction,
+  isSettled,
+  measuredFlowLMin,
+  type VolumetricMeasurement,
+} from '../domain/volumetric';
 import { markReady } from '../lib/readiness';
 import { StepInstructionCard } from './StepInstructionCard';
 import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
@@ -247,31 +255,46 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
         </button>
       )}
 
-      {/* Volumetric valve */}
+      {/* Volumetric valve, and the measurement it exists for */}
       {show('volumetricValve') && (
-        <div className="glass-card" style={{ marginBottom: 12 }}>
+        <div className="glass-card volumetric-panel">
+          {/*
+            The dump valve on the bench's measuring tank.
+
+            It used to toggle a boolean nothing read, so pressing it changed the label and
+            nothing else — the brief's dead button. Shutting it now starts a timed
+            collection from zero and opening it empties the tank and stops the clock, which
+            is the direction a dump valve actually works in. The readout below is what the
+            control is for: Q from ΔV/Δt, against the flowmeter's own figure.
+          */}
           <button
             className="btn-secondary"
             onClick={onToggleVolumetricValve}
             style={{
               width: '100%',
-              fontSize: '11px',
+              fontSize: '12px',
               background: state.isVolumetricValveOpen
-                ? 'rgba(245, 130, 32, 0.12)'
-                : 'transparent',
+                ? 'transparent'
+                : 'rgba(0, 214, 143, 0.10)',
               borderColor: state.isVolumetricValveOpen
-                ? 'var(--accent-blue)'
-                : 'rgba(255,255,255,0.1)',
+                ? 'rgba(255,255,255,0.12)'
+                : 'var(--success-green)',
             }}
           >
             {state.isVolumetricValveOpen
               ? isAr
-                ? 'الصمام الحجمي مفتوح'
-                : 'Volumetric valve open'
+                ? 'إغلاق صمام التصريف وبدء القياس'
+                : 'Close the dump valve and start timing'
               : isAr
-                ? 'فتح الصمام الحجمي'
-                : 'Open volumetric valve'}
+                ? 'فتح صمام التصريف (تفريغ الخزان)'
+                : 'Open the dump valve (empty the tank)'}
           </button>
+
+          <VolumetricReadout
+            measurement={state.volumetric}
+            referenceFlowLMin={state.live.flowRateLMin}
+            isAr={isAr}
+          />
         </div>
       )}
 
@@ -1076,6 +1099,87 @@ const BalanceBar: React.FC<{ row: RecordRow; isAr: boolean }> = ({ row, isAr }) 
  * and "−16.2 % · add 14 g" comes out with the value detached from its unit.
  */
 const NUMERIC_LTR: React.CSSProperties = { direction: 'ltr', unicodeBidi: 'isolate' };
+
+
+/**
+ * What the volumetric tank has measured.
+ *
+ * The exercise the control exists for: collect for a known time, read the volume, and get
+ * the flow without the flowmeter. Both figures are shown side by side with the disagreement
+ * between them, because the comparison is the measurement — a timed fill on its own is just
+ * a number that happens to be near another one.
+ *
+ * Nothing is derived here. `measuredFlowLMin`, `flowErrorPercent` and `isSettled` are the
+ * domain's, and this formats them.
+ */
+const VolumetricReadout: React.FC<{
+  measurement: VolumetricMeasurement;
+  /** The flowmeter's own figure, to compare against. */
+  referenceFlowLMin: number;
+  isAr: boolean;
+}> = ({ measurement, referenceFlowLMin, isAr }) => {
+  const measured = measuredFlowLMin(measurement);
+  const settled = isSettled(measurement);
+  const errorPct = flowErrorPercent(measured, referenceFlowLMin);
+
+  return (
+    <div className="vol-readout" role="status" aria-live="off">
+      <div className="vol-head">
+        <span>{isAr ? 'الخزان الحجمي' : 'Volumetric tank'}</span>
+        <span className={`vol-badge${measurement.isCollecting ? ' is-collecting' : ''}`}>
+          {measurement.isFull
+            ? isAr
+              ? 'ممتلئ'
+              : 'FULL'
+            : measurement.isCollecting
+              ? isAr
+                ? 'يجمع'
+                : 'COLLECTING'
+              : isAr
+                ? 'فارغ'
+                : 'EMPTY'}
+        </span>
+      </div>
+
+      <div className="vol-grid" style={NUMERIC_LTR}>
+        <div className="vol-cell">
+          <span className="vol-lbl">{isAr ? 'الزمن Δt' : 'Time Δt'}</span>
+          <span className="vol-val">{measurement.elapsedS.toFixed(1)} s</span>
+        </div>
+        <div className="vol-cell">
+          <span className="vol-lbl">{isAr ? 'الحجم ΔV' : 'Volume ΔV'}</span>
+          <span className="vol-val">
+            {measurement.volumeL.toFixed(2)} / {CAPACITY_L} L
+          </span>
+        </div>
+        <div className="vol-cell vol-cell-accent">
+          <span className="vol-lbl">Q = ΔV/Δt</span>
+          <span className="vol-val">{settled ? `${measured.toFixed(3)} L/min` : '—'}</span>
+        </div>
+        <div className="vol-cell">
+          <span className="vol-lbl">{isAr ? 'مقياس التدفق' : 'Flowmeter'}</span>
+          <span className="vol-val">{referenceFlowLMin.toFixed(3)} L/min</span>
+        </div>
+      </div>
+
+      <div className="vol-track" aria-hidden="true">
+        <span className="vol-fill" style={{ width: `${gaugeFraction(measurement) * 100}%` }} />
+      </div>
+
+      <p className="vol-note" style={settled ? NUMERIC_LTR : undefined}>
+        {settled
+          ? `${isAr ? 'الفرق' : 'Difference'} ${errorPct >= 0 ? '+' : '−'}${Math.abs(errorPct).toFixed(1)} %`
+          : measurement.isCollecting
+            ? isAr
+              ? 'اترك الخزان يمتلئ قليلاً قبل قراءة النتيجة.'
+              : 'Let the tank collect a little before reading the result.'
+            : isAr
+              ? 'أغلق صمام التصريف لبدء قياس زمني.'
+              : 'Close the dump valve to start a timed measurement.'}
+      </p>
+    </div>
+  );
+};
 
 const getFactor = (list: DeflectorDef[], id: number) =>
   list.find((d) => d.id === id)?.momentumFactor.toFixed(3) ?? '—';
