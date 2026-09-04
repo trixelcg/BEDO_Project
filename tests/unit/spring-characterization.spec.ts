@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it } from 'vitest';
 import { springDeflectionMm } from '../../src/domain/spring';
 import { GRAVITY_MS2, SPRING_RATE_N_PER_M, jetState } from '../../src/domain/physics';
@@ -55,31 +56,31 @@ const ROWS: Row[] = [
   },
   {
     label: 'jet only, n = 0.4, flat plate',
-    jetForceN: jetState(0.4, 90).theoreticalForceN,
+    jetForceN: jetState(FIRST_READING_VALVE, 90).theoreticalForceN,
     weightForceN: 0,
     changes: false,
   },
   {
     label: 'jet only, n = 0.5, flat plate',
-    jetForceN: jetState(0.5, 90).theoreticalForceN,
+    jetForceN: jetState(SECOND_READING_VALVE, 90).theoreticalForceN,
     weightForceN: 0,
     changes: false,
   },
   {
     label: 'reading 1 balanced — n = 0.4 against 80 g',
-    jetForceN: jetState(0.4, 90).theoreticalForceN,
+    jetForceN: jetState(FIRST_READING_VALVE, 90).theoreticalForceN,
     weightForceN: weightForceN(80),
     changes: false,
   },
   {
     label: 'reading 2 balanced — n = 0.5 against 260 g',
-    jetForceN: jetState(0.5, 90).theoreticalForceN,
+    jetForceN: jetState(SECOND_READING_VALVE, 90).theoreticalForceN,
     weightForceN: weightForceN(260),
     changes: 'the 260 g reading weighs 0.02 N more than the jet lifts, so the old model dipped just below rest',
   },
   {
     label: 'overloaded — n = 0.4 against 380 g',
-    jetForceN: jetState(0.4, 90).theoreticalForceN,
+    jetForceN: jetState(FIRST_READING_VALVE, 90).theoreticalForceN,
     weightForceN: weightForceN(380),
     changes: 'hw exceeds hF: sl. 8 requires X = 0, the old model compressed the spring',
   },

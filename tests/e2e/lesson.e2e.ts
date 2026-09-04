@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { expect, test } from './fixture';
 import {
   panMassG,
@@ -68,8 +69,8 @@ test.describe('guided walkthrough', () => {
     await expectStep(page, 5);
 
     // 5 — open the flow valve to the first reading setpoint
-    await setValve(page, 0.4);
-    await expect(page.getByText('40%')).toBeVisible();
+    await setValve(page, FIRST_READING_VALVE);
+    await expect(page.getByText('54%')).toBeVisible(); // the first setpoint, 0.536
     await confirmStep(page);
     await dismissPopup(page); // "the water jet pushes the deflector upward"
     await expectStep(page, 6);
@@ -87,8 +88,8 @@ test.describe('guided walkthrough', () => {
     await expectStep(page, 7);
 
     // 7 — increase the flow to the second setpoint
-    await setValve(page, 0.5);
-    await expect(page.getByText('50%')).toBeVisible();
+    await setValve(page, SECOND_READING_VALVE);
+    await expect(page.getByText('77%')).toBeVisible(); // the second setpoint, 0.770
     await confirmStep(page);
     await dismissPopup(page);
     await expectStep(page, 8);
@@ -175,7 +176,7 @@ test.describe('guided walkthrough', () => {
     // Step 5 will not confirm below the reading setpoint.
     await setValve(page, 0.15);
     await expect(okButton(page)).toHaveCount(0);
-    await setValve(page, 0.4);
+    await setValve(page, FIRST_READING_VALVE);
     await expect(okButton(page)).toBeVisible();
   });
 
@@ -253,13 +254,13 @@ test.describe('guided walkthrough', () => {
     // Carry on to the table and check the force is the one F = ρAV² gives.
     await pressCover(page);
     await button(page, 'Turn On Pump').click();
-    await setValve(page, 0.4);
+    await setValve(page, FIRST_READING_VALVE);
     await confirmStep(page);
     await dismissPopup(page);
     for (const weight of ['Add 50 g', 'Add 20 g', 'Add 10 g']) await button(page, weight).click();
     await confirmStep(page);
     await dismissPopup(page);
-    await setValve(page, 0.5);
+    await setValve(page, SECOND_READING_VALVE);
     await confirmStep(page);
     await dismissPopup(page);
     for (const weight of ['Add 200 g', 'Add 50 g', 'Add 10 g']) await button(page, weight).click();
@@ -286,7 +287,7 @@ test.describe('guided walkthrough', () => {
     await confirmStep(page);
     await pressCover(page);
     await button(page, 'Turn On Pump').click();
-    await setValve(page, 0.4);
+    await setValve(page, FIRST_READING_VALVE);
     await confirmStep(page);
     await dismissPopup(page);
     await expectStep(page, 6); // balance reading 1, target 80 g

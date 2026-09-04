@@ -191,23 +191,29 @@ export function measureTankInterior(
  * one and this comment should say so. Until then it is a rendering cue, not engineering.
  *
  * **How it was arrived at.** The tank is empty through ten seconds at the first reading
- * setpoint and filling at the second; `flowRateLMin` puts those at 0.131 and 0.225 of the
- * pump's total. The observed behaviour therefore brackets the threshold, and this is the
- * midpoint — the only number in this file the recording does not pin exactly.
+ * setpoint and filling at the second. Those are 15.71 and 27.02 L/min, so the observed
+ * behaviour brackets the threshold and this is the midpoint — the only number in this file
+ * the recording does not pin exactly.
+ *
+ * **In litres per minute, not as a fraction of the pump's rating.** It was 0.178 of a
+ * 120 L/min pump, which is the same 21.4 L/min; but a fraction is only the same threshold
+ * while the rating never moves, and re-rating the pump to 40 L/min turned the first
+ * reading's 15.71 L/min from 0.131 into 0.393 of delivery. The tank would then have filled
+ * at the reading the recording shows it empty at. What the recording bracketed is a flow.
  */
-export const DRAIN_CAPACITY_FRACTION = 0.178;
+export const DRAIN_CAPACITY_L_MIN = 21.36;
 
 /**
  * Where the water surface should be heading, as a fraction of the interior height.
  *
- * `inflowFraction` is the current flow as a share of the pump's capacity, so this module
- * needs nothing from the domain and no equation can be perturbed by it.
+ * `inflowLMin` is the flow the domain already computed; this module reads it and writes
+ * nothing back, so no equation can be perturbed by it.
  *
  * Two rules, both from the recording: water accumulates only while more arrives than the
  * drain can carry, and opening the volumetric valve empties the tank.
  */
-export const targetLevel = (inflowFraction: number, volumetricValveOpen: boolean): number =>
-  !volumetricValveOpen && inflowFraction > DRAIN_CAPACITY_FRACTION ? FULL_LEVEL : 0;
+export const targetLevel = (inflowLMin: number, volumetricValveOpen: boolean): number =>
+  !volumetricValveOpen && inflowLMin > DRAIN_CAPACITY_L_MIN ? FULL_LEVEL : 0;
 
 /**
  * Advance the level toward its target at the measured rate.

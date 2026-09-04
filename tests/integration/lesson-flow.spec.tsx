@@ -2,6 +2,7 @@
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOTAL_STEPS } from '../../src/domain/experiments';
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
 import {
   balanceHint,
   click,
@@ -114,7 +115,7 @@ describe('the progression rules the lesson enforces', () => {
     expectStep(5, 'Adjust the flow valve');
     expect(okButton()).toBeNull();
 
-    setValve(0.4);
+    setValve(FIRST_READING_VALVE);
     expect(okButton()).not.toBeNull();
   });
 
@@ -135,9 +136,10 @@ describe('the progression rules the lesson enforces', () => {
     setValve(0.1);
     expect(okButton()).toBeNull();
 
-    setValve(0.38); // inside the snap margin
+    setValve(FIRST_READING_VALVE - 0.015); // inside the snap margin
     expect(okButton()).not.toBeNull();
-    expect(screen.getByText('40%')).toBeDefined(); // snapped to the setpoint
+    // Snapped to the setpoint: 0.536 rounds to 54 %.
+    expect(screen.getByText('54%')).toBeDefined();
   });
 
   it('will not confirm a balance step until the pointer is actually balanced', () => {
@@ -206,7 +208,7 @@ describe('the progression rules the lesson enforces', () => {
 describe('the observations the experiment sheets specify', () => {
   it('raises the jet-push notice when the flow valve is first set', () => {
     walk(1, 4);
-    setValve(0.4);
+    setValve(FIRST_READING_VALVE);
     clickOk();
 
     expect(document.querySelector('.warning-popup')?.textContent).toContain(

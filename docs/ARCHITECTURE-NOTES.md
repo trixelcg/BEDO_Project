@@ -85,3 +85,23 @@ playback and cylindrical UVs; `tankWater.ts` procedural tank body + `DRAIN_CAPAC
    27.024 L/min.
 4. **Balance tolerance** — `max(2 % of the exact balancing mass, 5 g)`. A strict 2 % is
    unreachable at reading 1 with 10 g weights.
+
+## Phase 2 — where the physics choices now live
+
+`src/domain/physicsConfig.ts` holds the four switchable decisions with their evidence:
+`PHYSICS_MODEL` (default `legacyAV2`), `FLOW_CHARACTERISTIC` (default `powerLaw`),
+`VALVE_EXPONENT` (1.5) and `PUMP_MAX_FLOW_L_MIN` (40). `physics.computeTheoreticalForce`
+implements both force laws and is the one path every printed force takes;
+`apparatus.momentumFactorFor` is the one angle→k step, per family.
+
+Two consequences worth naming:
+
+- **The reading setpoints are derived, not written.** `READING_FLOWS_L_MIN` fixes the two
+  flows (15.714 and 27.024 L/min) and `valveOpeningFor` turns each into an opening — 0.536
+  and 0.770 on the shipped curve. Re-rating the pump moves the openings and leaves every
+  recorded figure alone.
+- **`DRAIN_CAPACITY_FRACTION` became `DRAIN_CAPACITY_L_MIN`.** The tank-fill and
+  jet-shape threshold was a share of pump delivery calibrated at Q_total = 120. Re-rating to
+  40 turned the first reading from 0.131 of delivery into 0.393, which would have filled the
+  tank at the reading the reference recording shows it empty at. What the recording bracketed
+  is a flow: 21.36 L/min.

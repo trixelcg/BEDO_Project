@@ -3,7 +3,7 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
-  DRAIN_CAPACITY_FRACTION,
+  DRAIN_CAPACITY_L_MIN,
   DRAIN_SECONDS,
   FILL_SECONDS,
   FULL_LEVEL,
@@ -13,6 +13,7 @@ import {
   targetLevel,
 } from '../../src/lib/tankWater';
 import { MESH } from '../../src/domain/apparatus';
+import { flowRateLMin, valveOpeningFor } from '../../src/domain/physics';
 import { gltfName } from '../../src/lib/gltfNames';
 import { loadApparatus, APPARATUS_POSITION, APPARATUS_SCALE } from '../helpers/model';
 import { REPO_ROOT } from '../helpers/glb';
@@ -94,19 +95,29 @@ describe('the tank fills only when more arrives than the drain can carry', () =>
     for (const f of ['physics.ts', 'stateMachine.ts', 'experiments.ts']) {
       const domain = readFileSync(path.join(REPO_ROOT, 'src/domain', f), 'utf8');
       expect(domain, `${f} must not read the drain threshold`).not.toMatch(
-        /DRAIN_CAPACITY_FRACTION/
+        /DRAIN_CAPACITY_L_MIN/
       );
     }
   });
 
   it('stays empty at the first reading and fills at the second', () => {
-    // The two states the recording actually shows. `flowRateLMin` puts the first reading
-    // (n = 0.4) at 0.131 of pump capacity and the second (n = 0.5) at 0.225; the tank is
-    // empty through ten seconds of the first and filling within a second of the second.
-    expect(targetLevel(0.131, false)).toBe(0);
-    expect(targetLevel(0.225, false)).toBe(FULL_LEVEL);
-    expect(DRAIN_CAPACITY_FRACTION).toBeGreaterThan(0.131);
-    expect(DRAIN_CAPACITY_FRACTION).toBeLessThan(0.225);
+    // The two states the recording actually shows: 15.71 L/min for ten seconds with the
+    // tank empty, then 27.02 L/min and filling within a second. The threshold is a flow —
+    // as a share of the pump's rating it only stayed correct while the rating did.
+    expect(targetLevel(15.7144704, false)).toBe(0);
+    expect(targetLevel(27.024, false)).toBe(FULL_LEVEL);
+    expect(DRAIN_CAPACITY_L_MIN).toBeGreaterThan(15.7144704);
+    expect(DRAIN_CAPACITY_L_MIN).toBeLessThan(27.024);
+  });
+
+  it('draws the same line whatever the pump is rated at', () => {
+    // The regression the change closes: re-rating the pump from 120 to 40 L/min turned the
+    // first reading from 0.131 of delivery into 0.393, so a fractional threshold would
+    // have filled the tank at the reading the recording shows it empty at.
+    for (const rating of [40, 120, 200]) {
+      const opening = valveOpeningFor(15.7144704, rating);
+      expect(targetLevel(flowRateLMin(opening, rating), false), `${rating} L/min`).toBe(0);
+    }
   });
 
   it('never accumulates with no flow, whatever the valve is doing', () => {
@@ -166,11 +177,11 @@ describe('the tank fills only when more arrives than the drain can carry', () =>
       .slice(0, 2200);
     // Flow-driven, because that is what the recording shows changing — and read from the
     // domain's own figure rather than recomputed here, so the fill and the shape selection
-    // above it can never straddle `DRAIN_CAPACITY_FRACTION` differently (BEDO-WATER-05).
+    // above it can never straddle `DRAIN_CAPACITY_L_MIN` differently (BEDO-WATER-05).
     expect(block).toMatch(/state\.live\.flowRateLMin/);
-    // ...normalised against the pump capacity actually in force, including a customised one,
-    // so `tankWater` never sees a unit it would have to know about...
-    expect(block).toMatch(/state\.params\.pumpFlowLMin/);
+    // ...in L/min, unnormalised: the threshold is a flow, and dividing by the pump's rating
+    // is exactly what made it move when the rating did...
+    expect(block).not.toMatch(/pumpFlowLMin/);
     // ...and the drain still empties it.
     expect(block).toMatch(/state\.isVolumetricValveOpen/);
   });

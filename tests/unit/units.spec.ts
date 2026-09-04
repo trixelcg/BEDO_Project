@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, TOTAL_FLOW_L_MIN, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it } from 'vitest';
 import {
   gramsToNewtons,
@@ -58,7 +59,7 @@ describe('conversions', () => {
 });
 
 describe('the units a reading is stored in', () => {
-  const row = computeRow(1, 0.4, 90, [50, 20, 10]);
+  const row = computeRow(1, FIRST_READING_VALVE, 90, [50, 20, 10]);
 
   it('holds masses in grams, not kilograms', () => {
     // 80 g of weights. If any of these had been "helpfully" converted to kg during the
@@ -96,18 +97,18 @@ describe('the units a reading is stored in', () => {
   it('holds the two flow rates in their two different units', () => {
     expect(row.flowRateLMin).toBeCloseTo(15.714, 3);
     expect(row.flowRateM3S).toBeCloseTo(row.flowRateLMin / 60000, 12);
-    expect(row.pumpFlowLMin).toBe(120);
+    expect(row.pumpFlowLMin).toBe(TOTAL_FLOW_L_MIN);
   });
 
   it('keeps the valve opening dimensionless, 0 to 1', () => {
-    expect(row.valveOpening).toBe(0.4);
+    expect(row.valveOpening).toBe(FIRST_READING_VALVE);
     expect(row.valveOpening).toBeGreaterThanOrEqual(0);
     expect(row.valveOpening).toBeLessThanOrEqual(1);
   });
 
   it('exposes the same jet quantities as jetState, under the same names', () => {
     // The reading extends the jet state; the two must not drift apart.
-    const jet = jetState(0.4, 90);
+    const jet = jetState(FIRST_READING_VALVE, 90);
     expect(row.flowRateLMin).toBe(jet.flowRateLMin);
     expect(row.flowRateM3S).toBe(jet.flowRateM3S);
     expect(row.nozzleVelocityMS).toBe(jet.nozzleVelocityMS);
@@ -120,14 +121,14 @@ describe('what the rename must not have done', () => {
   it('left every stored value in the unit it was already in', () => {
     // The pre-BEDO-005 field names and their values, as the BEDO-002 baseline pinned
     // them. Each assertion is the old name's value read through the new name.
-    const row = computeRow(2, 0.5, 90, [200, 50, 10]);
+    const row = computeRow(2, SECOND_READING_VALVE, 90, [200, 50, 10]);
     expect(row.loadedMassG).toBe(260); //  actualWeightMass, grams
     expect(row.balancingMassG).toBeCloseTo(257.9307, 3); //  mass, grams
     expect(row.targetMassG).toBe(260); //  idealMass, grams
     expect(row.measuredForceN).toBeCloseTo(2.5506, 4); //  weightsN, newtons
     expect(row.theoreticalForceN).toBeCloseTo(2.5303, 4); //  fth, newtons
     expect(row.springDeflectionMm).toBeCloseTo(12.753, 3); //  springhW, millimetres
-    expect(row.pumpFlowLMin).toBe(120); //  totalFlowValue, L/min
-    expect(row.valveOpening).toBe(0.5); //  valveOpen, dimensionless
+    expect(row.pumpFlowLMin).toBe(TOTAL_FLOW_L_MIN); //  totalFlowValue, L/min
+    expect(row.valveOpening).toBe(SECOND_READING_VALVE); //  valveOpen, dimensionless
   });
 });

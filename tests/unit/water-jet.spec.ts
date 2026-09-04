@@ -13,14 +13,12 @@ import {
 import {
   FIRST_READING_VALVE,
   NOZZLE_AREA_M2,
-  ROW_VALVE_SETTINGS,
   SECOND_READING_VALVE,
-  TOTAL_FLOW_L_MIN,
   TRAVEL_HEIGHT_M,
   flowRateLMin,
   jetState,
 } from '../../src/domain/physics';
-import { DRAIN_CAPACITY_FRACTION } from '../../src/lib/tankWater';
+import { DRAIN_CAPACITY_L_MIN } from '../../src/lib/tankWater';
 import { MODEL_UNITS_PER_METRE } from '../../src/lib/apparatusView';
 import { WATER_SHAPES, type WaterShapeKey } from '../../src/domain/apparatus';
 import { REPO_ROOT } from '../helpers/glb';
@@ -142,8 +140,8 @@ describe('the authored low-flow / after-impact state mapping', () => {
     // below n = 0.0617 while the water is not drawn at all until n > 0.05 — a 1.2 % sliver of
     // the valve that no lesson state visits. The first reading is the low-flow state the
     // reference records at 55.5-65.5 s, and it must select the column.
-    const fraction = flowRateLMin(FIRST_READING_VALVE) / TOTAL_FLOW_L_MIN;
-    expect(fraction).toBeLessThan(DRAIN_CAPACITY_FRACTION);
+    const fraction = flowRateLMin(FIRST_READING_VALVE);
+    expect(fraction).toBeLessThan(DRAIN_CAPACITY_L_MIN);
     expect(waterShapeForFlow(fraction, 'd90')).toBe(JET_ASSET);
   });
 
@@ -157,16 +155,16 @@ describe('the authored low-flow / after-impact state mapping', () => {
   it('C — the whole low-flow half of the valve selects the column', () => {
     // Not just the setpoint: every opening below the crossover, so a student dragging the
     // slider sees one state rather than a flicker.
-    for (const n of [0.06, 0.1, 0.2, 0.3, 0.4, 0.45]) {
-      const fraction = flowRateLMin(n) / TOTAL_FLOW_L_MIN;
+    for (const n of [0.06, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]) {
+      const fraction = flowRateLMin(n);
       expect(waterShapeForFlow(fraction, 'd90'), `n=${n}`).toBe(JET_ASSET);
     }
   });
 
   it('D — the second and third readings select the installed deflector cache', () => {
-    for (const n of [SECOND_READING_VALVE, ROW_VALVE_SETTINGS[3], 0.8, 1.0]) {
-      const fraction = flowRateLMin(n) / TOTAL_FLOW_L_MIN;
-      expect(fraction).toBeGreaterThan(DRAIN_CAPACITY_FRACTION);
+    for (const n of [SECOND_READING_VALVE, 0.85, 0.9, 1.0]) {
+      const fraction = flowRateLMin(n);
+      expect(fraction).toBeGreaterThan(DRAIN_CAPACITY_L_MIN);
       expect(waterShapeForFlow(fraction, 'd135'), `n=${n}`).toBe('d135');
     }
   });
@@ -174,14 +172,14 @@ describe('the authored low-flow / after-impact state mapping', () => {
   it('E — going back down to low flow returns to the column', () => {
     // The selector is a pure function of the flow, so the return leg cannot strand the
     // high-flow shape: the same input that gave the column on the way up gives it again.
-    const low = flowRateLMin(FIRST_READING_VALVE) / TOTAL_FLOW_L_MIN;
-    const high = flowRateLMin(SECOND_READING_VALVE) / TOTAL_FLOW_L_MIN;
+    const low = flowRateLMin(FIRST_READING_VALVE);
+    const high = flowRateLMin(SECOND_READING_VALVE);
     const walk = [0, low, high, low, 0].map((f) => waterShapeForFlow(f, 'd90'));
     expect(walk).toEqual([JET_ASSET, JET_ASSET, 'd90', JET_ASSET, JET_ASSET]);
   });
 
   it('F — every deflector still maps to its own plume above the threshold', () => {
-    const above = DRAIN_CAPACITY_FRACTION + 0.001;
+    const above = DRAIN_CAPACITY_L_MIN + 0.001;
     for (const key of (Object.keys(WATER_SHAPES) as WaterShapeKey[]).filter(
       (shape) => shape !== JET_ASSET
     )) {
@@ -190,11 +188,11 @@ describe('the authored low-flow / after-impact state mapping', () => {
   });
 
   it('the threshold is the tank\'s, not a new one invented here', () => {
-    // §4: no magic number. The crossover is `DRAIN_CAPACITY_FRACTION`, which `lib/tankWater`
+    // §4: no magic number. The crossover is `DRAIN_CAPACITY_L_MIN`, which `lib/tankWater`
     // already calibrated against the same two reference intervals — so the column shows
     // exactly while the tank stays empty, which is what the recording pairs.
     const source = readFileSync(path.join(REPO_ROOT, 'src/lib/waterJet.ts'), 'utf8');
-    expect(source).toMatch(/DRAIN_CAPACITY_FRACTION/);
+    expect(source).toMatch(/DRAIN_CAPACITY_L_MIN/);
     // The selector must not carry a literal of its own. Scoped to the function body rather
     // than to the rest of the file: other exports below it legitimately hold measured
     // constants of their own (the plume cut band, BEDO-WATER-15), and this rule is about
@@ -328,7 +326,7 @@ describe('no width may come from the scene', () => {
       .filter((l) => !l.trimStart().startsWith('//') && !l.trimStart().startsWith('*'))
       .join('\n');
     // The rule is about *size*, not about the word. Since BEDO-WATER-05 this module reads
-    // one thing from `tankWater` — `DRAIN_CAPACITY_FRACTION`, the flow at which the tank
+    // one thing from `tankWater` — `DRAIN_CAPACITY_L_MIN`, the flow at which the tank
     // starts to accumulate — because that is the boundary the reference recording draws
     // between its low-flow and high-flow intervals, and the same boundary has to decide
     // which authored shape is showing. A flow fraction is not a dimension: what stays
@@ -337,7 +335,7 @@ describe('no width may come from the scene', () => {
     for (const line of code.split('\n')) {
       if (!/tank/i.test(line)) continue;
       expect(line, `waterJet reads something other than the drain threshold: ${line.trim()}`)
-        .toMatch(/DRAIN_CAPACITY_FRACTION|from '\.\/tankWater'/);
+        .toMatch(/DRAIN_CAPACITY_L_MIN|from '\.\/tankWater'/);
     }
     expect(code).not.toMatch(/viewport|innerWidth|clientWidth/);
   });

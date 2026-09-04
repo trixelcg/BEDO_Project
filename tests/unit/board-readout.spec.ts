@@ -59,9 +59,9 @@ describe('the physical board readout', () => {
   it('prints the flow the domain computed, not a rounded retelling', () => {
     const { ctx, text } = recordingContext();
     drawBoard(ctx, values());
-    // 0.35 on the pump curve is 12.029 L/min — the figure the monitor shows too.
+    // 0.35 on the pump curve is 8.283 L/min — the figure the monitor shows too.
     expect(text.join(' ')).toContain(jetState(0.35, 90).flowRateLMin.toFixed(3));
-    expect(jetState(0.35, 90).flowRateLMin).toBeCloseTo(12.029, 3);
+    expect(jetState(0.35, 90).flowRateLMin).toBeCloseTo(8.283, 3);
   });
 
   it('prints the tray mass and its weight', () => {

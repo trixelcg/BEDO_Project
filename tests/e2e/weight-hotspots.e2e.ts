@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixture';
 import {
@@ -315,7 +316,7 @@ test.describe('the tray discs answer for themselves', () => {
           await button(page, /Turn On Pump/i).click();
           break;
         case 5:
-          await setValve(page, 0.4);
+          await setValve(page, FIRST_READING_VALVE);
           break;
       }
       await dismissPopup(page);

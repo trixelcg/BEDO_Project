@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it, vi } from 'vitest';
 import { createLessonRunner } from '../../src/lesson/runner';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
@@ -249,9 +250,9 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
       { display: 2, id: 'install-deflector', act: () => run([{ type: 'SELECT_DEFLECTOR', deflectorId: 90 }]), finish: 'confirm' },
       { display: 3, id: 'mount-cover', act: () => run([{ type: 'CLOSE_COVER' }]), finish: 'action', expectation: 'CLOSE_COVER' },
       { display: 4, id: 'power-on', act: () => run([{ type: 'POWER_ON' }]), finish: 'action', expectation: 'POWER_ON' },
-      { display: 5, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: 0.4 }]), finish: 'confirm' },
+      { display: 5, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: FIRST_READING_VALVE }]), finish: 'confirm' },
       { display: 6, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
-      { display: 7, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: 0.5 }]), finish: 'confirm' },
+      { display: 7, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: SECOND_READING_VALVE }]), finish: 'confirm' },
       // Cumulative: the pan still carries the 80 g from reading 1, so this adds 180 g.
       { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 100 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
       { display: 9, id: 'open-monitor', act: () => {}, finish: 'confirm' },
@@ -287,9 +288,9 @@ describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', (
     step(() => {}, 'confirm');
     step(() => run([{ type: 'CLOSE_COVER' }]), 'action', 'CLOSE_COVER');
     step(() => run([{ type: 'POWER_ON' }]), 'action', 'POWER_ON');
-    step(() => run([{ type: 'SET_VALVE', opening: 0.4 }]), 'confirm');
+    step(() => run([{ type: 'SET_VALVE', opening: FIRST_READING_VALVE }]), 'confirm');
     step(() => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
-    step(() => run([{ type: 'SET_VALVE', opening: 0.5 }]), 'confirm');
+    step(() => run([{ type: 'SET_VALVE', opening: SECOND_READING_VALVE }]), 'confirm');
     step(() => run([{ type: 'ADD_WEIGHT', massG: 100 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
 
     // Two rows, because two readings were recorded — not four generated at fixed openings.

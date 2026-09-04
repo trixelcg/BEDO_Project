@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it } from 'vitest';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from '../../src/lesson/currentLesson';
 import { stepIndex, type LessonContext, type StepId } from '../../src/lesson/schema';
@@ -137,14 +138,14 @@ describe('completion conditions', () => {
     { id: 'power-on', satisfyWith: [{ type: 'POWER_ON' }] },
     {
       id: 'set-flow-reading-1',
-      satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }],
+      satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: FIRST_READING_VALVE }],
     },
     {
       // 80 g against the 83.58 g the jet asks for at this opening.
       id: 'balance-reading-1',
       satisfyWith: [
         { type: 'POWER_ON' },
-        { type: 'SET_VALVE', opening: 0.4 },
+        { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 20 },
         { type: 'ADD_WEIGHT', massG: 10 },
@@ -152,14 +153,14 @@ describe('completion conditions', () => {
     },
     {
       id: 'increase-flow-reading-2',
-      satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.5 }],
+      satisfyWith: [{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: SECOND_READING_VALVE }],
     },
     {
       // 260 g against 257.93 g at the second setpoint.
       id: 'balance-reading-2',
       satisfyWith: [
         { type: 'POWER_ON' },
-        { type: 'SET_VALVE', opening: 0.5 },
+        { type: 'SET_VALVE', opening: SECOND_READING_VALVE },
         { type: 'ADD_WEIGHT', massG: 200 },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 10 },

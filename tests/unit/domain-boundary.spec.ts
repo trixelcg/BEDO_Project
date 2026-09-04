@@ -68,6 +68,7 @@ describe('src/domain imports nothing from the outside world', () => {
       'apparatus.ts',
       'experiments.ts',
       'physics.ts',
+      'physicsConfig.ts',
       'spring.ts',
       'stateMachine.ts',
       'units.ts',
@@ -134,7 +135,7 @@ describe('the dependency direction', () => {
     const machine = await import('../../src/domain/stateMachine');
 
     expect(typeof document).toBe('undefined');
-    expect(physics.computeRow(1, 0.4, 90, [50, 20, 10]).isBalanced).toBe(true);
+    expect(physics.computeRow(1, physics.FIRST_READING_VALVE, 90, [50, 20, 10]).isBalanced).toBe(true);
     expect(apparatus.getDeflector(90).momentumFactor).toBe(1);
     expect(experiments.EXPERIMENTS).toHaveLength(4);
     expect(machine.attempt(machine.restingState(90), { type: 'POWER_ON' }).ok).toBe(true);

@@ -127,14 +127,14 @@ describe('the live software board', () => {
     openBoard();
     expect(liveValue('Valve opening')).toBe('35 %');
     expect(liveValue('Q')).toBe(`${flowRateLMin(0.35).toFixed(3)} L/min`);
-    expect(flowRateLMin(0.35)).toBeCloseTo(12.0, 1);
+    expect(flowRateLMin(0.35)).toBeCloseTo(8.3, 1);
 
     closeBoard();
     setValve(0.6);
     openBoard();
     expect(liveValue('Valve opening')).toBe('60 %');
     expect(liveValue('Q')).toBe(`${flowRateLMin(0.6).toFixed(3)} L/min`);
-    expect(flowRateLMin(0.6)).toBeCloseTo(43.5, 1);
+    expect(flowRateLMin(0.6)).toBeCloseTo(18.6, 1);
   });
 
   it('moves the velocities and the theoretical force with the valve', () => {

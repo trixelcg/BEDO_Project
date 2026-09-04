@@ -3136,11 +3136,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // double the stream.
       //
       // `state.live.flowRateLMin` is the domain's own figure for the current valve setting,
-      // over the pump capacity the student may have customised — the same fraction the tank
-      // fill below is driven by, so the two states can never disagree about which one this is.
-      const inflowFraction =
-        state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9);
-      const activeWater = waterShapeForFlow(inflowFraction, deflector.water);
+      // in L/min — the same flow the tank fill below is driven by, so the two states can
+      // never disagree about which one this is. It used to be divided by the pump's rating
+      // and compared against a fraction, which stopped meaning the same flow the moment the
+      // pump was re-rated (BEDO-PHY-02).
+      const activeWater = waterShapeForFlow(state.live.flowRateLMin, deflector.water);
       const impacting = activeWater !== JET_ASSET;
 
       // The after-impact caches hang a sheet to the tank floor; the pre-impact column does
@@ -3204,12 +3204,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // dimensions, because nothing is drawn from them, but the measurement is still what says
     // the apparatus is ready.
     if (tankInterior) {
-      // The same fraction the shape selection above reads, so the column/plume switch and
-      // the tank's fill can never straddle `DRAIN_CAPACITY_FRACTION` differently. Recomputed
-      // rather than hoisted because the water block above is skipped when nothing flows.
-      const inflow = flowing
-        ? state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9)
-        : 0;
+      // The same flow the shape selection above reads, so the column/plume switch and the
+      // tank's fill can never straddle `DRAIN_CAPACITY_L_MIN` differently. Recomputed rather
+      // than hoisted because the water block above is skipped when nothing flows.
+      const inflow = flowing ? state.live.flowRateLMin : 0;
       tankLevel.current = advanceLevel(
         tankLevel.current,
         targetLevel(inflow, state.isVolumetricValveOpen),

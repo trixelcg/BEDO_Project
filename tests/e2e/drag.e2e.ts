@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
 import { expect, test } from './fixture';
 import {
   panMassG,
@@ -224,7 +225,7 @@ test.describe('taking a weight off the holder', () => {
     await confirmStep(page);
     await pressCover(page);
     await button(page, 'Turn On Pump').click();
-    await setValve(page, 0.4);
+    await setValve(page, FIRST_READING_VALVE);
     await confirmStep(page);
     await dismissPopup(page);
     await expectStep(page, 6); // balance reading 1, target 80 g

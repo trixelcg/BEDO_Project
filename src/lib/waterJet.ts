@@ -35,7 +35,7 @@
 import { NOZZLE_AREA_M2 } from '../domain/physics';
 import type { WaterShapeKey } from '../domain/apparatus';
 import { MODEL_UNITS_PER_METRE } from './apparatusView';
-import { DRAIN_CAPACITY_FRACTION } from './tankWater';
+import { DRAIN_CAPACITY_L_MIN } from './tankWater';
 
 /**
  * The bore a cross-sectional area implies: `d = 2 sqrt(A / pi)`.
@@ -165,29 +165,29 @@ export const WATER_MODEL_SCALE = 0.01;
  *
  * ## What decides it now
  *
- * `DRAIN_CAPACITY_FRACTION`, which already exists and already draws exactly this line. It is
+ * `DRAIN_CAPACITY_L_MIN`, which already exists and already draws exactly this line. It is
  * the presentation threshold `lib/tankWater.ts` calibrated against the same two reference
  * intervals: below it the tank stays empty (the 55.5-65.5 s low-flow window), above it the
  * tank fills (72.0-78.4 s). The recording shows the column in the first and the spread in
  * the second, so one number governs both halves of the same observation — and no new
  * threshold is invented here. Against the canonical setpoints:
  *
- *   n = 0.40  ->  Q/Q_total = 0.131  <=  0.178  ->  `Water_low`   (first reading)
- *   n = 0.50  ->  Q/Q_total = 0.225  >   0.178  ->  the deflector's plume (second reading)
- *   n = 0.60  ->  Q/Q_total = 0.362  >   0.178  ->  the deflector's plume
+ *   first reading   ->  Q = 15.71 L/min  <=  21.36  ->  `Water_low`
+ *   second reading  ->  Q = 27.02 L/min  >   21.36  ->  the deflector's plume
  *
- * The crossover sits at n = 0.4565, so the column now owns the lower half of the valve's
- * travel rather than a sliver of it.
+ * A flow, not a share of the pump's delivery: the recording bracketed 15.71 and 27.02
+ * L/min, and expressing that as 0.178 of 120 only stayed correct while the rating did.
+ * On the shipped 40 L/min pump the crossover sits at n = 0.657, so the column owns the
+ * lower two-thirds of the valve's travel.
  *
  * This is presentation mapping only. It reads the flow the domain already computed and
  * writes nothing back: no equation, pump curve, valve semantic or state-machine rule is
  * touched, and `impactVelocityMS` keeps its meaning and its consumers.
  */
 export const waterShapeForFlow = (
-  inflowFraction: number,
+  inflowLMin: number,
   deflectorShape: WaterShapeKey
-): WaterShapeKey =>
-  inflowFraction > DRAIN_CAPACITY_FRACTION ? deflectorShape : JET_ASSET;
+): WaterShapeKey => (inflowLMin > DRAIN_CAPACITY_L_MIN ? deflectorShape : JET_ASSET);
 
 /**
  * The world-height band over which the after-impact plume fades out (BEDO-WATER-15).

@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -12,11 +13,11 @@ import {
   PLUME_CUT_CLEAR_Y,
 } from '../../src/lib/waterJet';
 import {
-  DRAIN_CAPACITY_FRACTION,
+  DRAIN_CAPACITY_L_MIN,
   advanceLevel,
   targetLevel,
 } from '../../src/lib/tankWater';
-import { flowRateLMin, TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
+import { flowRateLMin } from '../../src/domain/physics';
 
 /**
  * One vessel, one water surface (BEDO-WATER-07).
@@ -147,14 +148,14 @@ describe('F — the plume is owned by the flow, not by the tank surface', () => 
     // `waterShapeForFlow` takes no tank level and no valve state, so filling or draining
     // the tank cannot add, remove or swap the incoming plume.
     expect(waterShapeForFlow.length).toBe(2);
-    const above = DRAIN_CAPACITY_FRACTION + 0.05;
+    const above = DRAIN_CAPACITY_L_MIN + 1;
     expect(waterShapeForFlow(above, 'd135')).toBe('d135');
     expect(waterShapeForFlow(above, 'd45')).toBe('d45');
   });
 
   it('the plume stays selected across a whole fill-and-drain cycle', () => {
     // The tank fills and empties underneath it; the shape must not flicker.
-    const fraction = flowRateLMin(0.5) / TOTAL_FLOW_L_MIN;
+    const fraction = flowRateLMin(SECOND_READING_VALVE);
     let level = 0;
     const shapes = new Set<WaterShapeKey>();
     for (let i = 0; i < 400; i++) {
@@ -205,13 +206,14 @@ describe('B — the fill is still simulated, just not drawn', () => {
     // fill logic owns it and it is still driven by the same flow the jet reads.
     expect(deviceModel).toMatch(/tankLevel\.current = advanceLevel\(/);
     expect(deviceModel).toMatch(/targetLevel\(inflow, state\.isVolumetricValveOpen\)/);
-    expect(deviceModel).toMatch(/state\.live\.flowRateLMin \/ Math\.max\(state\.params\.pumpFlowLMin/);
+    // In L/min, not as a share of the pump's rating: the threshold is a flow.
+    expect(deviceModel).toMatch(/const inflow = flowing \? state\.live\.flowRateLMin : 0;/);
   });
 
   it('the level maths is untouched by the removal', () => {
     // Same numbers as before: the threshold, the fill and the drain all still behave.
-    expect(targetLevel(DRAIN_CAPACITY_FRACTION + 0.01, false)).toBeGreaterThan(0);
-    expect(targetLevel(DRAIN_CAPACITY_FRACTION + 0.01, true)).toBe(0);
+    expect(targetLevel(DRAIN_CAPACITY_L_MIN + 1, false)).toBeGreaterThan(0);
+    expect(targetLevel(DRAIN_CAPACITY_L_MIN + 1, true)).toBe(0);
     expect(targetLevel(0, false)).toBe(0);
     let level = 0;
     for (let i = 0; i < 400; i++) level = advanceLevel(level, 0.9, 0.016);
@@ -251,8 +253,8 @@ describe('C/D — the submerged-plume machinery went with the body', () => {
 describe('F — water selection is unchanged by the removal', () => {
   it('no flow draws nothing, low flow is the column, high flow is the plume', () => {
     expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
-    const low = flowRateLMin(0.4) / TOTAL_FLOW_L_MIN;
-    const high = flowRateLMin(0.5) / TOTAL_FLOW_L_MIN;
+    const low = flowRateLMin(FIRST_READING_VALVE);
+    const high = flowRateLMin(SECOND_READING_VALVE);
     expect(waterShapeForFlow(low, 'd90')).toBe(JET_ASSET);
     expect(waterShapeForFlow(high, 'd90')).toBe('d90');
   });
@@ -312,8 +314,8 @@ describe('the after-impact plume no longer hangs a curtain in the tank (BEDO-WAT
 
   it('B/F — shape selection is unchanged by the mask', () => {
     expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
-    expect(waterShapeForFlow(flowRateLMin(0.4) / TOTAL_FLOW_L_MIN, 'd90')).toBe(JET_ASSET);
-    expect(waterShapeForFlow(flowRateLMin(0.5) / TOTAL_FLOW_L_MIN, 'd90')).toBe('d90');
+    expect(waterShapeForFlow(flowRateLMin(FIRST_READING_VALVE), 'd90')).toBe(JET_ASSET);
+    expect(waterShapeForFlow(flowRateLMin(SECOND_READING_VALVE), 'd90')).toBe('d90');
   });
 
   it('C — the hose is untouched by this change', () => {

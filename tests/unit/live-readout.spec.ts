@@ -26,13 +26,15 @@ describe('the live readout', () => {
     expect(selectLiveReadout(withState({ valveOpening: 0.35 })).valveOpening).toBe(0.35);
   });
 
-  // The two flow figures BEDO-UX-12 states explicitly.
-  it('reports ~12.0 L/min at a valve opening of 0.35', () => {
-    expect(selectLiveReadout(withState({ valveOpening: 0.35 })).flowRateLMin).toBeCloseTo(12.0, 1);
+  // Two illustrative openings. The figures moved with the pump's re-rating from 120 to
+  // 40 L/min (BEDO-PHY-02); what is pinned is that the board reports the domain's own
+  // number, not what that number happens to be.
+  it('reports ~8.3 L/min at a valve opening of 0.35', () => {
+    expect(selectLiveReadout(withState({ valveOpening: 0.35 })).flowRateLMin).toBeCloseTo(8.3, 1);
   });
 
-  it('reports ~43.5 L/min at a valve opening of 0.60', () => {
-    expect(selectLiveReadout(withState({ valveOpening: 0.6 })).flowRateLMin).toBeCloseTo(43.5, 1);
+  it('reports ~18.6 L/min at a valve opening of 0.60', () => {
+    expect(selectLiveReadout(withState({ valveOpening: 0.6 })).flowRateLMin).toBeCloseTo(18.6, 1);
   });
 
   it('never recomputes the pump curve — it is the domain function', () => {

@@ -13,6 +13,9 @@ import {
   walkLesson,
 } from '../helpers/app-harness';
 
+import { PUMP_FLOW_RANGE_L_MIN } from '../../src/domain/physicsConfig';
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
+
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
 /**
@@ -125,16 +128,18 @@ describe('one source of truth', () => {
   it('the pump-flow parameter reaches the physics through the runtime', () => {
     click('Free Mode');
     click('Parameters');
-    const slider = [...document.querySelectorAll('input[type="range"]')].find((input) =>
-      (input as HTMLInputElement).max === '200'
+    // The pump-flow slider, identified by its range rather than by position: it is capped
+    // at the pump's rating now, not at 200 L/min (BEDO-PHY-02).
+    const slider = [...document.querySelectorAll('input[type="range"]')].find(
+      (input) => (input as HTMLInputElement).max === String(PUMP_FLOW_RANGE_L_MIN.max)
     ) as HTMLInputElement;
 
-    // 60 L/min is half the default, so every flow figure halves.
-    fireEvent.change(slider, { target: { value: '60' } });
+    // 20 L/min is half the default, so every flow figure halves.
+    fireEvent.change(slider, { target: { value: '20' } });
 
     click('Steps');
     click(/Turn On Pump/);
-    setValve(0.4);
+    setValve(FIRST_READING_VALVE);
     click('Open Data Monitor');
     // Read from the live panel rather than the table: the table now holds only readings
     // the student recorded, and this is a question about the physics, not about recording.

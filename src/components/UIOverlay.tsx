@@ -26,6 +26,7 @@ import { markReady } from '../lib/readiness';
 import { StepInstructionCard } from './StepInstructionCard';
 import { EXPERIMENTS, type ExperimentDef } from '../domain/experiments';
 import { flowRateLMin } from '../domain/physics';
+import { PUMP_FLOW_RANGE_L_MIN } from '../domain/physicsConfig';
 import type { PanelControl } from '../lesson/schema';
 
 interface UIOverlayProps {
@@ -614,11 +615,16 @@ export const UIOverlay: React.FC<UIOverlayProps> = ({
                   <span>{isAr ? 'معدل تدفق المضخة Q' : 'Pump flow rate Q_total'}</span>
                   <span className="slider-val">{params.pumpFlowLMin} L/min</span>
                 </div>
+                {/*
+                  Capped at the pump's rating rather than at 200 L/min. A bench of this size
+                  delivers 30-40 L/min; at 200 a fully open valve would put 140 N on the
+                  vane, which no combination of the discs can balance.
+                */}
                 <input
                   type="range"
-                  min="20"
-                  max="200"
-                  step="5"
+                  min={PUMP_FLOW_RANGE_L_MIN.min}
+                  max={PUMP_FLOW_RANGE_L_MIN.max}
+                  step={PUMP_FLOW_RANGE_L_MIN.step}
                   value={params.pumpFlowLMin}
                   onChange={(e) => onSetParams({ pumpFlowLMin: parseFloat(e.target.value) })}
                 />

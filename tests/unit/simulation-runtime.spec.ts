@@ -111,17 +111,17 @@ describe('apparatus commands defer to the state machine', () => {
 describe('simulation commands', () => {
   it('sets the pump flow, which every derived figure follows', () => {
     const r = drive([{ type: 'POWER_ON' }]);
-    r.dispatch({ type: 'SET_PUMP_FLOW', lPerMin: 60 });
-    expect(r.getState().pumpFlowLMin).toBe(60);
+    r.dispatch({ type: 'SET_PUMP_FLOW', lPerMin: TOTAL_FLOW_L_MIN / 2 });
+    expect(r.getState().pumpFlowLMin).toBe(20);
     // Half the pump delivery, half the flow at any opening.
     r.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
-    expect(selectLiveRow(r.getState()).flowRateLMin).toBeCloseTo(15.714470 / 2, 6);
+    expect(selectLiveRow(r.getState()).flowRateLMin).toBeCloseTo(15.7144704 / 2, 6);
   });
 
   it('switching experiment reloads the rig with that sheet’s deflector', () => {
     const r = drive([
       { type: 'POWER_ON' },
-      { type: 'SET_VALVE', opening: 0.4 },
+      { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
       { type: 'ADD_WEIGHT', massG: 50 },
     ]);
 
@@ -378,7 +378,7 @@ describe('reset', () => {
     const r = drive([
       { type: 'SELECT_EXPERIMENT', experimentId: 'conical' },
       { type: 'POWER_ON' },
-      { type: 'SET_VALVE', opening: 0.5 },
+      { type: 'SET_VALVE', opening: SECOND_READING_VALVE },
       { type: 'ADD_WEIGHT', massG: 200 },
       { type: 'RECORD_ACTUAL_FORCE' },
     ]);
@@ -418,7 +418,7 @@ describe('determinism', () => {
       { type: 'SELECT_DEFLECTOR', deflectorId: 135 },
       { type: 'CLOSE_COVER' },
       { type: 'POWER_ON' },
-      { type: 'SET_VALVE', opening: 0.4 },
+      { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
       { type: 'ADD_WEIGHT', massG: 50 },
       { type: 'ADD_WEIGHT', massG: 20 },
       { type: 'ADD_WEIGHT', massG: 10 },
@@ -437,7 +437,7 @@ describe('determinism', () => {
 
 describe('selectors', () => {
   it('report the jet force only while the pump runs with the tank shut', () => {
-    const r = drive([{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }]);
+    const r = drive([{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: FIRST_READING_VALVE }]);
     expect(selectJetForceN(r.getState())).toBeCloseTo(0.8199, 4);
 
     r.dispatch({ type: 'POWER_OFF' });
@@ -494,12 +494,12 @@ describe('apparatus sequences', () => {
         { type: 'SELECT_DEFLECTOR', deflectorId: 120 },
         { type: 'CLOSE_COVER' },
         { type: 'POWER_ON' },
-        { type: 'SET_VALVE', opening: 0.4 },
+        { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
       ],
       expect: (s) => {
         expect(s.apparatus.selectedDeflectorId).toBe(120);
         expect(s.apparatus.isPowerOn).toBe(true);
-        expect(s.apparatus.valveOpening).toBe(0.4);
+        expect(s.apparatus.valveOpening).toBe(FIRST_READING_VALVE);
       },
     },
     {
@@ -507,12 +507,12 @@ describe('apparatus sequences', () => {
       name: 'both readings, start to finish',
       commands: [
         { type: 'POWER_ON' },
-        { type: 'SET_VALVE', opening: 0.4 },
+        { type: 'SET_VALVE', opening: FIRST_READING_VALVE },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 20 },
         { type: 'ADD_WEIGHT', massG: 10 },
         { type: 'RECORD_READING' },
-        { type: 'SET_VALVE', opening: 0.5 },
+        { type: 'SET_VALVE', opening: SECOND_READING_VALVE },
         { type: 'ADD_WEIGHT', massG: 100 },
         { type: 'ADD_WEIGHT', massG: 50 },
         { type: 'ADD_WEIGHT', massG: 20 },

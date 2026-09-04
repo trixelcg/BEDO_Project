@@ -104,20 +104,43 @@ export interface DeflectorDef {
 }
 
 /**
- * The momentum factor is NOT one formula across the board — each experiment derives its
- * own, per BEDO's Phase 2 documents, and Jet force_Mathematical model.xlsx tabulates the
- * same values:
+ * The momentum factor k, per family, computed from the deflection angle.
  *
- *   Flat (90°)                F = rho*A*V^2                 -> 1
- *   Oblique (30/45/60°)       Fx = rho*A*V^2 * sin^2(theta) -> 0.25 / 0.5 / 0.75
- *   Semi-circular (120/180°)  F = rho*A*V^2 * (1 - cos B)   -> 1.5 / 2
- *   Conical (135°)            F = 1.707 * rho*A*V^2         -> 1.707  (= 1 - cos 135)
+ * **There is no single formula.** Each experiment derives its own, per BEDO's Phase 2
+ * documents, and `Jet force_Mathematical model.xlsx` tabulates the same values:
  *
- * Applying 1 - cos(theta) to the oblique family — the obvious-looking generalisation —
- * understates it badly: it gives 0.134 / 0.293 / 0.5 instead of 0.25 / 0.5 / 0.75.
+ *   Flat (90°)                F  = rho A V^2                  -> 1
+ *   Oblique (30/45/60°)       Fx = rho A V^2 sin^2(theta)     -> 0.25 / 0.5 / 0.75
+ *   Semi-circular (120/180°)  F  = rho A V^2 (1 - cos beta)   -> 1.5 / 2
+ *   Conical (135°)            F  = rho A V^2 (1 - cos beta)   -> 1.707
+ *
+ * The brief asks for `1 - cos(theta)` across the board. Applied to the oblique family that
+ * gives 0.134 / 0.293 / 0.5 instead of 0.25 / 0.5 / 0.75 — a factor of nearly two at 30° —
+ * and it contradicts both the printed force law on the Exp. 4 sheet and the spreadsheet
+ * column that `tests/fixtures/bedo-reference.ts` transcribes. The oblique deflector turns
+ * only the *normal* component of the jet, and resolving that back along the jet is what
+ * squares the sine; a hemisphere reverses the whole of it, which is what `1 - cos` counts.
+ *
+ * So this is computed rather than written down — which is the half of the brief's request
+ * that was worth having — but computed from each family's own law.
  */
 const sinSquared = (deg: number) => Math.round(Math.sin((deg * Math.PI) / 180) ** 2 * 1000) / 1000;
-const oneMinusCos = (deg: number) => Math.round((1 - Math.cos((deg * Math.PI) / 180)) * 1000) / 1000;
+const oneMinusCos = (deg: number) =>
+  Math.round((1 - Math.cos((deg * Math.PI) / 180)) * 1000) / 1000;
+
+export function momentumFactorFor(family: DeflectorFamily, angleDeg: number): number {
+  switch (family) {
+    case 'flat':
+      // A right-angle turn of the whole jet: sin^2(90) and 1 - cos(90) both give 1 only by
+      // coincidence of the angle, so it is stated rather than derived from either.
+      return 1;
+    case 'oblique':
+      return sinSquared(angleDeg);
+    case 'semi':
+    case 'conical':
+      return oneMinusCos(angleDeg);
+  }
+}
 
 // The tray holds seven deflectors, matching the reference simulator's chart.
 // Ordered left-to-right as they physically sit on the tray (by world x).
@@ -127,7 +150,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (45°)',
     nameAr: 'عاكس منحرف (45 درجة)',
-    momentumFactor: sinSquared(45), // 0.5
+    momentumFactor: momentumFactorFor('oblique', 45), // 0.5
     shelf: 'Oblique_surface_deflector_45_base',
     installed: 'Oblique_surface_deflector_45.001',
     water: 'd45',
@@ -137,7 +160,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'flat',
     nameEn: 'Flat surface (90°)',
     nameAr: 'عاكس مسطح (90 درجة)',
-    momentumFactor: 1.0,
+    momentumFactor: momentumFactorFor('flat', 90),
     shelf: 'Flat_surface_deflector_90_base',
     installed: 'Flat_surface_deflector_90.001',
     water: 'd90',
@@ -147,7 +170,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'conical',
     nameEn: 'Conical surface (135°)',
     nameAr: 'عاكس مخروطي (135 درجة)',
-    momentumFactor: oneMinusCos(135), // 1.707
+    momentumFactor: momentumFactorFor('conical', 135), // 1.707
     shelf: 'Conical_deflector_135_base',
     installed: 'Conical_deflector_135.001',
     water: 'd135',
@@ -157,7 +180,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'semi',
     nameEn: 'Semi-circular (120°)',
     nameAr: 'عاكس نصف دائري (120 درجة)',
-    momentumFactor: oneMinusCos(120), // 1.5
+    momentumFactor: momentumFactorFor('semi', 120), // 1.5
     shelf: 'Hemi_sphere_deflector_120_base',
     installed: 'Hemi_sphere_deflector_120.001',
     water: 'd120',
@@ -167,7 +190,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'semi',
     nameEn: 'Semi-circular (180°)',
     nameAr: 'عاكس نصف دائري (180 درجة)',
-    momentumFactor: oneMinusCos(180), // 2.0
+    momentumFactor: momentumFactorFor('semi', 180), // 2.0
     shelf: 'Hemi_sphere_deflector_180_base',
     installed: 'Hemi_sphere_deflector_180.001',
     water: 'd180',
@@ -177,7 +200,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (30°)',
     nameAr: 'عاكس منحرف (30 درجة)',
-    momentumFactor: sinSquared(30), // 0.25
+    momentumFactor: momentumFactorFor('oblique', 30), // 0.25
     shelf: 'Cone_surface_deflector_30_base',
     installed: 'Cone_surface_deflector_30.001',
     water: 'd30',
@@ -187,7 +210,7 @@ export const DEFLECTORS: DeflectorDef[] = [
     family: 'oblique',
     nameEn: 'Oblique surface (60°)',
     nameAr: 'عاكس منحرف (60 درجة)',
-    momentumFactor: sinSquared(60), // 0.75
+    momentumFactor: momentumFactorFor('oblique', 60), // 0.75
     shelf: 'Cone_surface_deflector_60_base',
     installed: 'Cone_surface_deflector_60.001',
     water: 'd60',

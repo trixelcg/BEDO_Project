@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within, type RenderResult } from '@testing-library/react';
 import { expect, vi } from 'vitest';
 import App from '../../src/App';
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 
 /**
  * Shared setup for the jsdom integration specs.
@@ -131,7 +132,7 @@ export const walkLesson = (from: number, to: number) => {
     3: () => clickMesh('scene-cover'),
     4: () => click(/Turn On Pump/),
     5: () => {
-      setValve(0.4);
+      setValve(FIRST_READING_VALVE);
       clickOk();
     },
     6: () => {
@@ -141,7 +142,7 @@ export const walkLesson = (from: number, to: number) => {
       clickOk();
     },
     7: () => {
-      setValve(0.5);
+      setValve(SECOND_READING_VALVE);
       clickOk();
     },
     // The pan is cumulative now — it still carries the 80 g from reading 1, and the second

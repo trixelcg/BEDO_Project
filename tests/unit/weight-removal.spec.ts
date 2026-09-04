@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it, vi } from 'vitest';
 import { attempt, restingState, type ApparatusState } from '../../src/domain/stateMachine';
 import { createSimulationRuntime } from '../../src/simulation/runtime';
@@ -153,7 +154,7 @@ describe('through the runtime', () => {
     runtime.dispatch({ type: 'OPEN_COVER' });
     runtime.dispatch({ type: 'CLOSE_COVER' });
     runtime.dispatch({ type: 'POWER_ON' });
-    runtime.dispatch({ type: 'SET_VALVE', opening: 0.4 });
+    runtime.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 50 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 20 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 10 });
@@ -171,7 +172,7 @@ describe('through the runtime', () => {
     // was taken changes the pan, not the row.
     const runtime = createSimulationRuntime();
     runtime.dispatch({ type: 'POWER_ON' });
-    runtime.dispatch({ type: 'SET_VALVE', opening: 0.4 });
+    runtime.dispatch({ type: 'SET_VALVE', opening: FIRST_READING_VALVE });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 50 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 20 });
     runtime.dispatch({ type: 'ADD_WEIGHT', massG: 10 });

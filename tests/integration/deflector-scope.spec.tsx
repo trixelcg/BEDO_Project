@@ -16,6 +16,8 @@ import {
   warningText,
 } from '../helpers/app-harness';
 
+import { SECOND_READING_VALVE } from '../../src/domain/physics';
+
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
 /**
@@ -259,7 +261,7 @@ describe('taking one disc off the holder', () => {
     // carries reading 1's 80 g throughout.
     walkLesson(1, 6);
     expect(currentStep()).toBe(7);
-    setValve(0.5);
+    setValve(SECOND_READING_VALVE);
     clickOk();
     dismissPopup();
     expect(currentStep()).toBe(8);

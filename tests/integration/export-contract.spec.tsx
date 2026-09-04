@@ -104,10 +104,12 @@ describe('the exported CSV', () => {
   it('formats the two readings exactly as they stand today', async () => {
     const { lines } = await exportCsv();
 
-    // Reading 1 — n = 0.4, 80 g of weights on the tray.
-    expect(lines[2]).toBe('1,120.0,0.40,15.714,2.6191e-4,3.336,3.232,80,3.92,0.8199,0.7848');
-    // Reading 2 — n = 0.5, 260 g. The pan is cumulative, so this is the running total.
-    expect(lines[3]).toBe('2,120.0,0.50,27.024,4.5040e-4,5.738,5.677,260,12.75,2.5303,2.5506');
+    // Reading 1 — 15.714 L/min, 80 g of weights on the tray. Q_total and n moved with the
+    // pump's re-rating from 120 to 40 L/min; every measured column is unchanged, because a
+    // reading is defined by the flow it records (BEDO-PHY-02).
+    expect(lines[2]).toBe('1,40.0,0.54,15.714,2.6191e-4,3.336,3.232,80,3.92,0.8199,0.7848');
+    // Reading 2 — 27.024 L/min, 260 g. The pan is cumulative, so this is the running total.
+    expect(lines[3]).toBe('2,40.0,0.77,27.024,4.5040e-4,5.738,5.677,260,12.75,2.5303,2.5506');
   });
 
   it('exports no zero row and no untaken row', async () => {
@@ -116,7 +118,7 @@ describe('the exported CSV', () => {
     // generated from `ROW_VALVE_SETTINGS` rather than measured by anyone.
     const { lines } = await exportCsv();
     const rows = lines.slice(2);
-    expect(rows.map((l) => l.split(',')[2])).toEqual(['0.40', '0.50']);
+    expect(rows.map((l) => l.split(',')[3])).toEqual(['15.714', '27.024']);
     expect(rows.some((l) => l.split(',')[3] === '0.000')).toBe(false);
   });
 

@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it } from 'vitest';
 import {
   EXPERIMENTS,
@@ -241,8 +242,8 @@ describe('physics uses the experiment’s own factor', () => {
   });
 
   it('balances at a different mass, which is what the learner actually sees', () => {
-    expect(targetMassG(0.4, 90, 120)).toBe(80);
-    expect(targetMassG(0.4, 180, 120)).toBe(170); // rounded to 10 g, as the rig reads
+    expect(targetMassG(FIRST_READING_VALVE, 90)).toBe(80);
+    expect(targetMassG(FIRST_READING_VALVE, 180)).toBe(170); // rounded to 10 g, as the rig reads
 
   });
 });

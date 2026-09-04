@@ -16,6 +16,8 @@ import { fireEvent } from '@testing-library/react';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
 import { TOTAL_STEPS } from '../../src/domain/experiments';
 
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
+
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
 /**
@@ -168,7 +170,7 @@ describe('the lesson ends at eleven', () => {
     clickOk(); //                       2 install
     clickMesh('scene-cover'); //        3 mount
     click(/Turn On Pump/); //           4 power
-    setValve(0.4); //                   5 flow
+    setValve(FIRST_READING_VALVE); //                   5 flow
     clickOk();
     dismissPopup();
     click('Add 100 g'); //                  6 balance 1 — needs 167.2 g, 170 g is inside
@@ -176,7 +178,7 @@ describe('the lesson ends at eleven', () => {
     click('Add 20 g');
     clickOk();
     dismissPopup();
-    setValve(0.5); //                   7 flow again
+    setValve(SECOND_READING_VALVE); //                   7 flow again
     clickOk();
     dismissPopup();
     // 8 balance 2 — needs 515.9 g in total, and the pan already carries 170 g.

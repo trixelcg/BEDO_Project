@@ -1,3 +1,4 @@
+import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
 import { describe, expect, it } from 'vitest';
 import { springDeflectionMm, springHeightMm } from '../../src/domain/spring';
 import { GRAVITY_MS2, SPRING_RATE_N_PER_M, jetState } from '../../src/domain/physics';
@@ -132,7 +133,7 @@ describe('the lesson’s own readings', () => {
   const limit = 25.38; // the measured travel of the shipped model; see apparatusView.ts
 
   it('reading 1: the jet at n = 0.4 lifts the spring, and 80 g nearly cancels it', () => {
-    const { theoreticalForceN } = jetState(0.4, 90);
+    const { theoreticalForceN } = jetState(FIRST_READING_VALVE, 90);
     expect(springDeflectionMm(theoreticalForceN, 0, limit)).toBeCloseTo(4.0996, 3);
     const balanced = springDeflectionMm(theoreticalForceN, weightForceN(80), limit);
     expect(balanced).toBeGreaterThan(0);
@@ -140,7 +141,7 @@ describe('the lesson’s own readings', () => {
   });
 
   it('reading 2: the jet at n = 0.5 lifts it further, and 260 g overshoots to zero', () => {
-    const { theoreticalForceN } = jetState(0.5, 90);
+    const { theoreticalForceN } = jetState(SECOND_READING_VALVE, 90);
     expect(springDeflectionMm(theoreticalForceN, 0, limit)).toBeCloseTo(12.6515, 3);
     // 260 g weighs marginally more than the jet lifts, so the spring sits at rest.
     expect(springDeflectionMm(theoreticalForceN, weightForceN(260), limit)).toBe(0);

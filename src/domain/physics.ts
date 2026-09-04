@@ -13,21 +13,44 @@
 
 import { getDeflector } from './apparatus';
 import {
+  FLOW_CHARACTERISTIC,
+  PHYSICS_MODEL,
+  PUMP_MAX_FLOW_L_MIN,
+  VALVE_EXPONENT,
+  type PhysicsModel,
+} from './physicsConfig';
+import {
   gramsToNewtons,
   litresPerMinuteToM3PerSecond,
   newtonsToGrams,
   roundMassG,
 } from './units';
 
-/** Nozzle cross-section, 10 mm bore. */
+/** Nozzle bore. */
+export const NOZZLE_DIAMETER_M = 0.01;
+/**
+ * Nozzle cross-section, 10 mm bore.
+ *
+ * BEDO's sheets carry it to three figures (pi r^2 for r = 5 mm is 7.853982e-5), and every
+ * tabulated figure in their model is computed from this rounded value — so it stays as
+ * written rather than being recomputed from the diameter.
+ */
 export const NOZZLE_AREA_M2 = 0.0000785;
 /** Gravitational acceleration. */
 export const GRAVITY_MS2 = 9.81;
 /** Distance the jet climbs from nozzle lip to deflector face. */
 export const TRAVEL_HEIGHT_M = 0.035;
 export const WATER_DENSITY_KG_M3 = 1000;
-/** Pump delivery at full valve opening — BEDO's `QT` column. */
-export const TOTAL_FLOW_L_MIN = 120;
+/**
+ * Pump delivery at a fully open valve — BEDO's `QT` column, re-rated.
+ *
+ * Was 120 L/min, the reference simulator's figure. See `physicsConfig.PUMP_MAX_FLOW_L_MIN`
+ * for why a bench of this size cannot be delivering that.
+ */
+export const TOTAL_FLOW_L_MIN = PUMP_MAX_FLOW_L_MIN;
+
+/** The pump delivery BEDO's reference table is tabulated at. Used only to reproduce it. */
+export const BEDO_REFERENCE_FLOW_L_MIN = 120;
 /** Deflector spring rate. The xlsx `hW` column: 0.4905 N deflects 2.4525 mm. */
 export const SPRING_RATE_N_PER_M = 200;
 /**
@@ -94,29 +117,79 @@ export function balanceDeviation(loadedMassG: number, balancingMassG: number): B
 }
 
 /**
- * Valve opening n (0..1) to volumetric flow. Verified against the reference
- * simulator: n = 0.5 gives 27.024 L/min, which is exactly the row it records.
+ * BEDO's reference valve characteristic — the quartic their simulator uses.
+ *
+ * Kept, exact, and still checked against `tests/fixtures/bedo-reference.ts`: at
+ * Q_total = 120 it reproduces their whole n -> Q table, n = 0.5 giving the 27.024 L/min row
+ * they record. It is selectable through `FLOW_CHARACTERISTIC`.
  */
-export const flowRateLMin = (n: number, pumpFlowLMin: number = TOTAL_FLOW_L_MIN): number =>
+export const bedoPolynomialFlowLMin = (n: number, pumpFlowLMin: number): number =>
   Math.max(0, pumpFlowLMin * (-4.9138 * n ** 4 + 8.8783 * n ** 3 - 3.7629 * n ** 2 + 0.7265 * n));
 
+/** `Q = Q_max · n^exp` — the smooth characteristic, monotonic over the whole range. */
+export const powerLawFlowLMin = (n: number, pumpFlowLMin: number): number =>
+  pumpFlowLMin * Math.max(0, Math.min(1, n)) ** VALVE_EXPONENT;
+
 /**
- * The valve openings the procedure records at.
+ * Valve opening n (0..1) to volumetric flow.
  *
- * These no longer generate table rows. Before this change `selectReadings` mapped the
- * whole array into the results table on every render, which is where the monitor's zero
- * row and its untouched 43.457 L/min row came from — neither was ever recorded by anyone.
- * A row now exists only because `RECORD_READING` was dispatched; this is just where the
- * two flow steps settle their valve.
- *
- * The second reading sits at n = 0.5 because that reproduces the reference
- * simulator's recorded row exactly: Q = 27.024 L/min, v0 = 5.74, v = 5.679.
- * The old 0.2 / 0.4 pair put the first reading at a 12 g balancing mass, which no
- * combination of the available weights could reach.
+ * Which curve is in force is `FLOW_CHARACTERISTIC`'s decision, and both are pinned. The
+ * default is the power law: BEDO's quartic puts 40 % at 15.7 L/min and 50 % at 27.0 L/min,
+ * a 72 % jump across a tenth of the valve's travel.
  */
-export const ROW_VALVE_SETTINGS = [0.0, 0.4, 0.5, 0.6];
-export const FIRST_READING_VALVE = ROW_VALVE_SETTINGS[1];
-export const SECOND_READING_VALVE = ROW_VALVE_SETTINGS[2];
+export const flowRateLMin = (n: number, pumpFlowLMin: number = TOTAL_FLOW_L_MIN): number =>
+  FLOW_CHARACTERISTIC === 'bedoPolynomial'
+    ? bedoPolynomialFlowLMin(n, pumpFlowLMin)
+    : powerLawFlowLMin(n, pumpFlowLMin);
+
+/**
+ * The valve opening that delivers a given flow — the inverse of the power law.
+ *
+ * This is how the two reading setpoints are derived rather than written down: a reading is
+ * defined by the flow it records, so re-rating the pump moves the opening and leaves the
+ * recorded figures where the worksheets expect them.
+ */
+export const valveOpeningFor = (
+  targetFlowLMin: number,
+  pumpFlowLMin: number = TOTAL_FLOW_L_MIN
+): number => {
+  if (!(pumpFlowLMin > 0) || targetFlowLMin <= 0) return 0;
+  if (FLOW_CHARACTERISTIC === 'bedoPolynomial') {
+    // The quartic has no closed-form inverse worth writing; a bisection over a monotonic
+    // stretch is exact enough for a setpoint the valve then snaps to.
+    let low = 0;
+    let high = 1;
+    for (let i = 0; i < 60; i += 1) {
+      const mid = (low + high) / 2;
+      if (bedoPolynomialFlowLMin(mid, pumpFlowLMin) < targetFlowLMin) low = mid;
+      else high = mid;
+    }
+    return (low + high) / 2;
+  }
+  return Math.min(1, (targetFlowLMin / pumpFlowLMin) ** (1 / VALVE_EXPONENT));
+};
+
+/**
+ * The two flows the procedure records at, in L/min.
+ *
+ * A reading is defined by the flow it measures, not by a position on a valve. These are
+ * the figures BEDO's reference simulator records and the worksheets are printed with, and
+ * they stay put when the pump is re-rated — the *opening* moves instead.
+ */
+export const READING_FLOWS_L_MIN = [15.7144704, 27.024] as const;
+
+/**
+ * Valve openings for the two readings, derived from the flows above.
+ *
+ * They were `ROW_VALVE_SETTINGS[1]` and `[2]` — 0.4 and 0.5 on BEDO's quartic at
+ * Q_total = 120. That array also generated the results table, which is where the monitor's
+ * zero row and its untaken 43.457 L/min row came from; nothing generates rows now, and
+ * these are simply where the two flow steps settle the valve. On the shipped power law at
+ * Q_max = 40 they come out at 0.536 and 0.770.
+ */
+export const FIRST_READING_VALVE = valveOpeningFor(READING_FLOWS_L_MIN[0]);
+export const SECOND_READING_VALVE = valveOpeningFor(READING_FLOWS_L_MIN[1]);
+
 /** The valve snaps to the setpoint once the student gets within this much of it. */
 export const VALVE_SNAP_MARGIN = 0.02;
 
@@ -166,13 +239,16 @@ export interface RecordRow extends JetState {
 }
 
 /**
- * v = sqrt(v0^2 - 2*g*s), with s the travel height in metres.
+ * The jet at one valve setting, against one deflector.
  *
- * s enters linearly. The old code wrote `2 * g * Math.sqrt(0.035)`, subtracting
- * 3.67 instead of 0.69 — enough to drive v^2 negative at low flow, which clamped
- * the jet force to zero and made the balancing steps ask for 0 g of weights.
- * The reference simulator's own table confirms the linear form: it reports
- * v0 = 5.74 and v = 5.679, and sqrt(5.74^2 - 2*9.81*0.035) = 5.679.
+ * A thin adapter over `computeTheoreticalForce`: it turns a valve opening into a flow and
+ * a deflector id into a momentum factor, and the equations live in one place below.
+ *
+ * On the travel height: s enters linearly. The old code wrote `2 * g * Math.sqrt(0.035)`,
+ * subtracting 3.67 instead of 0.69 — enough to drive v^2 negative at low flow, which
+ * clamped the jet force to zero and made the balancing steps ask for 0 g of weights. The
+ * reference simulator's own table confirms the linear form: it reports v0 = 5.74 and
+ * v = 5.679, and sqrt(5.74^2 - 2*9.81*0.035) = 5.679.
  */
 export function jetState(
   valveOpening: number,
@@ -180,24 +256,126 @@ export function jetState(
   pumpFlowLMin: number = TOTAL_FLOW_L_MIN
 ): JetState {
   const flow = flowRateLMin(valveOpening, pumpFlowLMin);
-  const flowRateM3S = litresPerMinuteToM3PerSecond(flow);
-  const nozzleVelocityMS = flowRateM3S / NOZZLE_AREA_M2;
-
-  const impactVelocitySquared = Math.max(
-    0,
-    nozzleVelocityMS ** 2 - 2 * GRAVITY_MS2 * TRAVEL_HEIGHT_M
-  );
-
   const { momentumFactor } = getDeflector(deflectorId);
-  const theoreticalForceN =
-    momentumFactor * WATER_DENSITY_KG_M3 * NOZZLE_AREA_M2 * impactVelocitySquared;
+  const jet = computeTheoreticalForce({ flowRateLMin: flow, momentumFactor });
 
   return {
     flowRateLMin: flow,
+    flowRateM3S: jet.flowRateM3S,
+    nozzleVelocityMS: jet.nozzleVelocityMS,
+    impactVelocityMS: jet.impactVelocityMS,
+    theoreticalForceN: jet.theoreticalForceN,
+  };
+}
+
+/** Everything the theoretical force depends on. Defaults are this apparatus's. */
+export interface TheoreticalForceInput {
+  /** Volumetric flow through the nozzle, L/min. */
+  flowRateLMin: number;
+  /**
+   * The deflector's momentum factor k, dimensionless.
+   *
+   * The brief writes this parameter as `theta`, with `k = 1 - cos(theta)`. It is taken as k
+   * instead because that generalisation is wrong for three of the seven deflectors: BEDO's
+   * oblique family derives `Fx = rho A V^2 sin^2(theta)`, giving 0.25 / 0.5 / 0.75 at
+   * 30 / 45 / 60 degrees where `1 - cos` would give 0.134 / 0.293 / 0.5. The angle-to-k
+   * step is `momentumFactorFor` in `./apparatus`, where each family's law is written out
+   * with its source; this function takes the answer.
+   */
+  momentumFactor: number;
+  /**
+   * Nozzle cross-section, m². Defaults to `NOZZLE_AREA_M2`.
+   *
+   * The area is the parameter rather than the bore because BEDO's model tabulates
+   * A = 7.85e-5 m² and computes every velocity and force from that rounded figure.
+   * Recomputing pi (d/2)^2 from the 10 mm bore gives 7.853982e-5 — a 0.05 % difference,
+   * which is small and is still five times the tolerance their table is pinned to.
+   */
+  nozzleAreaM2?: number;
+  /** Nozzle bore, m. Used only when no area is given: A = pi (d/2)^2. */
+  nozzleDiameterM?: number;
+  /** Nozzle lip to vane face, m. */
+  travelHeightM?: number;
+  densityKgM3?: number;
+  gravityMS2?: number;
+  /** Which force law. Defaults to the configured `PHYSICS_MODEL`. */
+  model?: PhysicsModel;
+}
+
+export interface TheoreticalForce {
+  flowRateM3S: number;
+  nozzleAreaM2: number;
+  /** V_nozzle = Q / A. */
+  nozzleVelocityMS: number;
+  /** V_impact = sqrt(V_nozzle^2 - 2 g s), floored at zero. */
+  impactVelocityMS: number;
+  /** Mass flow, rho Q — constant along the jet, which is the point of the momentum form. */
+  massFlowKgS: number;
+  theoreticalForceN: number;
+  model: PhysicsModel;
+}
+
+/**
+ * The theoretical jet force, both formulations, one pure function.
+ *
+ * ```
+ *   m_dot   = rho Q                          mass flow, constant
+ *   V_nozzle = Q / A                         A = pi (d/2)^2
+ *   V_impact = sqrt(V_nozzle^2 - 2 g s)      s = nozzle-to-vane rise
+ *
+ *   momentumFlux   F_th = k rho Q V_impact
+ *   legacyAV2      F_th = k rho A V_impact^2
+ * ```
+ *
+ * The two differ by exactly `V_nozzle / V_impact`: the legacy form multiplies the momentum
+ * flux by the nozzle's own area, which is the jet's area only if it has not widened on the
+ * way up. Continuity says it has. They therefore agree in the limit of a tall, fast jet and
+ * diverge at low flow, where the 35 mm climb costs proportionally more velocity — 3.2 % at
+ * the first reading, 1.1 % at the second.
+ *
+ * Which one ships is `PHYSICS_MODEL`'s decision, and `physicsConfig.ts` says why the
+ * default is the legacy form. Everything that prints a force — the target-mass hint, the
+ * board, the monitor, the table, the chart, the report — reaches it through here.
+ */
+export function computeTheoreticalForce(input: TheoreticalForceInput): TheoreticalForce {
+  const {
+    flowRateLMin: flow,
+    momentumFactor,
+    travelHeightM = TRAVEL_HEIGHT_M,
+    densityKgM3 = WATER_DENSITY_KG_M3,
+    gravityMS2 = GRAVITY_MS2,
+    model = PHYSICS_MODEL,
+  } = input;
+
+  const nozzleAreaM2 =
+    input.nozzleAreaM2 ??
+    (input.nozzleDiameterM !== undefined
+      ? Math.PI * (input.nozzleDiameterM / 2) ** 2
+      : NOZZLE_AREA_M2);
+
+  const flowRateM3S = litresPerMinuteToM3PerSecond(Math.max(0, flow));
+  const nozzleVelocityMS = nozzleAreaM2 > 0 ? flowRateM3S / nozzleAreaM2 : 0;
+
+  // Negative under the root means the jet does not reach the vane at all: the clamp is the
+  // physical statement that it falls back, not a numerical guard.
+  const impactVelocityMS = Math.sqrt(
+    Math.max(0, nozzleVelocityMS ** 2 - 2 * gravityMS2 * travelHeightM)
+  );
+
+  const massFlowKgS = densityKgM3 * flowRateM3S;
+  const theoreticalForceN =
+    model === 'momentumFlux'
+      ? momentumFactor * massFlowKgS * impactVelocityMS
+      : momentumFactor * densityKgM3 * nozzleAreaM2 * impactVelocityMS ** 2;
+
+  return {
     flowRateM3S,
+    nozzleAreaM2,
     nozzleVelocityMS,
-    impactVelocityMS: Math.sqrt(impactVelocitySquared),
+    impactVelocityMS,
+    massFlowKgS,
     theoreticalForceN,
+    model,
   };
 }
 

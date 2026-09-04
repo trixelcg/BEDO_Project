@@ -7,7 +7,11 @@ import {
   FIRST_READING_VALVE,
   GRAVITY_MS2,
   NOZZLE_AREA_M2,
-  ROW_VALVE_SETTINGS,
+  READING_FLOWS_L_MIN,
+  bedoPolynomialFlowLMin,
+  computeTheoreticalForce,
+  powerLawFlowLMin,
+  valveOpeningFor,
   SECOND_READING_VALVE,
   SPRING_RATE_N_PER_M,
   TOTAL_FLOW_L_MIN,
@@ -20,6 +24,11 @@ import {
   targetMassG,
 } from '../../src/domain/physics';
 import { DEFLECTORS, getDeflector } from '../../src/domain/apparatus';
+import {
+  FLOW_CHARACTERISTIC,
+  PUMP_MAX_FLOW_L_MIN,
+  VALVE_EXPONENT,
+} from '../../src/domain/physicsConfig';
 import {
   F_OBSERVED_FLAT_N,
   MOMENTUM_FACTORS,
@@ -69,7 +78,7 @@ describe('constants', () => {
     expect(GRAVITY_MS2).toBe(9.81);
     expect(TRAVEL_HEIGHT_M).toBe(0.035);
     expect(WATER_DENSITY_KG_M3).toBe(1000);
-    expect(TOTAL_FLOW_L_MIN).toBe(120);
+    expect(TOTAL_FLOW_L_MIN).toBe(40);
     expect(SPRING_RATE_N_PER_M).toBe(200);
   });
 
@@ -118,37 +127,88 @@ describe('constants', () => {
     expect(rest.isBalanced).toBe(false);
   });
 
-  it('pins the four table valve settings and the snap margin', () => {
-    expect(ROW_VALVE_SETTINGS).toEqual([0.0, 0.4, 0.5, 0.6]);
-    expect(FIRST_READING_VALVE).toBe(0.4);
-    expect(SECOND_READING_VALVE).toBe(0.5);
+  it('pins the two reading flows and derives their valve openings', () => {
+    // A reading is the flow it records. The openings follow from the shipped
+    // characteristic, so re-rating the pump moves them and leaves the figures alone.
+    expect(READING_FLOWS_L_MIN).toEqual([15.7144704, 27.024]);
+    expect(flowRateLMin(FIRST_READING_VALVE)).toBeCloseTo(15.7144704, 6);
+    expect(flowRateLMin(SECOND_READING_VALVE)).toBeCloseTo(27.024, 6);
+    // On the shipped power law at Q_max = 40.
+    expect(FIRST_READING_VALVE).toBeCloseTo(0.53641, 5);
+    expect(SECOND_READING_VALVE).toBeCloseTo(0.76995, 5);
     expect(VALVE_SNAP_MARGIN).toBe(0.02);
+  });
+
+  it('caps the pump within what the weights on the tray can balance', () => {
+    // The reason Q_max moved from 120 to 40: a fully open valve has to be balanceable.
+    // At 120 L/min it puts 51 N on the vane — 5.2 kg against a tray stocked to 500 g.
+    const wideOpen = jetState(1, 90).theoreticalForceN;
+    expect(PUMP_MAX_FLOW_L_MIN).toBe(40);
+    expect(wideOpen).toBeCloseTo(5.6078, 3);
+    expect((wideOpen / GRAVITY_MS2) * 1000).toBeLessThan(880); // reachable with the discs
   });
 });
 
-describe('flow rate Q(n)', () => {
+describe('BEDO’s reference valve characteristic', () => {
+  // Their quartic, still exact and still checked against their own table. It is no longer
+  // the shipped curve — see `physicsConfig.FLOW_CHARACTERISTIC` — but it remains the
+  // evidence that this implementation reads their model correctly.
   it.each(REFERENCE_ROWS)(
     'reproduces the BEDO row n=$n as $q L/min',
     ({ n, q }) => {
-      expect(flowRateLMin(n, REFERENCE_Q_TOTAL)).toBeCloseTo(q, FLOW_TOLERANCE);
+      expect(bedoPolynomialFlowLMin(n, REFERENCE_Q_TOTAL)).toBeCloseTo(q, FLOW_TOLERANCE);
     }
   );
 
   it('reproduces the reference simulator row at n = 0.5', () => {
-    expect(flowRateLMin(SECOND_READING_VALVE_N, REFERENCE_Q_TOTAL)).toBeCloseTo(
+    expect(bedoPolynomialFlowLMin(SECOND_READING_VALVE_N, REFERENCE_Q_TOTAL)).toBeCloseTo(
       SECOND_READING_Q_L_MIN,
       FLOW_TOLERANCE
     );
   });
 
-  it('defaults Q_total to 120 L/min', () => {
+  it('is the curve the smooth one replaces, and says why', () => {
+    // 40 % to 50 % is a 72 % jump in flow across a tenth of the valve's travel. That is
+    // the disorienting step the power law removes.
+    const at40 = bedoPolynomialFlowLMin(0.4, REFERENCE_Q_TOTAL);
+    const at50 = bedoPolynomialFlowLMin(0.5, REFERENCE_Q_TOTAL);
+    expect((at50 - at40) / at40).toBeGreaterThan(0.7);
+  });
+});
+
+describe('flow rate Q(n)', () => {
+  it('is the configured characteristic', () => {
+    expect(FLOW_CHARACTERISTIC).toBe('powerLaw');
+    expect(VALVE_EXPONENT).toBe(1.5);
+    expect(flowRateLMin(0.5)).toBe(powerLawFlowLMin(0.5, TOTAL_FLOW_L_MIN));
+  });
+
+  it('is Q_max n^1.5, exactly', () => {
+    for (const n of [0.1, 0.25, 0.5, 0.75, 1]) {
+      expect(flowRateLMin(n, 40)).toBeCloseTo(40 * n ** 1.5, 9);
+    }
+    expect(flowRateLMin(1)).toBe(TOTAL_FLOW_L_MIN);
+  });
+
+  it('rises no faster than a tenth of the range per tenth of a turn, anywhere', () => {
+    // The property the quartic breaks. The steepest tenth of the power law is the last one.
+    let steepest = 0;
+    for (let n = 0; n < 1; n += 0.1) {
+      const step = flowRateLMin(n + 0.1) - flowRateLMin(n);
+      steepest = Math.max(steepest, step / TOTAL_FLOW_L_MIN);
+    }
+    expect(steepest).toBeLessThan(0.16);
+  });
+
+  it('defaults Q_total to the configured pump maximum', () => {
     expect(flowRateLMin(0.4)).toBe(flowRateLMin(0.4, TOTAL_FLOW_L_MIN));
+    expect(TOTAL_FLOW_L_MIN).toBe(PUMP_MAX_FLOW_L_MIN);
   });
 
   it('scales linearly with Q_total', () => {
     for (const n of [0.2, 0.4, 0.6, 0.8, 1.0]) {
-      expect(flowRateLMin(n, 240)).toBeCloseTo(2 * flowRateLMin(n, 120), 9);
-      expect(flowRateLMin(n, 60)).toBeCloseTo(0.5 * flowRateLMin(n, 120), 9);
+      expect(flowRateLMin(n, 80)).toBeCloseTo(2 * flowRateLMin(n, 40), 9);
+      expect(flowRateLMin(n, 20)).toBeCloseTo(0.5 * flowRateLMin(n, 40), 9);
     }
   });
 
@@ -165,13 +225,26 @@ describe('flow rate Q(n)', () => {
     expect(flowRateLMin(-0.5)).toBe(0);
     expect(flowRateLMin(0)).toBe(0);
   });
+
+  it('inverts: the opening for a flow delivers that flow', () => {
+    for (const q of [1, 5, 15.7144704, 27.024, 39.9]) {
+      expect(flowRateLMin(valveOpeningFor(q))).toBeCloseTo(q, 9);
+    }
+    expect(valveOpeningFor(0)).toBe(0);
+    expect(valveOpeningFor(1000)).toBe(1); // clamped: the pump has a maximum
+  });
 });
 
 describe('velocities', () => {
   it.each(REFERENCE_ROWS)('reproduces v0 and v for the BEDO row n=$n', ({ n, v0, v }) => {
-    const state = jetState(n, 90, REFERENCE_Q_TOTAL);
-    expect(state.nozzleVelocityMS).toBeCloseTo(v0, VELOCITY_TOLERANCE);
-    expect(state.impactVelocityMS).toBeCloseTo(v, VELOCITY_TOLERANCE);
+    // Driven by the flow their row carries rather than by their valve opening: the
+    // velocities are functions of Q, and Q is what their table fixes.
+    const jet = computeTheoreticalForce({
+      flowRateLMin: bedoPolynomialFlowLMin(n, REFERENCE_Q_TOTAL),
+      momentumFactor: 1,
+    });
+    expect(jet.nozzleVelocityMS).toBeCloseTo(v0, VELOCITY_TOLERANCE);
+    expect(jet.impactVelocityMS).toBeCloseTo(v, VELOCITY_TOLERANCE);
   });
 
   it('applies v = sqrt(v0^2 - 2gs) with s linear, not sqrt(s)', () => {
@@ -185,7 +258,10 @@ describe('velocities', () => {
   });
 
   it('matches the reference simulator row at n = 0.5', () => {
-    const state = jetState(SECOND_READING_VALVE_N, 90, REFERENCE_Q_TOTAL);
+    const state = jetState(
+      valveOpeningFor(SECOND_READING_Q_L_MIN),
+      90
+    );
     // The simulator prints v0 to two decimals...
     expect(state.nozzleVelocityMS).toBeCloseTo(SECOND_READING_V0_DISPLAYED, 2);
     // ...and both derivations agree with its printed v to the precision it is printed
@@ -208,7 +284,7 @@ describe('velocities', () => {
 
   it('clamps v to zero rather than going imaginary below the travel height', () => {
     // At n = 0.05 the jet leaves at 0.71 m/s and cannot climb the 35 mm to the face.
-    const state = jetState(0.05, 90, REFERENCE_Q_TOTAL);
+    const state = jetState(0.05, 90);
     expect(state.nozzleVelocityMS).toBeGreaterThan(0);
     expect(state.nozzleVelocityMS ** 2).toBeLessThan(2 * GRAVITY_MS2 * TRAVEL_HEIGHT_M);
     expect(state.impactVelocityMS).toBe(0);
@@ -248,14 +324,14 @@ describe('theoretical force F_th', () => {
   it.each(Object.entries(REFERENCE_FORCES_N))(
     'reproduces BEDO F_th for the %s deg deflector at n = 0.4',
     (angle, expected) => {
-      const { theoreticalForceN } = jetState(FIRST_READING_VALVE, Number(angle), REFERENCE_Q_TOTAL);
+      const { theoreticalForceN } = jetState(FIRST_READING_VALVE, Number(angle));
       expectRelativeClose(theoreticalForceN, expected, FORCE_RELATIVE_TOLERANCE);
     }
   );
 
   it('is exactly factor x rho x A x v^2', () => {
     for (const deflector of DEFLECTORS) {
-      const state = jetState(FIRST_READING_VALVE, deflector.id, REFERENCE_Q_TOTAL);
+      const state = jetState(FIRST_READING_VALVE, deflector.id);
       expect(state.theoreticalForceN).toBeCloseTo(
         deflector.momentumFactor * WATER_DENSITY_KG_M3 * NOZZLE_AREA_M2 * state.impactVelocityMS ** 2,
         12
@@ -264,24 +340,22 @@ describe('theoretical force F_th', () => {
   });
 
   it('ratios to the flat plate are the momentum factors, exactly', () => {
-    const flat = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL).theoreticalForceN;
+    const flat = jetState(FIRST_READING_VALVE, 90).theoreticalForceN;
     for (const [angle, factor] of Object.entries(MOMENTUM_FACTORS)) {
-      const theoreticalForceN = jetState(FIRST_READING_VALVE, Number(angle), REFERENCE_Q_TOTAL).theoreticalForceN;
+      const theoreticalForceN = jetState(FIRST_READING_VALVE, Number(angle)).theoreticalForceN;
       expect(theoreticalForceN / flat).toBeCloseTo(factor, 9);
     }
   });
 
   it('scales with v^2: doubling the velocity quadruples the force', () => {
-    const a = jetState(0.4, 90, REFERENCE_Q_TOTAL);
-    const b = jetState(0.4, 90, REFERENCE_Q_TOTAL * 2);
+    const a = jetState(FIRST_READING_VALVE, 90);
+    const b = jetState(FIRST_READING_VALVE, 90, TOTAL_FLOW_L_MIN * 2);
     expect(b.nozzleVelocityMS / a.nozzleVelocityMS).toBeCloseTo(2, 9);
     expect(b.theoreticalForceN / a.theoreticalForceN).toBeCloseTo((b.impactVelocityMS / a.impactVelocityMS) ** 2, 9);
   });
 
   it('falls back to the flat deflector for an unknown id', () => {
-    expect(jetState(0.4, 999, REFERENCE_Q_TOTAL).theoreticalForceN).toBe(
-      jetState(0.4, 90, REFERENCE_Q_TOTAL).theoreticalForceN
-    );
+    expect(jetState(0.4, 999).theoreticalForceN).toBe(jetState(0.4, 90).theoreticalForceN);
   });
 });
 
@@ -289,7 +363,7 @@ describe('observed force F_o', () => {
   it('is rho x A x v0^2, and exceeds F_th by exactly rho x A x 2gs', () => {
     // BEDO's sheet carries both columns; the constant 0.05390595 N gap between them is
     // what proves the 2gs form is linear. `docs/13 §1.5`.
-    const state = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL);
+    const state = jetState(FIRST_READING_VALVE, 90);
     const observed = WATER_DENSITY_KG_M3 * NOZZLE_AREA_M2 * state.nozzleVelocityMS ** 2;
 
     expectRelativeClose(observed, F_OBSERVED_FLAT_N, FORCE_RELATIVE_TOLERANCE);
@@ -303,7 +377,7 @@ describe('observed force F_o', () => {
 
 describe('balancing mass', () => {
   it('is F_th / g, in grams, rounded to the nearest 10', () => {
-    for (const n of ROW_VALVE_SETTINGS) {
+    for (const n of [0, FIRST_READING_VALVE, SECOND_READING_VALVE, 0.9]) {
       const exact = (jetState(n, 90).theoreticalForceN / GRAVITY_MS2) * 1000;
       expect(targetMassG(n, 90)).toBe(Math.round(exact / 10) * 10);
       expect(targetMassG(n, 90) % 10).toBe(0);
@@ -318,15 +392,14 @@ describe('balancing mass', () => {
 });
 
 describe('computeRow', () => {
-  const row = (weights: number[], n = FIRST_READING_VALVE) =>
-    computeRow(1, n, 90, weights, REFERENCE_Q_TOTAL);
+  const row = (weights: number[], n = FIRST_READING_VALVE) => computeRow(1, n, 90, weights);
 
   it('carries the jet state and the row inputs through unchanged', () => {
-    const jet = jetState(FIRST_READING_VALVE, 90, REFERENCE_Q_TOTAL);
+    const jet = jetState(FIRST_READING_VALVE, 90);
     const r = row([50, 20, 10]);
     expect(r.index).toBe(1);
     expect(r.valveOpening).toBe(FIRST_READING_VALVE);
-    expect(r.pumpFlowLMin).toBe(REFERENCE_Q_TOTAL);
+    expect(r.pumpFlowLMin).toBe(TOTAL_FLOW_L_MIN);
     expect(r.flowRateLMin).toBe(jet.flowRateLMin);
     expect(r.nozzleVelocityMS).toBe(jet.nozzleVelocityMS);
     expect(r.impactVelocityMS).toBe(jet.impactVelocityMS);
@@ -379,7 +452,7 @@ describe('computeRow', () => {
   });
 
   it('treats the closed-valve row as a zero row', () => {
-    const r = computeRow(0, 0, 90, [], REFERENCE_Q_TOTAL);
+    const r = computeRow(0, 0, 90, []);
     expect(r.flowRateLMin).toBe(0);
     expect(r.nozzleVelocityMS).toBe(0);
     expect(r.impactVelocityMS).toBe(0);
