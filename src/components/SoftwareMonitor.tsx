@@ -12,10 +12,11 @@ import {
   Maximize2,
   Minimize2,
 } from 'lucide-react';
-import { GRAVITY_MS2, NOZZLE_AREA_M2, jetState } from '../domain/physics';
+import { GRAVITY_MS2, NOZZLE_AREA_M2 } from '../domain/physics';
 import { getDeflector } from '../domain/apparatus';
 import { DeflectorBoard } from './DeflectorBoard';
 import { csvFilename, toCsv } from '../lib/exportSchema';
+import { buildForceChart, pathThrough } from '../lib/forceChart';
 
 /**
  * How a numeric readout is rendered.
@@ -38,7 +39,7 @@ interface SoftwareMonitorProps {
   experiment: ExperimentDef;
   deflectorName: string;
   onCalculate: () => void;
-  onAnswerQuiz: (choice: number) => void;
+  onAnswerQuiz: (question: number, choice: number) => void;
   onClose: () => void;
   onReset: () => void;
   /** Docked beside the apparatus, or expanded over it. */
@@ -56,7 +57,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   onToggleExpand,
 }) => {
   const isAr = state.language === 'ar';
-  const { recordedRows, isCalculated, quizAnswer, live } = state;
+  const { recordedRows, isCalculated, quizAnswers, live } = state;
 
 
   /*
@@ -74,63 +75,23 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   const nozzleDiameterMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
   const installed = getDeflector(state.selectedDeflectorId);
 
-  // Scale the axes to the data rather than pinning them, which used to clip every reading.
-  const niceCeil = (v: number) => {
-    const step = 10 ** Math.floor(Math.log10(Math.max(v, 1e-6)));
-    return Math.ceil(v / step) * step;
-  };
-  /*
-    The theoretical curve, computed rather than joined up between readings.
-
-    The chart used to be a polyline through the four pre-generated table rows, so with the
-    table now holding only what the student recorded it would be a single dot — or, before
-    a first reading, nothing at all. `F_th(Q)` is a known function of the valve opening, so
-    it is sampled directly: 40 points from shut to fully open, at the deflector and pump
-    delivery in force right now.
-  */
-  const CURVE_SAMPLES = 40;
-  const curve = useMemo(
+  /**
+   * The plot's geometry, shared with the generated report.
+   *
+   * Both have to draw the same chart, and a second copy of the axis scaling would
+   * eventually disagree with this one inside the document the student hands in. See
+   * `src/lib/forceChart.ts`.
+   */
+  const chart = useMemo(
     () =>
-      Array.from({ length: CURVE_SAMPLES + 1 }, (_, i) => {
-        const opening = i / CURVE_SAMPLES;
-        const jet = jetState(opening, state.selectedDeflectorId, state.params.pumpFlowLMin);
-        return { flowRateLMin: jet.flowRateLMin, forceN: jet.theoreticalForceN };
+      buildForceChart({
+        rows: recordedRows,
+        deflectorId: state.selectedDeflectorId,
+        pumpFlowLMin: state.params.pumpFlowLMin,
       }),
-    [state.selectedDeflectorId, state.params.pumpFlowLMin]
+    [recordedRows, state.selectedDeflectorId, state.params.pumpFlowLMin]
   );
-
-  const maxFlow = niceCeil(Math.max(10, ...curve.map((p) => p.flowRateLMin)) * 1.05);
-  const maxForce = niceCeil(
-    Math.max(
-      0.5,
-      ...curve.map((p) => p.forceN),
-      ...recordedRows.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))
-    ) * 1.1
-  );
-
-  const paddingX = 40;
-  const paddingY = 30;
-  const chartW = 340;
-  const chartH = 190;
-
-  const coords = (flow: number, force: number) => ({
-    x: paddingX + (flow / maxFlow) * chartW,
-    y: paddingY + chartH - (force / maxForce) * chartH,
-  });
-
-  const path = (points: { flowRateLMin: number; forceN: number }[]) =>
-    points
-      .map((p, i) => {
-        const c = coords(p.flowRateLMin, p.forceN);
-        return `${i === 0 ? 'M' : 'L'} ${c.x},${c.y}`;
-      })
-      .join(' ');
-
-  /** The recorded readings as measured points, in the order they were taken. */
-  const measured = recordedRows.map((r) => ({
-    flowRateLMin: r.flowRateLMin,
-    forceN: r.measuredForceN,
-  }));
+  const { paddingX, paddingY, width: chartW, height: chartH } = chart.box;
 
   /**
    * Step 11 — the readings the student captured, as CSV.
@@ -181,9 +142,15 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [state.monitorExpanded, onToggleExpand, onClose]);
 
-  const question = experiment.quiz[0];
-  const answered = quizAnswer !== null;
-  const correct = answered && quizAnswer === question.answer;
+  /**
+   * The assessment, as a score rather than a single question.
+   *
+   * Derived from the answers, never stored beside them: a score that is written down can
+   * disagree with the answers it came from, and there is no question this app can ask that
+   * makes that a useful trade.
+   */
+  const answeredCount = experiment.quiz.filter((_, i) => i in quizAnswers).length;
+  const correctCount = experiment.quiz.filter((q, i) => quizAnswers[i] === q.answer).length;
 
   return (
     <div
@@ -363,6 +330,38 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                   {live.theoreticalForceN.toFixed(4)} N
                 </span>
               </div>
+
+              {/*
+                What is on the pan, and how far it is from balancing — the two figures the
+                learner is actually working with while they load it. The brief asks for both
+                as live tiles; the monitor could report the flow and the force but not the
+                thing the student had their hand on.
+              */}
+              <div className="mon-cell">
+                <span className="mon-lbl">{isAr ? 'الأوزان على القاعدة' : 'Weights on pan'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {live.loadedMassG} g
+                </span>
+                <span className="mon-sub" style={NUMERIC_READOUT}>
+                  {isAr ? 'المطلوب' : 'needs'} {state.liveRow.balancingMassG.toFixed(1)} g
+                </span>
+              </div>
+
+              <div
+                className={`mon-cell${state.liveRow.isBalanced ? ' mon-cell-ok' : ''}`}
+              >
+                <span className="mon-lbl">{isAr ? 'الانحراف' : 'Balance deviation'}</span>
+                <span className="mon-val" style={NUMERIC_READOUT}>
+                  {state.liveRow.balancingMassG > 0
+                    ? `${state.liveRow.deviationFraction >= 0 ? '+' : '−'}${Math.abs(
+                        state.liveRow.deviationFraction * 100
+                      ).toFixed(1)} %`
+                    : '—'}
+                </span>
+                <span className="mon-sub" style={NUMERIC_READOUT}>
+                  ±{state.liveRow.toleranceG.toFixed(1)} g
+                </span>
+              </div>
             </div>
           </div>
 
@@ -403,6 +402,15 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                   <th>{isAr ? 'الكتلة (g)' : 'Mass (g)'}</th>
                   <th className="highlight-cell">F_th (N)</th>
                   <th className="highlight-cell">F_ac (N)</th>
+                  {/*
+                    The point of the whole exercise, given a column of its own.
+
+                    The two forces were printed side by side and the learner was left to
+                    divide them. `(F_ac − F_th) / F_th` is what the worksheet asks for and
+                    what the report prints, so it is computed once, here, and not three
+                    times in three places.
+                  */}
+                  <th className="highlight-cell">{isAr ? 'الخطأ %' : 'Error %'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -416,7 +424,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                       43.457 L/min row that nobody had taken. Nothing is printed here until
                       a reading is recorded.
                     */}
-                    <td colSpan={8} className="data-table-empty">
+                    <td colSpan={9} className="data-table-empty">
                       {isAr
                         ? 'لا توجد قراءات بعد — وازن المؤشر ثم اضغط "تسجيل القراءة".'
                         : 'No readings yet — balance the pointer, then press Record reading.'}
@@ -442,6 +450,17 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                       style={{ color: 'var(--accent-gold)', fontWeight: 600 }}
                     >
                       {isCalculated ? row.measuredForceN.toFixed(4) : '—'}
+                    </td>
+                    <td className="highlight-cell">
+                      {isCalculated && row.theoreticalForceN > 0
+                        ? `${
+                            row.measuredForceN >= row.theoreticalForceN ? '+' : '−'
+                          }${Math.abs(
+                            ((row.measuredForceN - row.theoreticalForceN) /
+                              row.theoreticalForceN) *
+                              100
+                          ).toFixed(2)}`
+                        : '—'}
                     </td>
                   </tr>
                 ))}
@@ -489,7 +508,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
 
           <div className="plot-canvas">
             <svg viewBox="0 0 400 250" style={{ width: '100%', height: '100%' }}>
-              {[0, 0.25, 0.5, 0.75, 1.0].map((ratio) => {
+              {chart.ticks.map(({ ratio, flow, force }) => {
                 const y = paddingY + chartH * ratio;
                 const x = paddingX + chartW * ratio;
                 return (
@@ -509,7 +528,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                       stroke="rgba(255,255,255,0.05)"
                     />
                     <text x={paddingX - 8} y={y + 4} fill="#5c7a82" fontSize={9} textAnchor="end">
-                      {((1 - ratio) * maxForce).toFixed(1)}
+                      {force.toFixed(1)}
                     </text>
                     <text
                       x={x}
@@ -518,7 +537,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                       fontSize={9}
                       textAnchor="middle"
                     >
-                      {Math.round(ratio * maxFlow)}
+                      {Math.round(flow)}
                     </text>
                   </React.Fragment>
                 );
@@ -551,7 +570,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
 
               {/* F_th(Q), sampled across the valve's whole range. Always drawn. */}
               <path
-                d={path(curve)}
+                d={pathThrough(chart.curve)}
                 fill="none"
                 stroke="var(--accent-blue)"
                 strokeWidth={2}
@@ -559,17 +578,16 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 data-testid="chart-theoretical"
               />
               {/* The recorded readings, as markers on that curve. */}
-              {measured.length > 1 && isCalculated && (
+              {chart.measured.length > 1 && isCalculated && (
                 <path
-                  d={path(measured)}
+                  d={pathThrough(chart.measured)}
                   fill="none"
                   stroke="var(--accent-gold)"
                   strokeWidth={2.5}
                 />
               )}
 
-              {recordedRows.map((r, i) => {
-                const c = coords(r.flowRateLMin, r.theoreticalForceN);
+              {chart.theoretical.map((c, i) => {
                 return (
                   <circle
                     key={`th-${i}`}
@@ -583,8 +601,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 );
               })}
               {isCalculated &&
-                measured.map((p, i) => {
-                  const c = coords(p.flowRateLMin, p.forceN);
+                chart.measured.map((c, i) => {
                   return (
                     <circle
                       key={`ac-${i}`}
@@ -613,61 +630,89 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             </div>
           </div>
 
-          {/* Step 12 — the experiment's question. */}
+          {/*
+            The assessment.
+
+            Five questions per experiment, from `domain/experiments.ts` — the brief's
+            minimum, and enough that a score means something. It used to be one, so the
+            score was pass or fail on a single guess.
+
+            Each question is answerable once and explains itself the moment it is answered,
+            right or wrong: an explanation held back until the end is read by nobody, and
+            one shown before the answer is a spoiler.
+          */}
           {isCalculated && (
-            <div className="glass-card" style={{ marginTop: '14px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#f58220', marginBottom: 8 }}>
-                {isAr ? 'سؤال التقييم' : 'Assessment question'}
+            <div className="glass-card assessment" data-testid="assessment">
+              <div className="assessment-head">
+                <span>{isAr ? 'التقييم' : 'Assessment'}</span>
+                <span className="assessment-score" style={NUMERIC_READOUT}>
+                  {correctCount} / {experiment.quiz.length}
+                </span>
               </div>
-              <p style={{ fontSize: '12px', margin: '0 0 10px 0', color: '#e0f2f5' }}>
-                {isAr ? question.promptAr : question.promptEn}
-              </p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {(isAr ? question.optionsAr : question.optionsEn).map((opt, i) => {
-                  const chosen = quizAnswer === i;
-                  const isRight = i === question.answer;
-                  const showResult = answered && (chosen || isRight);
-                  return (
-                    <button
-                      key={i}
-                      className="btn-secondary"
-                      onClick={() => !answered && onAnswerQuiz(i)}
-                      disabled={answered}
-                      style={{
-                        justifyContent: 'flex-start',
-                        fontSize: '12px',
-                        borderColor: showResult
-                          ? isRight
-                            ? 'var(--success-green)'
-                            : 'var(--danger-red)'
-                          : 'rgba(255,255,255,0.1)',
-                        color: showResult
-                          ? isRight
-                            ? 'var(--success-green)'
-                            : 'var(--danger-red)'
-                          : '#fff',
-                      }}
-                    >
-                      {showResult && isRight && <CheckCircle2 size={14} />}
-                      {opt}
-                    </button>
-                  );
-                })}
+              <div className="assessment-progress" aria-hidden="true">
+                <span
+                  className="assessment-progress-fill"
+                  style={{ width: `${(answeredCount / experiment.quiz.length) * 100}%` }}
+                />
               </div>
 
-              {answered && (
-                <p
-                  style={{
-                    fontSize: '11px',
-                    marginTop: 10,
-                    color: correct ? 'var(--success-green)' : '#8fa7ad',
-                  }}
-                >
-                  {correct ? (isAr ? '✅ إجابة صحيحة. ' : '✅ Correct. ') : ''}
-                  {isAr ? question.explainAr : question.explainEn}
-                </p>
-              )}
+              {experiment.quiz.map((question, qi) => {
+                const chosen = quizAnswers[qi];
+                const answered = qi in quizAnswers;
+                const gotItRight = answered && chosen === question.answer;
+                return (
+                  <div className="assessment-q" key={qi}>
+                    <p className="assessment-prompt">
+                      <span className="assessment-num">{qi + 1}</span>
+                      {isAr ? question.promptAr : question.promptEn}
+                    </p>
+
+                    <div className="assessment-options">
+                      {(isAr ? question.optionsAr : question.optionsEn).map((option, oi) => {
+                        const isRight = oi === question.answer;
+                        // After answering, mark the right one and the one that was picked.
+                        // Marking only the pick would leave a wrong answer uncorrected.
+                        const reveal = answered && (oi === chosen || isRight);
+                        return (
+                          <button
+                            key={oi}
+                            className="btn-secondary assessment-option"
+                            onClick={() => onAnswerQuiz(qi, oi)}
+                            disabled={answered}
+                            aria-pressed={oi === chosen}
+                            style={{
+                              borderColor: reveal
+                                ? isRight
+                                  ? 'var(--success-green)'
+                                  : 'var(--danger-red)'
+                                : 'rgba(255,255,255,0.1)',
+                              color: reveal
+                                ? isRight
+                                  ? 'var(--success-green)'
+                                  : 'var(--danger-red)'
+                                : '#fff',
+                            }}
+                          >
+                            {reveal && isRight && <CheckCircle2 size={14} />}
+                            {option}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {answered && (
+                      <p
+                        className="assessment-explain"
+                        role="status"
+                        style={{ color: gotItRight ? 'var(--success-green)' : '#8fa7ad' }}
+                      >
+                        {gotItRight ? (isAr ? '✅ صحيح. ' : '✅ Correct. ') : ''}
+                        {isAr ? question.explainAr : question.explainEn}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

@@ -91,22 +91,40 @@ describe('deflectorsFor', () => {
 });
 
 describe('quizzes', () => {
-  it.each(EXPERIMENTS)('$id asks one answerable question', (experiment) => {
-    expect(experiment.quiz).toHaveLength(1);
-    const question = experiment.quiz[0];
+  it.each(EXPERIMENTS)('$id asks five answerable questions', (experiment) => {
+    // Five, the brief's minimum. It was one, so a learner's score was pass or fail on a
+    // single guess and told an instructor almost nothing.
+    expect(experiment.quiz.length).toBeGreaterThanOrEqual(5);
 
-    expect(['mcq', 'trueFalse']).toContain(question.kind);
-    expect(question.optionsEn.length).toBeGreaterThanOrEqual(2);
-    expect(question.optionsAr).toHaveLength(question.optionsEn.length);
-    expect(question.answer).toBeGreaterThanOrEqual(0);
-    expect(question.answer).toBeLessThan(question.optionsEn.length);
+    experiment.quiz.forEach((question, index) => {
+      const where = `${experiment.id}[${index}]`;
+      expect(['mcq', 'trueFalse'], where).toContain(question.kind);
+      expect(question.optionsEn.length, where).toBeGreaterThanOrEqual(2);
+      expect(question.optionsAr, where).toHaveLength(question.optionsEn.length);
+      expect(question.answer, where).toBeGreaterThanOrEqual(0);
+      expect(question.answer, where).toBeLessThan(question.optionsEn.length);
 
-    for (const key of ['promptEn', 'promptAr', 'explainEn', 'explainAr'] as const) {
-      expect(question[key], `${experiment.id}.${key}`).toMatch(/\S/);
-    }
-    expect(question.promptAr).toMatch(/[؀-ۿ]/);
-    expect(question.optionsEn.every((o) => o.trim().length > 0)).toBe(true);
-    expect(question.optionsAr.every((o) => o.trim().length > 0)).toBe(true);
+      for (const key of ['promptEn', 'promptAr', 'explainEn', 'explainAr'] as const) {
+        expect(question[key], `${where}.${key}`).toMatch(/\S/);
+      }
+      // Arabic, not English left in an Arabic field — the failure a bilingual data file
+      // makes easy and a reviewer reading one language will not see.
+      expect(question.promptAr, where).toMatch(/[؀-ۿ]/);
+      expect(question.explainAr, where).toMatch(/[؀-ۿ]/);
+      expect(question.optionsEn.every((o) => o.trim().length > 0), where).toBe(true);
+      expect(question.optionsAr.every((o) => o.trim().length > 0), where).toBe(true);
+    });
+  });
+
+  it.each(EXPERIMENTS)('$id asks each question once', (experiment) => {
+    const prompts = experiment.quiz.map((q) => q.promptEn);
+    expect(new Set(prompts).size).toBe(prompts.length);
+  });
+
+  it.each(EXPERIMENTS)('$id does not put the answer in the same slot every time', (experiment) => {
+    // A learner who notices that the answer is always the second option has learned
+    // something, and it is not fluid mechanics.
+    expect(new Set(experiment.quiz.map((q) => q.answer)).size).toBeGreaterThan(1);
   });
 
   it('gives true/false questions exactly two options', () => {

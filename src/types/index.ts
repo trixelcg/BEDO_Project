@@ -1,4 +1,15 @@
 import type { VolumetricMeasurement } from '../domain/volumetric';
+
+/**
+ * Assessment answers, keyed by the question's position in the experiment's own quiz.
+ *
+ * A named type rather than an inline `Record<number, number>`, because
+ * `tests/unit/domain-boundary.spec.ts` forbids exactly that shape in `App.tsx` — it is how
+ * the old `BALANCE_ROW = { 7: 1, 9: 2 }` step-number map was written, and the guard exists
+ * so one cannot come back. This is a different thing keyed by a different index, and
+ * naming it says so.
+ */
+export type QuizAnswers = Readonly<Record<number, number>>;
 import type { RecordRow } from '../domain/physics';
 import type { LiveReadout } from '../simulation/selectors';
 import type { ExperimentId, ExperimentStep, StepId } from '../domain/experiments';
@@ -154,8 +165,14 @@ export interface SimulationView {
   monitorExpanded: boolean;
   /** F_ac is only recorded once the student presses Calculate (step 11). */
   isCalculated: boolean;
-  /** Index into the experiment's quiz options, or null if unanswered. */
-  quizAnswer: number | null;
+  /**
+   * The learner's answers, by question index. Absent means unanswered.
+   *
+   * It was a single `number | null` for a single question. The assessment is five questions
+   * per experiment now, each answerable once, so what has to be carried is the whole set —
+   * and the score, which is derived from it rather than stored beside it.
+   */
+  quizAnswers: QuizAnswers;
   params: CustomParams;
   /**
    * The volumetric measuring tank, as the frame loop last reported it.

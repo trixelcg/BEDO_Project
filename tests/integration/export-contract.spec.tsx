@@ -181,7 +181,7 @@ describe('the on-screen readings table', () => {
       (td) => td.textContent
     );
 
-  it('has exactly these eight columns, in this order', () => {
+  it('has exactly these nine columns, in this order', () => {
     walkLesson(1, 9);
     expect(headers()).toEqual([
       'Row',
@@ -195,18 +195,26 @@ describe('the on-screen readings table', () => {
       'Mass (g)',
       'F_th (N)',
       'F_ac (N)',
+      // The comparison the exercise is for, given its own column rather than left for the
+      // learner to do in their head.
+      'Error %',
     ]);
   });
 
   it('shows the readings with their current formatting', () => {
     walkLesson(1, 10);
-    expect(cells(0)).toEqual(['1', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848']);
-    expect(cells(1)).toEqual(['2', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506']);
+    expect(cells(0)).toEqual([
+      '1', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848', '−4.28',
+    ]);
+    expect(cells(1)).toEqual([
+      '2', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506', '+0.80',
+    ]);
   });
 
   it('shows a dash for F_ac until Calculate is pressed', () => {
     walkLesson(1, 9);
     expect(cells(0)[7]).toBe('—');
+    expect(cells(0)[8]).toBe('—');
   });
 
   it('prints the mass on the tray, not the sum of the recorded rows', () => {
@@ -241,6 +249,7 @@ describe('the on-screen readings table', () => {
       'الكتلة (g)',
       'F_th (N)',
       'F_ac (N)',
+      'الخطأ %',
     ]);
   });
 });

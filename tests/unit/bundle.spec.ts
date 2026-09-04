@@ -76,13 +76,18 @@ describeBuilt('the production bundle', () => {
     // `extensionsRequired`, so the loader must be attached before the GLB is parsed.
     // That buys a 420 MB reduction in GPU texture residency. Headroom is kept tight.
     //
-    // Raised a second time for the remediation phases: the balance readout, the volumetric
-    // tank and its readout, the sight-gauge column and the computed chart curve together
-    // measure about +7 KB (+1.7 KB gzip). No dependency was added — the ceiling moves for
-    // application code, and the point of keeping it tight is that a library slipping into
-    // the initial chunk would blow through it rather than hide inside the slack.
+    // Raised for the remediation phases: the balance readout, the volumetric tank, the
+    // sight gauge, the droplet field, the water circuit, the accessible dialog shell, the
+    // twenty-question assessment and the generated report together measure about +45 KB
+    // (+15 KB gzip).
+    //
+    // **No dependency was added, and that is the point of the ceiling.** The report is the
+    // place one nearly was: `jspdf` and `@react-pdf/renderer` are several hundred
+    // kilobytes each and neither shapes Arabic, so the report is HTML the browser prints.
+    // The ceiling moves for application code precisely so that a library slipping into the
+    // initial chunk blows through it rather than hiding inside the slack.
     expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
-      1_400_000
+      1_440_000
     );
   });
 

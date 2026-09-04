@@ -106,7 +106,7 @@ describe('the readings table', () => {
     click('Open Data Monitor');
 
     expect(tableRows()).toHaveLength(1);
-    expect(tableRows()[0].querySelector('td')?.getAttribute('colspan')).toBe('8');
+    expect(tableRows()[0].querySelector('td')?.getAttribute('colspan')).toBe('9');
   });
 
   it('gains no row from dragging the flow valve', () => {

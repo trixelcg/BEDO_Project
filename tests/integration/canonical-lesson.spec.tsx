@@ -133,7 +133,14 @@ describe('the lesson ends at eleven', () => {
 
     const sheet = screen.getByTestId('answer-sheet');
     expect(sheet).toBeDefined();
-    expect(sheet.querySelector('iframe')?.getAttribute('src')).toBe('/answer-sheets/flat.pdf');
+    // The report of this run, generated from the session — not the blank worksheet, which
+    // is the same four files whatever anyone did. BEDO's sheet is still one link away.
+    const report = sheet.querySelector('iframe')?.getAttribute('srcdoc') ?? '';
+    expect(report).toContain('Experiment report');
+    expect(report).toContain('Exp. 1 — Flat surface deflector');
+    expect(
+      within(sheet).getByRole('link', { name: /Blank worksheet/ }).getAttribute('href')
+    ).toBe('/answer-sheets/flat.pdf');
   });
 
   it('reaches a completion state without inventing a step', () => {
@@ -193,8 +200,12 @@ describe('the lesson ends at eleven', () => {
 
     expect(currentStep()).toBe(11);
     click('Open the answer sheet');
+    const sheet = screen.getByTestId('answer-sheet');
+    expect(sheet.querySelector('iframe')?.getAttribute('srcdoc')).toContain(
+      'Exp. 2 — Semi-circular deflector'
+    );
     expect(
-      screen.getByTestId('answer-sheet').querySelector('iframe')?.getAttribute('src')
+      within(sheet).getByRole('link', { name: /Blank worksheet/ }).getAttribute('href')
     ).toBe('/answer-sheets/semi.pdf');
   });
 

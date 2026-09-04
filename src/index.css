@@ -1801,3 +1801,107 @@ input[type="range"]::-webkit-slider-thumb:hover {
   letter-spacing: 0.06em;
   margin-top: 2px;
 }
+
+/* A live tile that reports a satisfied condition rather than a value. */
+.mon-cell-ok {
+  border-color: var(--success-green);
+  background: rgba(0, 214, 143, 0.08);
+}
+
+.mon-cell-ok .mon-val { color: var(--success-green); }
+
+/*
+  The assessment.
+
+  Five questions rather than one, so it needs a shape: a score at the top, a bar for how
+  far through it the learner is, and each question closed off by its own explanation as
+  soon as it is answered.
+*/
+.assessment {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.assessment-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  font-weight: 700;
+  color: #f58220;
+}
+
+.assessment-score {
+  font-size: 15px;
+  color: #fff;
+}
+
+.assessment-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.assessment-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--success-green);
+  transition: width 0.3s ease-out;
+}
+
+.assessment-q {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.assessment-prompt {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #e0f2f5;
+}
+
+.assessment-num {
+  flex: none;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: rgba(245, 130, 32, 0.16);
+  color: #f58220;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assessment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assessment-option {
+  justify-content: flex-start;
+  font-size: 12px;
+  text-align: start;
+}
+
+.assessment-explain {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assessment-progress-fill { transition: none; }
+}

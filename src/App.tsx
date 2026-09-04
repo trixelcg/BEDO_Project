@@ -7,7 +7,14 @@ import { LoadingScreen, type LoadingPhase } from './components/LoadingScreen';
 import { ExperimentIntro } from './components/ExperimentIntro';
 import { useProgress } from '@react-three/drei';
 import { AnswerSheet } from './components/AnswerSheet';
-import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
+import type {
+  ErrorCode,
+  Language,
+  LessonView,
+  Mode,
+  QuizAnswers,
+  SimulationView,
+} from './types/index';
 import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
 import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparatusGate';
 import { DEFLECTORS, getDeflector } from './domain/apparatus';
@@ -71,7 +78,8 @@ interface LessonAndUiState {
   monitorBeforeBoardView: boolean;
   /** The worksheet overlay, opened by the closing step. */
   showAnswerSheet: boolean;
-  quizAnswer: number | null;
+  /** The learner's assessment answers, by question index. */
+  quizAnswers: QuizAnswers;
   /** A student-defined weight denomination the panel offers. Buys a button, not physics. */
   customWeightG: number;
   /**
@@ -105,7 +113,7 @@ const initialLessonState = (
   boardView: false,
   monitorBeforeBoardView: false,
   showAnswerSheet: false,
-  quizAnswer: null,
+  quizAnswers: {},
   customWeightG: 25,
   deflectorInstalled: false,
   runId,
@@ -608,7 +616,21 @@ export default function App() {
     applyAdvance(runner.notify('RECORD_ACTUAL_FORCE', contextNow()));
   };
 
-  const handleAnswerQuiz = (choice: number) => setUi((prev) => ({ ...prev, quizAnswer: choice }));
+  /**
+   * Answer one assessment question.
+   *
+   * Once only: an answered question keeps the answer it was given, so the score is what the
+   * learner knew rather than what they arrived at after trying every option. The guard is
+   * here rather than in the component because it is a rule about the record, not about a
+   * button's disabled state — which the component also applies, for the different reason
+   * that a control that cannot act must not look as though it can.
+   */
+  const handleAnswerQuiz = (question: number, choice: number) =>
+    setUi((prev) =>
+      question in prev.quizAnswers
+        ? prev
+        : { ...prev, quizAnswers: { ...prev.quizAnswers, [question]: choice } }
+    );
 
   /**
    * The closing step: open this experiment's worksheet.
@@ -827,7 +849,7 @@ export default function App() {
       showMonitor: ui.showMonitor,
       monitorExpanded: ui.monitorExpanded,
       isCalculated: simulation.isActualForceRecorded,
-      quizAnswer: ui.quizAnswer,
+      quizAnswers: ui.quizAnswers,
       params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: ui.customWeightG },
       volumetric,
       warningMessage: ui.warningMessage,
@@ -907,12 +929,28 @@ export default function App() {
           onOpenAnswerSheet={handleOpenAnswerSheet}
         />
 
-        {ui.showAnswerSheet && lessonView.answerSheetUrl && (
+        {/*
+          The closing step's document.
+
+          No longer gated on a worksheet having been delivered: the report is generated from
+          the session, so it exists for every experiment. BEDO's blank sheet is passed
+          alongside it and offered as a second link when there is one.
+        */}
+        {ui.showAnswerSheet && (
           <AnswerSheet
             url={lessonView.answerSheetUrl}
             experimentName={ui.language === 'ar' ? experiment.nameAr : experiment.nameEn}
             isArabic={ui.language === 'ar'}
             onClose={handleCloseAnswerSheet}
+            report={{
+              experiment,
+              deflectorName,
+              deflectorId: deflector.id,
+              momentumFactor: deflector.momentumFactor,
+              rows: readings,
+              pumpFlowLMin: simulation.pumpFlowLMin,
+              quizAnswers: ui.quizAnswers,
+            }}
           />
         )}
 
