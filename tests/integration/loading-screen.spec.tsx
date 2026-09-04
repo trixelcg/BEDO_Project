@@ -3,7 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LoadingScreen } from '../../src/components/LoadingScreen';
 import { isReady, markReady } from '../../src/lib/readiness';
-import { renderApp, stubConfigFetch } from '../helpers/app-harness';
+import { renderFreshApp, stubConfigFetch } from '../helpers/app-harness';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
@@ -112,7 +112,7 @@ describe('the loading overlay, as a component', () => {
 describe('what the overlay waits for', () => {
   it('covers the app until the scene milestone, then leaves', async () => {
     stubConfigFetch();
-    renderApp();
+    renderFreshApp();
 
     // The scene double marks readiness on mount, so readiness itself is already satisfied.
     expect(isReady('scene')).toBe(true);
@@ -130,7 +130,7 @@ describe('what the overlay waits for', () => {
 
   it('holds an already-complete bar during the floor, rather than advancing anything', () => {
     stubConfigFetch();
-    renderApp();
+    renderFreshApp();
 
     // The milestone has genuinely fired, so the phase and the segments are already at
     // their final state. The presentation floor only postpones the reveal — it is not

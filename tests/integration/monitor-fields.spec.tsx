@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { click, renderApp, stubConfigFetch, walkLesson } from '../helpers/app-harness';
+import { click, renderFreshApp, stubConfigFetch, walkLesson } from '../helpers/app-harness';
 import { GRAVITY_MS2 } from '../../src/domain/physics';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
@@ -39,7 +39,7 @@ const readout = (label: string): HTMLElement => {
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
   walkLesson(1, 10);
 });
 

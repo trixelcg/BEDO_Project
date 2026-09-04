@@ -85,6 +85,16 @@ export interface SimulationRuntime {
   subscribe(listener: SimulationListener): () => void;
   /** Back to `createInitialSimulationState`, keeping the given experiment if one is passed. */
   reset(experimentId?: ExperimentId): SimulationState;
+  /**
+   * Adopt a whole state — a session restored from storage.
+   *
+   * Deliberately not a command: it is not something the rig can be *told to do*, it is the
+   * rig being put back as it was, and giving it a command type would put it in the same
+   * union as `POWER_ON` where a lesson step could reach it. The caller is responsible for
+   * the state being one the state machine could have produced; `src/lib/sessionStore.ts`
+   * validates every field before this is reached.
+   */
+  restore(state: SimulationState): SimulationState;
 }
 
 const APPARATUS_COMMANDS = new Set([
@@ -210,6 +220,23 @@ export function createSimulationRuntime(
 
     reset(experimentId) {
       commit(createInitialSimulationState(experimentId ?? state.experimentId, state.pumpFlowLMin));
+      return state;
+    },
+
+    restore(next) {
+      // Copied and frozen like any other commit, so a restored session is exactly as
+      // immutable as one that was played out — and the object the caller parsed from
+      // storage cannot go on being written to behind the runtime's back.
+      commit(
+        freezeSimulationState({
+          ...next,
+          apparatus: { ...next.apparatus, loadedWeightsG: [...next.apparatus.loadedWeightsG] },
+          recordedReadings: next.recordedReadings.map((reading) => ({
+            ...reading,
+            loadedWeightsG: [...reading.loadedWeightsG],
+          })),
+        })
+      );
       return state;
     },
   };

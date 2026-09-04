@@ -9,7 +9,7 @@ import {
   dismissPopup,
   loadedWeightG,
   powerLabel,
-  renderApp,
+  renderFreshApp,
   setValve,
   stubConfigFetch,
   walkLesson,
@@ -50,7 +50,7 @@ const valvePercent = (): number => {
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

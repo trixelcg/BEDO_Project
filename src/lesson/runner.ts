@@ -79,6 +79,15 @@ export interface LessonRunner {
   hasCompleted(id: StepId): boolean;
 
   reset(): void;
+  /**
+   * Put the learner back on a named step — a restored session, and nothing else.
+   *
+   * Not a way to skip ahead: it takes a `StepId`, so it cannot be reached by arithmetic on
+   * a step number, and the only caller is the session restore. An unknown id is ignored
+   * rather than throwing, because a session from a build with different steps is a thing
+   * that will happen and is not an error.
+   */
+  goTo(id: StepId): void;
   subscribe(listener: (state: LessonState) => void): () => void;
 }
 
@@ -177,6 +186,17 @@ export function createLessonRunner(
 
     reset() {
       set({ ...state, currentStepId: first.id, isComplete: false });
+    },
+
+    goTo(id) {
+      const index = indexOf(id);
+      if (index === -1) return;
+      set({
+        ...state,
+        currentStepId: id,
+        // Restoring onto the last step restores the finished state with it.
+        isComplete: index === lesson.steps.length - 1 && state.isComplete,
+      });
     },
 
     subscribe(listener) {

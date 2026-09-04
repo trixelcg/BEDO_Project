@@ -2,7 +2,7 @@
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
-import { click, renderApp, setValve, stubConfigFetch, walkLesson } from '../helpers/app-harness';
+import { click, renderFreshApp, setValve, stubConfigFetch, walkLesson } from '../helpers/app-harness';
 import { flowRateLMin } from '../../src/domain/physics';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
@@ -86,7 +86,7 @@ const tableRow = (oneBased: number): string[] =>
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

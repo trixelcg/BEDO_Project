@@ -1905,3 +1905,18 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @media (prefers-reduced-motion: reduce) {
   .assessment-progress-fill { transition: none; }
 }
+
+/* Resume, offered above Start when there is a session to return to. */
+.intro-resume {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.intro-resume-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8fa7ad;
+}

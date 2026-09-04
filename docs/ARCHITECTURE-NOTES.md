@@ -105,3 +105,28 @@ Two consequences worth naming:
   40 turned the first reading from 0.131 of delivery into 0.393, which would have filled the
   tank at the reading the reference recording shows it empty at. What the recording bracketed
   is a flow: 21.36 L/min.
+
+## What each phase added, and where it lives
+
+| Phase | New modules |
+|---|---|
+| 1 | `balanceDeviation` in `domain/physics.ts`; `RecordedReading` in `simulation/state.ts`; `RECORD_READING` in `simulation/runtime.ts`; `selectLiveRow` / `selectCanRecordReading` in `simulation/selectors.ts` |
+| 2 | `domain/physicsConfig.ts` (the four switchable choices); `computeTheoreticalForce` and `valveOpeningFor` in `domain/physics.ts`; `momentumFactorFor` in `domain/apparatus.ts` |
+| 3 | `domain/volumetric.ts`, `lib/sightGauge.ts`, `lib/waterSpray.ts`, `lib/waterCircuit.ts` |
+| 4 | `lib/guidance.ts`, `components/Modal.tsx`, `clampToRoom` in `lib/cameraFraming.ts`, `__APP_VERSION__` in `vite.config.ts` |
+| 5–6 | `lib/forceChart.ts` (shared by the monitor and the report), `lib/report.ts` |
+| 7 | `lib/sessionStore.ts`; `restore` on the runtime, `goTo` on the lesson runner |
+
+## Things a future change should know
+
+- **`GLB` names are a contract.** Every mesh name in `MESH` is checked against the shipped
+  asset by `tests/unit/glb-contract.spec.ts`, which also pins the count. Adding one means
+  updating that number.
+- **`renderFreshApp`, not `renderApp`.** Sessions persist from the moment Start is pressed
+  and `cleanup()` does not touch storage, so an integration spec that renders twice will
+  resume its own earlier run unless it asks for a fresh visitor.
+- **The bundle ceiling in `tests/unit/bundle.spec.ts` is deliberate.** It moves for
+  application code and is meant to stop a library slipping into the initial chunk.
+- **Two flow quantities, easily confused.** `valveOpening` is where the lever is;
+  `flowRateLMin` is what the pump delivers. Under `Q = Q_max·n^1.5` a half-open valve
+  delivers 35 %, and every water effect is a picture of the *flow*.

@@ -13,7 +13,7 @@ import {
   expectStep,
   loadedWeightG,
   okButton,
-  renderApp,
+  renderFreshApp,
   setValve,
   stubConfigFetch,
   walkLesson as walk,
@@ -38,7 +38,7 @@ vi.mock('../../src/components/Scene3D', async () => await import('../helpers/sce
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

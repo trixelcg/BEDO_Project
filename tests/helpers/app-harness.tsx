@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within, type RenderResult } from '@testing-l
 import { expect, vi } from 'vitest';
 import App from '../../src/App';
 import { FIRST_READING_VALVE, SECOND_READING_VALVE } from '../../src/domain/physics';
+import { clearSession } from '../../src/lib/sessionStore';
 
 /**
  * Shared setup for the jsdom integration specs.
@@ -29,9 +30,34 @@ export function stubConfigFetch(): void {
  */
 export const renderApp = (): RenderResult => {
   const result = render(<App />);
-  const start = screen.queryByRole('button', { name: /^(Start|ابدأ)$/ });
+  // "Start again" when a saved session is offered alongside Resume — see `sessionStore`.
+  const start = screen.queryByRole('button', { name: /^(Start|Start again|ابدأ|البدء من جديد)$/ });
   if (start) fireEvent.click(start);
   return result;
+};
+
+/**
+ * Renders the app as a **new visitor** sees it.
+ *
+ * Every spec but the persistence one means this. Sessions are saved to `localStorage` from
+ * the moment Start is pressed, and `cleanup()` does not touch storage — so without this the
+ * second test in a file resumes the first one's rig, and the failure surfaces somewhere
+ * unrelated as a missing button.
+ */
+/**
+ * Renders the app and stops at the intro, without pressing Start.
+ *
+ * The one place that matters is the Resume offer: `renderApp` presses whichever start
+ * button it finds, and next to a Resume that button is "Start again" — which would dismiss
+ * the very offer the test is about.
+ */
+export const renderIntro = (): RenderResult => render(<App />);
+
+export const renderFreshApp = (): RenderResult => {
+  // Only the session, not the whole of storage: the language preference is persisted too
+  // and `language-preference.spec.tsx` sets it deliberately before rendering.
+  clearSession();
+  return renderApp();
 };
 
 export const sidebar = () => document.querySelector('.sidebar-panel') as HTMLElement;

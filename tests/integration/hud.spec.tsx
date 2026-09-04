@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   click,
   clickMesh,
-  renderApp,
+  renderFreshApp,
   stubConfigFetch,
   walkLesson,
 } from '../helpers/app-harness';
@@ -23,7 +23,7 @@ const container = () => document.querySelector('.ui-container');
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

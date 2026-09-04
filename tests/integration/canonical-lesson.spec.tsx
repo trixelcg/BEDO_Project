@@ -7,7 +7,7 @@ import {
   clickOk,
   currentStep,
   dismissPopup,
-  renderApp,
+  renderFreshApp,
   setValve,
   stubConfigFetch,
   walkLesson,
@@ -33,7 +33,7 @@ vi.mock('../../src/components/Scene3D', async () => await import('../helpers/sce
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

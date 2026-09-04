@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { click, renderApp, setValve, stubConfigFetch, walkLesson } from '../helpers/app-harness';
+import { click, renderFreshApp, setValve, stubConfigFetch, walkLesson } from '../helpers/app-harness';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
@@ -37,7 +37,7 @@ const tableRow = (oneBased: number): string[] =>
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

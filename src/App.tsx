@@ -21,6 +21,12 @@ import { DEFLECTORS, getDeflector } from './domain/apparatus';
 import { answerSheetFor, buildSteps, type ExperimentId } from './domain/experiments';
 import { isReady, markReady, subscribeReady } from './lib/readiness';
 import { readLanguagePreference, writeLanguagePreference } from './lib/languagePreference';
+import {
+  clearSession,
+  readSession,
+  writeSession,
+  type SavedSession,
+} from './lib/sessionStore';
 import { SCENE_CONFIG } from './lib/sceneConfig';
 import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
@@ -237,6 +243,18 @@ export default function App() {
    * "have we begun", not lesson state.
    */
   const [hasStarted, setHasStarted] = useState(false);
+
+  /**
+   * A half-finished experiment from a previous visit, if there is one.
+   *
+   * Read once, synchronously, in the initializer: the intro is the first thing a returning
+   * learner sees and it has to offer Resume on its first paint rather than growing a
+   * button a moment later. Cleared from state the instant it is used or declined, so the
+   * offer cannot reappear mid-session.
+   */
+  const [resumable, setResumable] = useState<SavedSession | null>(() =>
+    readSession(CURRENT_LESSON.steps.map((step) => step.id))
+  );
 
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
@@ -723,8 +741,64 @@ export default function App() {
     runtime.reset();
     runner.reset();
     setVolumetric(emptyMeasurement());
+    // Reset means "start this over", so the saved session goes with it — otherwise the
+    // next visit offers a Resume back to the run that was just discarded.
+    clearSession();
+    setResumable(null);
     setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
+
+  /**
+   * Keep the saved session in step with the work.
+   *
+   * Written on every change to the three things that *are* the work — the rig, where the
+   * learner is, and what they have answered. That is a handful of writes a minute at human
+   * speed, so there is nothing here to debounce.
+   *
+   * Nothing is written before the learner presses Start: an intro screen is not progress,
+   * and saving there would offer them a Resume back to the screen they were already on.
+   */
+  useEffect(() => {
+    if (!hasStarted) return;
+    /*
+      Nothing is saved until there is something worth resuming.
+
+      Standing on the first step with the rig at rest is not progress — it is the state a
+      fresh visit produces anyway — and saving it would offer a returning learner a Resume
+      back to where Start already takes them. It is also what makes Reset stick: the reset
+      state *is* the first step, so it writes nothing over the session it just cleared.
+    */
+    if (lessonState.currentStepId === CURRENT_LESSON.steps[0].id) return;
+    writeSession({
+      experimentId: simulation.experimentId,
+      stepId: lessonState.currentStepId,
+      simulation,
+      quizAnswers: ui.quizAnswers,
+    });
+  }, [hasStarted, simulation, lessonState.currentStepId, ui.quizAnswers]);
+
+  /**
+   * Pick up where the last visit left off.
+   *
+   * The rig, the step and the answers, and nothing about the interface — see
+   * `src/lib/sessionStore.ts`. `restore` rather than a command, because this is not
+   * something the rig is told to do.
+   */
+  const handleResume = useCallback(() => {
+    const session = resumable;
+    if (!session) return;
+    runtime.restore(session.simulation);
+    runner.goTo(session.stepId);
+    setUi((prev) => ({
+      ...prev,
+      quizAnswers: session.quizAnswers,
+      // A restored deflector is one that was installed, or the step that installs it would
+      // not have been passed.
+      deflectorInstalled: true,
+    }));
+    setResumable(null);
+    setHasStarted(true);
+  }, [resumable, runtime, runner]);
 
   // The shell is mounted and interactive from here. See src/lib/readiness.ts.
   useEffect(() => markReady('app'), []);
@@ -979,7 +1053,15 @@ export default function App() {
         <ExperimentIntro
           experiment={experiment}
           language={ui.language}
-          onStart={() => setHasStarted(true)}
+          onStart={() => {
+            // Starting fresh discards whatever was saved, so the offer is a real choice
+            // rather than something that keeps coming back.
+            clearSession();
+            setResumable(null);
+            setHasStarted(true);
+          }}
+          resumable={resumable}
+          onResume={handleResume}
         />
       )}
 

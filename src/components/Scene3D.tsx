@@ -1,7 +1,7 @@
 import type { VolumetricMeasurement } from '../domain/volumetric';
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
+import { ContactShadows, OrbitControls, Preload, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   DeviceModel,
@@ -779,6 +779,17 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             glassRoughness={sceneConfig.glassRoughness}
             glassIor={sceneConfig.glassIor}
           />
+
+          {/*
+            Compile every material before the learner sees the scene.
+
+            `useGLTF.preload` (in `DeviceModel`) fetches and parses the assets; this is the
+            other half — the first time a material is actually drawn, the driver compiles
+            its shader, and doing that on the frame a deflector first becomes visible is a
+            visible hitch. Inside the Suspense boundary, so the cost lands under the loading
+            screen where the learner is already waiting.
+          */}
+          <Preload all />
         </Suspense>
 
         <RoomLighting groupRef={apparatusRef} intensity={sceneConfig.hdrLight} />

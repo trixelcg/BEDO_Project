@@ -9,7 +9,7 @@ import {
   dismissPopup,
   loadedWeightG,
   okButton,
-  renderApp,
+  renderFreshApp,
   setValve,
   stubConfigFetch,
   walkLesson,
@@ -50,7 +50,7 @@ const discsInScene = () => screen.queryAllByTestId(/^scene-loaded-weight-/).leng
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

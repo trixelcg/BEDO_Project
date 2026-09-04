@@ -2,7 +2,7 @@
 import { cleanup, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  click, coverState, currentStep, renderApp, stubConfigFetch, walkLesson, warningText,
+  click, coverState, currentStep, renderFreshApp, stubConfigFetch, walkLesson, warningText,
 } from '../helpers/app-harness';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
@@ -25,7 +25,7 @@ const coverButton = () => screen.getByRole('button', { name: /tank cover/i });
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

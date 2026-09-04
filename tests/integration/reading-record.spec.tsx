@@ -6,7 +6,7 @@ import {
   click,
   loadedWeightG,
   okButton,
-  renderApp,
+  renderFreshApp,
   setValve,
   stubConfigFetch,
   walkLesson,
@@ -41,7 +41,7 @@ const weightPanelButtons = (): string[] => {
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

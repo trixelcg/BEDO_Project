@@ -8,7 +8,7 @@ import {
   clickMesh,
   coverState,
   loadedWeightG,
-  renderApp,
+  renderFreshApp,
   stubConfigFetch,
   walkLesson,
 } from '../helpers/app-harness';
@@ -30,7 +30,7 @@ vi.mock('../../src/components/Scene3D', async () => await import('../helpers/sce
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
 });
 
 afterEach(() => {

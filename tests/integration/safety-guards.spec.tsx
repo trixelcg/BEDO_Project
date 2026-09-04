@@ -9,7 +9,7 @@ import {
   dismissPopup,
   loadedWeightG,
   powerLabel,
-  renderApp,
+  renderFreshApp,
   stubConfigFetch,
   warning,
   warningText,
@@ -39,7 +39,7 @@ const openCover = () => clickMesh('scene-cover');
 
 beforeEach(() => {
   stubConfigFetch();
-  renderApp();
+  renderFreshApp();
   enterFreeMode();
 });
 
