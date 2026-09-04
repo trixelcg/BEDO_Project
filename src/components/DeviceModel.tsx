@@ -52,6 +52,8 @@ import {
   type VolumetricMeasurement,
 } from '../domain/volumetric';
 import { attachSightGauge } from '../lib/sightGauge';
+import { createSpray, type SprayField } from '../lib/waterSpray';
+import { createWaterCircuit, type WaterCircuit } from '../lib/waterCircuit';
 import { attachBoardReadout, type BoardValues } from './boardReadout';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
@@ -485,6 +487,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const volumetricValveWasOpen = useRef(true);
   const sinceVolumetricSample = useRef(0);
   const sightGauge = useRef<ReturnType<typeof attachSightGauge>>(null);
+  /**
+   * Droplets thrown off the vane, over the authored sheet.
+   *
+   * The caches are the spray's *shape* and they stop moving once they have played out;
+   * this is the part that keeps moving. See `src/lib/waterSpray.ts` for why it adds to them
+   * rather than replacing them.
+   */
+  const spray = useRef<SprayField | null>(null);
+  /** Where the jet meets the deflector, in group space. Recomputed when the disc changes. */
+  const impactPoint = useRef(new THREE.Vector3());
+  /** The run-down band, the fall to the sink, and the basin's own surface. */
+  const circuit = useRef<WaterCircuit | null>(null);
   const plumeClock = useRef(createCacheClock());
   /**
    * The tank's measured interior.
@@ -1163,6 +1177,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                  0.06,
                  0.97
                );
+
+               // The deflector has to read through the sheet that leaves it.
+               //
+               // The after-impact caches are at their most opaque exactly where the disc
+               // is — the impact band — so the part the student is being asked to look at
+               // was the part most covered. Thinning the sheet there puts the disc back in
+               // front of its own spray without touching the shape (brief §3.7).
+               gl_FragColor.a *= 1.0 - 0.45 * impact;
 
                // Keep the entry, drop the curtain (BEDO-WATER-15).
                //
@@ -2067,6 +2089,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [scene, pick]);
 
   /**
+   * The droplet field, parented to the apparatus so it rides its transform.
+   *
+   * Built once and kept: the attributes never change, and rebuilding it on a deflector
+   * change would restart every droplet's loop in step, which reads as a pulse.
+   */
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    const field = createSpray();
+    spray.current = field;
+    group.add(field.object);
+    return () => {
+      group.remove(field.object);
+      field.dispose();
+      spray.current = null;
+    };
+  }, [groupRef, scene]);
+
+  /**
    * The water column in the bench's sight gauge.
    *
    * Attached the same way the board readout is — to the authored plate, so it inherits its
@@ -2139,6 +2180,49 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     },
     [groupRef, pick, dragTmp]
   );
+
+  /**
+   * The rest of the circuit: what the water does once it has left the vane.
+   *
+   * Built from the tank's measured interior and the basin's measured bounds, so nothing
+   * here is placed by eye — and rebuilt only when either of those changes, which is once.
+   */
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group || !tankInterior) return;
+
+    const sinkMesh = pick(MESH.benchSink);
+    let sinkBox: THREE.Box3 | null = null;
+    if (sinkMesh) {
+      sinkMesh.updateWorldMatrix(true, true);
+      const world = new THREE.Box3().setFromObject(sinkMesh);
+      if (!world.isEmpty()) {
+        sinkBox = new THREE.Box3(
+          group.worldToLocal(world.min.clone()),
+          group.worldToLocal(world.max.clone())
+        );
+        // worldToLocal can invert an axis if the group is mirrored on it; a Box3 whose min
+        // exceeds its max is empty, and every read below would silently do nothing.
+        const fixed = new THREE.Box3();
+        fixed.expandByPoint(sinkBox.min);
+        fixed.expandByPoint(sinkBox.max);
+        sinkBox = fixed;
+      }
+    }
+
+    // The vane is where the band starts, so the wetted glass follows whichever disc is on
+    // the rod rather than being anchored to the tank.
+    const vane = localCentreOf(getDeflector(state.selectedDeflectorId).installed);
+    const built = createWaterCircuit(tankInterior, sinkBox, vane?.y ?? tankInterior.ceilingY);
+    if (!built) return;
+
+    circuit.current = built;
+    group.add(built.object);
+    return () => {
+      built.dispose();
+      circuit.current = null;
+    };
+  }, [groupRef, tankInterior, pick, localCentreOf, state.selectedDeflectorId]);
 
   /** A drawable copy. The GLB's own node is never moved by a gesture — see `Ghost`. */
   const cloneFor = useCallback((source: THREE.Object3D): THREE.Object3D => {
@@ -3227,6 +3311,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       jetGroupRef.current.visible = !impacting;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
 
+
       /*
         The water moves at the rate water is arriving, not at the valve's position.
 
@@ -3254,6 +3339,34 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       hoseFlow.current.value = flowFraction;
       waterFade.current.value = Math.min(1, waterFade.current.value + delta / WATER_FADE_S);
 
+      /*
+        Droplets, once the jet is actually striking the vane.
+
+        Nothing is emitted while the column is still climbing — there is no impact to throw
+        anything off yet, which is the same condition `impacting` already decides for the
+        two cache states. The emitter sits at the installed disc's own centre, so it follows
+        whichever deflector is on the rod without a table of positions.
+      */
+      if (spray.current) {
+        if (impacting) {
+          const centre = localCentreOf(gltfName(deflector.installed));
+          if (centre) impactPoint.current.copy(centre);
+          spray.current.object.position.copy(impactPoint.current);
+          spray.current.update({
+            flowFraction,
+            impactVelocityMS: state.live.impactVelocityMS,
+            deflectorAngleDeg: deflector.id,
+            elapsedS: waterPhase.current,
+          });
+          // The droplets fade with the sheet they leave, so the two arrive and go together.
+          spray.current.object.visible =
+            spray.current.object.visible && waterFade.current.value > 0.05;
+        } else {
+          spray.current.object.visible = false;
+        }
+      }
+
+
       (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
         const gltf = (water as any)[key];
         if (gltf?.scene) gltf.scene.visible = key === activeWater;
@@ -3277,6 +3390,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     } else {
       if (jetGroupRef.current) jetGroupRef.current.visible = false;
       if (plumeGroupRef.current) plumeGroupRef.current.visible = false;
+      if (spray.current) spray.current.object.visible = false;
       // Parked, not reversed. No authored shutdown cache exists, so the next start plays
       // the emergence again from frame 0 rather than inventing a drain (`docs/44 §F2`).
       jetClock.current.advance(false, delta);
@@ -3287,6 +3401,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       waterFade.current.value = Math.max(0, waterFade.current.value - delta / WATER_FADE_S);
       waterPhase.current += delta * 0.6;
     }
+
+    // --- What the water does after the vane ------------------------------------
+    //
+    // The wetted band, the fall into the sink and the basin's own surface. Driven by the
+    // same flow fraction and the same ripple phase as the jet and the hose, so the whole
+    // circuit is visibly one substance moving at one rate.
+    circuit.current?.update({
+      flowFraction: flowing
+        ? Math.min(1, state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9))
+        : 0,
+      deltaS: delta,
+      phaseS: waterPhase.current,
+      flowing,
+    });
 
     // --- The tank fills once more arrives than the drain can carry -------------
     //
@@ -3333,6 +3461,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         onVolumetricSample(volumetric.current);
       }
     }
+
+    // --- What the water does after the vane ------------------------------------
+    //
+    // The wetted band, the fall into the sink and the basin's own surface. Driven by the
+    // same flow fraction and the same ripple phase as the jet and the hose, so the whole
+    // circuit is visibly one substance moving at one rate.
+    circuit.current?.update({
+      flowFraction: flowing
+        ? Math.min(1, state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9))
+        : 0,
+      deltaS: delta,
+      phaseS: waterPhase.current,
+      flowing,
+    });
 
     // --- The tank fills once more arrives than the drain can carry -------------
     if (tankInterior) {
