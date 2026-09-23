@@ -67,12 +67,16 @@ export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
    * Head-on at the printed board, for the Board view.
    *
    * Straight out along the panel's own normal, which was measured rather than guessed:
-   * the quad's face normal is (-0.9397, 0, -0.3420) in model space, so standing back along
+   * the quad's face normal is (-0.9397, 0, +0.3420) in model space, so standing back along
    * it puts the camera square to the artwork and keeps the printed values free of skew.
    * 1.6 model units back frames the whole 1.94 x 1.11 panel with room around it — the
    * board is 3.49 m wide and the group is scaled 1.8.
+   *
+   * BEDO-MODEL-02: the re-authored model hangs the board in a wall frame at a new place,
+   * turned the other way about Y — its normal was (-0.9397, 0, -0.3420) — so the offset's
+   * Z flips with it. Same distance, same head-on framing; only the panel moved.
    */
-  board: { offset: [-1.503, 0, -0.547] },
+  board: { offset: [-1.503, 0, 0.547] },
 };
 
 // --- The spring's travel, in model terms -------------------------------------------

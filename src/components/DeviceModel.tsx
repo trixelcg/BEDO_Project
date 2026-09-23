@@ -23,6 +23,7 @@ import {
   MISMATERIALLED_HOSE,
 } from '../domain/apparatus';
 import { gltfName } from '../lib/gltfNames';
+import { adaptApparatusScene, createPreviousTankGlass } from '../lib/modelAdapter';
 import {
   ANCHOR_VIEW,
   COVER_LIFT,
@@ -75,12 +76,7 @@ import {
   buildWaterUv,
   packPositions,
 } from '../lib/waterUv';
-import {
-  applyFamily,
-  applyGlass,
-  classifyMaterial,
-  neutraliseConductorTint,
-} from '../lib/materialFamilies';
+import { applyGlass } from '../lib/materialFamilies';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
@@ -363,6 +359,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   // PERF-04 candidate: `?glb=v3` selects the KHR_texture_basisu build. The KTX2 loader is
   // attached only here — the eight WaterShapes GLBs carry no textures.
   const { scene } = useGLTF(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2) as any;
+  // Before anything looks a part up: the re-authored export (BEDO-MODEL-02) is moved back
+  // into the apparatus frame and its renamed and split parts are put back under their
+  // contract names. Idempotent on the cached scene. See `src/lib/modelAdapter.ts`.
+  useMemo(() => {
+    if (!scene) return;
+    const { missing } = adaptApparatusScene(scene);
+    if (missing.length) console.error('[BEDO] apparatus model is missing parts:', missing);
+  }, [scene]);
   /** Declared here because the material pass below needs the GPU's anisotropy limit. */
   const gl = useThree((three) => three.gl);
   setKTX2Renderer(gl);
@@ -632,14 +636,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       );
     // The floor is the surface the beam actually lands on, so it receives and never casts —
     // a ground plane casting into its own shadow map only costs texels and acne.
-    const floorName = 'Plane001_Baked';
+    // `Plane001_Baked` in the previous export; this one has no ground plane outside the room,
+    // and its floor is `Floor_1st_Floor` (the ceiling is `Floor_1st_Floor001`).
+    const floorName = 'Floor_1st_Floor';
 
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
 
       // Before anything reads the material: give the hose the bench's, not the glass's.
 
-      child.castShadow = casters.has(child.name) || roomShadow(child.name);
+      // The tank keeps the blended glass production has always rendered, because the water
+      // inside it is transparent and cannot be seen through transmissive glass. Swapped once;
+      // `applyGlass` below then tunes it as before. See `createPreviousTankGlass`.
+      if (child.name === gltfName(MESH.tank) && !child.userData.bedoTankGlass) {
+        child.material = createPreviousTankGlass();
+        child.userData.bedoTankGlass = true;
+      }
+
+      child.castShadow =
+        casters.has(child.name) || (roomShadow(child.name) && child.name !== floorName);
       child.receiveShadow =
         casters.has(child.name) ||
         child.name === gltfName(MESH.tank) ||
@@ -660,20 +675,21 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           colourMap.anisotropy = maxAnisotropy;
           colourMap.needsUpdate = true;
         }
-        const family = classifyMaterial(material);
-        if (family === 'glass') {
+        // The re-authored model (BEDO-MODEL-02) ships its own, descriptively named PBR
+        // materials, so they are kept exactly as authored. The per-family corrections in
+        // `materialFamilies.ts` were an audit of the *previous* export's impossible values
+        // (`MergedBake_Baked` at metalness 1 and the like) and classify by those names;
+        // run over this file they would repaint walls, room glass and fittings the author
+        // has already set. The one surface the experience depends on is the tank: the jet
+        // is read through it, so it keeps the tuned glass the scene config controls.
+        if (child.name === gltfName(MESH.tank)) {
           applyGlass(material, {
             roughness: glassRoughness,
             ior: glassIor,
             envScale: reflection,
             specularIntensity: glassSpecular,
           });
-        } else {
-          applyFamily(material, family, reflection);
         }
-        // A conductor's base colour is the colour of its reflection, so a map with a cast
-        // in it tints every highlight the surface makes. See `neutraliseConductorTint`.
-        if (family === 'exposedMetal') neutraliseConductorTint(material);
       }
 
       child.visible = child.name !== liquidName && !mounted.has(child.name);

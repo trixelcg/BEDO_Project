@@ -101,10 +101,13 @@ describe('the pan, measured off the shipped rod', () => {
     expect(anchor.postHeight).toBeCloseTo(0.057014, 4);
   });
 
-  it('is the measured plate: top face at 1.43334, outer radius 40.8 mm', () => {
+  // BEDO-MODEL-02: the re-authored export seats the whole moving assembly (rod, pan, cover,
+  // spring, pointer) 0.615 mm higher and 0.335 mm further toward -Z on the tank than the
+  // previous one did (1.433344 / -0.228963 then). Its radius and X are unchanged.
+  it('is the measured plate: top face at 1.43396, outer radius 40.8 mm', () => {
     expect(anchor.surface[0]).toBeCloseTo(0.010096, 5);
-    expect(anchor.surface[1]).toBeCloseTo(1.433344, 5);
-    expect(anchor.surface[2]).toBeCloseTo(-0.228963, 5);
+    expect(anchor.surface[1]).toBeCloseTo(1.433959, 5);
+    expect(anchor.surface[2]).toBeCloseTo(-0.229298, 5);
     expect(anchor.radius).toBeCloseTo(0.040774, 5);
   });
 
@@ -155,11 +158,13 @@ describe('the pan, measured off the shipped rod', () => {
 describe('the anchor is apparatus-local, and only apparatus-local', () => {
   it('lands on the pan in world space once the apparatus transform is applied', () => {
     // 0.780020 is what scripts/weight-anchor.mjs read out of the running application by an
-    // entirely separate route. The unit test and the browser capture have to agree.
+    // entirely separate route, on the previous export. The re-authored one (BEDO-MODEL-02)
+    // puts the plate 0.615 mm higher and 0.335 mm toward -Z; scaled by 1.8 that is 1.107
+    // and 0.604 mm here.
     const world = apparatus.localToWorld(new THREE.Vector3(...anchor.surface));
     expect(world.x).toBeCloseTo(0.018173, 5);
-    expect(world.y).toBeCloseTo(0.78002, 5);
-    expect(world.z).toBeCloseTo(-0.412133, 5);
+    expect(world.y).toBeCloseTo(0.781126, 5);
+    expect(world.z).toBeCloseTo(-0.412737, 5);
   });
 
   it('takes no axis from a node translation', () => {
@@ -422,7 +427,12 @@ describe('a baked disc is carried to its seat by one subtraction', () => {
       anchor.surface[2]
     );
 
-    expect(legacyDrawn.distanceTo(pan)).toBeCloseTo(1.2203, 3);
-    expect(legacyDrawn.distanceTo(pan) * APPARATUS_SCALE).toBeCloseTo(2.1965, 3);
+    // On the previous export this was 1.2203 (2.1965 on screen): every top-level node there
+    // carried the same Z-up translation, so X and Z were a constant. The re-authored export
+    // (BEDO-MODEL-02) gives each part its own origin, so the translation half of the mistake
+    // happens to land; the crown half still does not. The disc floats at the tip of the
+    // retaining post instead of resting on the plate — still wrong, by the post's height.
+    expect(legacyDrawn.distanceTo(pan)).toBeCloseTo(anchor.postHeight, 3);
+    expect(legacyDrawn.distanceTo(pan)).toBeGreaterThan(50 * MM);
   });
 });

@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { assetPath } from './glb';
+import { adaptApparatusScene } from '../../src/lib/modelAdapter';
 
 /**
  * The apparatus GLB declares `KHR_texture_basisu` in `extensionsRequired`, so GLTFLoader
@@ -39,6 +42,75 @@ const ensureBrowserGlobals = () => {
   g.self ??= globalThis;
 };
 
+/**
+ * A Draco decoder GLTFLoader can use in Node (BEDO-MODEL-02).
+ *
+ * The apparatus now ships `KHR_draco_mesh_compression`. three's `DRACOLoader` decodes in a
+ * Web Worker, which Node does not have, so this stands in for it with the very decoder
+ * three ships (`examples/jsm/libs/draco/draco_decoder.js`), run synchronously. Only what
+ * GLTFLoader asks for is decoded: the attributes it names by unique id, and the indices.
+ */
+type DracoModule = any; // emscripten module, untyped upstream
+let draco: Promise<DracoModule> | null = null;
+const dracoModule = (): Promise<DracoModule> => {
+  draco ??= (() => {
+    const file = assetPath('node_modules/three/examples/jsm/libs/draco/draco_decoder.js');
+    const source = readFileSync(file, 'utf8');
+    const shim: { exports: DracoModule } = { exports: {} };
+    // It detects Node and reaches for the CommonJS globals, which an ES module scope lacks.
+    new Function('module', 'exports', 'require', '__filename', '__dirname', source)(
+      shim,
+      shim.exports,
+      createRequire(import.meta.url),
+      file,
+      path.dirname(file)
+    );
+    return shim.exports({}) as Promise<DracoModule>;
+  })();
+  return draco;
+};
+
+const nodeDracoLoader = (d: DracoModule) => ({
+  preload() {
+    return this;
+  },
+  decodeDracoFile(
+    buffer: ArrayBuffer,
+    onLoad: (geometry: THREE.BufferGeometry) => void,
+    attributeIDs: Record<string, number>
+  ) {
+    const decoder = new d.Decoder();
+    const mesh = new d.Mesh();
+    const bytes = new Int8Array(buffer);
+    const status = decoder.DecodeArrayToMesh(bytes, bytes.byteLength, mesh);
+    if (!status.ok()) throw new Error(`draco: ${status.error_msg()}`);
+    const geometry = new THREE.BufferGeometry();
+    for (const [name, id] of Object.entries(attributeIDs)) {
+      const attribute = decoder.GetAttributeByUniqueId(mesh, id);
+      const size = attribute.num_components();
+      const count = mesh.num_points() * size;
+      const ptr = d._malloc(count * 4);
+      decoder.GetAttributeDataArrayForAllPoints(mesh, attribute, d.DT_FLOAT32, count * 4, ptr);
+      geometry.setAttribute(
+        name,
+        new THREE.BufferAttribute(new Float32Array(d.HEAPF32.buffer, ptr, count).slice(), size)
+      );
+      d._free(ptr);
+    }
+    const indexCount = mesh.num_faces() * 3;
+    const ptr = d._malloc(indexCount * 4);
+    decoder.GetTrianglesUInt32Array(mesh, indexCount * 4, ptr);
+    geometry.setIndex(
+      new THREE.BufferAttribute(new Uint32Array(d.HEAPU32.buffer, ptr, indexCount).slice(), 1)
+    );
+    d._free(ptr);
+    d.destroy(mesh);
+    d.destroy(decoder);
+    onLoad(geometry);
+    return Promise.resolve();
+  },
+});
+
 let cached: Promise<THREE.Group> | null = null;
 
 /**
@@ -57,6 +129,7 @@ export const loadApparatus = async (): Promise<THREE.Group> => {
   // loader will touch the file. drei's `useGLTF` wires this up at runtime; a Node test
   // has to do it itself, exactly as `loadWater` below already does.
   await MeshoptDecoder.ready;
+  const dracoDecoder = await dracoModule();
   cached ??= new Promise<THREE.Group>((resolve, reject) => {
     ensureBrowserGlobals();
     const bytes = readFileSync(assetPath('public/Bedo_baked_v2.glb'));
@@ -68,12 +141,19 @@ export const loadApparatus = async (): Promise<THREE.Group> => {
     };
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
+    loader.setDRACOLoader(nodeDracoLoader(dracoDecoder) as never);
     loader.setKTX2Loader(stubKTX2Loader() as never);
     loader.parse(
       buffer as ArrayBuffer,
       '',
       (gltf) => {
         console.error = error;
+        // Exactly what `DeviceModel` does before it looks anything up.
+        const { missing } = adaptApparatusScene(gltf.scene);
+        if (missing.length) {
+          reject(new Error(`model adapter: missing ${missing.join(', ')}`));
+          return;
+        }
         resolve(gltf.scene);
       },
       (cause) => {

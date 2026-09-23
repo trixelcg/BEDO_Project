@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "Bedo_baked_v2.glb": "runtime/f1836e3b0af2/Bedo_baked_v2.glb",
+    "Bedo_baked_v2.glb": "runtime/931202ad5da4/Bedo_baked_v2.glb",
     "rosendal_plains_2_4k.webp": "runtime/6aaba2719789/rosendal_plains_2_4k.webp",
     "WaterShapes/Water120_HemiSphere.glb": "runtime/f7447251264e/Water120_HemiSphere.glb",
     "WaterShapes/Water135_Conical.glb": "runtime/899f1fafb4bb/Water135_Conical.glb",
@@ -14,10 +14,10 @@
   },
   "uploads": [
     {
-      "key": "runtime/f1836e3b0af2/Bedo_baked_v2.glb",
+      "key": "runtime/931202ad5da4/Bedo_baked_v2.glb",
       "source": "public/Bedo_baked_v2.glb",
-      "sha256": "f1836e3b0af22f9090df2136899b69e77e455b7dd19d9b3aa3ccf2f6cf24d6f4",
-      "bytes": 11948588
+      "sha256": "931202ad5da41f9eebc2dd20b81a88bec24f2219bd62f3312ab70a6590feb748",
+      "bytes": 2134472
     },
     {
       "key": "runtime/6aaba2719789/rosendal_plains_2_4k.webp",

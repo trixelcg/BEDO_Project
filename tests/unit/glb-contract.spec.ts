@@ -1,7 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { DEFLECTORS, MESH, WATER_SHAPES, WEIGHTS } from '../../src/domain/apparatus';
+import * as THREE from 'three';
 import { gltfName } from '../../src/lib/gltfNames';
+import {
+  AUTHORED_APPARATUS_OFFSET,
+  ORIENTATION_BAKED_PARTS,
+  REASSEMBLED_PARTS,
+  RENAMED_PARTS,
+} from '../../src/lib/modelAdapter';
 import { describeMissing, readGlb, type GlbReport } from '../helpers/glb';
+import { loadApparatus } from '../helpers/model';
 
 /**
  * The GLB naming contract (BEDO-002 §5) — the highest-value test in the project.
@@ -23,12 +31,24 @@ import { describeMissing, readGlb, type GlbReport } from '../helpers/glb';
 const MODEL = 'public/Bedo_baked_v2.glb';
 
 let report: GlbReport;
-/** sanitised name -> authored name, as three.js would expose the export. */
+/** sanitised name -> authored name, as three.js exposes the export after the adapter. */
 let exposed: Map<string, string>;
+/** sanitised name -> authored name, as the file itself carries it. */
+let raw: Map<string, string>;
 
 beforeAll(() => {
   report = readGlb(MODEL);
-  exposed = new Map(report.nodeNames.map((name) => [gltfName(name), name]));
+  raw = new Map(report.nodeNames.map((name) => [gltfName(name), name]));
+  // BEDO-MODEL-02: the re-authored export reaches the contract through
+  // `src/lib/modelAdapter.ts`, which renames some parts and regroups others at load. The
+  // names the runtime can resolve are therefore the file's, less what was renamed away,
+  // plus what the adapter creates. Its inputs are pinned against the file further down.
+  exposed = new Map(raw);
+  for (const [from, to] of RENAMED_PARTS) {
+    exposed.delete(gltfName(from));
+    exposed.set(gltfName(to), to);
+  }
+  for (const [contract] of REASSEMBLED_PARTS) exposed.set(gltfName(contract), contract);
 });
 
 /** Every name the runtime resolves through gltfName, with the source that declares it. */
@@ -126,6 +146,63 @@ describe('the naming patterns the code assumes', () => {
     for (const name of report.nodeNames) {
       expect(gltfName(name), `diverged on "${name}"`).toBe(analyserSanitise(name));
     }
+  });
+});
+
+describe('the model adapter (BEDO-MODEL-02)', () => {
+  it('every exported part it renames or regroups is in the shipped file', () => {
+    const inputs = [
+      ...RENAMED_PARTS.map(([from]) => from),
+      ...REASSEMBLED_PARTS.flatMap(([, parts]) => parts),
+    ];
+    expect(inputs.filter((name) => !raw.has(gltfName(name)))).toEqual([]);
+  });
+
+  it('never renames or regroups onto a name the file already uses', () => {
+    const created = [
+      ...RENAMED_PARTS.map(([, to]) => to),
+      ...REASSEMBLED_PARTS.map(([contract]) => contract),
+    ];
+    expect(created.filter((name) => raw.has(gltfName(name)))).toEqual([]);
+  });
+
+  it('claims each exported part at most once', () => {
+    const inputs = [
+      ...RENAMED_PARTS.map(([from]) => from),
+      ...REASSEMBLED_PARTS.flatMap(([, parts]) => parts),
+    ];
+    expect(inputs.filter((n, i) => inputs.indexOf(n) !== i)).toEqual([]);
+  });
+
+  it('resolves every contract name in the loaded, adapted scene graph', async () => {
+    const scene = await loadApparatus();
+    const missing = contract().filter(({ authored }) => !scene.getObjectByName(gltfName(authored)));
+    expect(missing.map((m) => `${m.label} -> ${m.authored}`)).toEqual([]);
+  });
+
+  it('measures the re-oriented parts by their geometry, not by a rotated local box', async () => {
+    // `Box3.setFromObject` without `precise` is how the runtime sizes parts. For each part
+    // the adapter re-orients it must agree with the vertex-exact box, as it did on the
+    // previous export — a rotated disc otherwise measures 80 mm across instead of 57.
+    const scene = await loadApparatus();
+    for (const part of ORIENTATION_BAKED_PARTS) {
+      const node = scene.getObjectByName(gltfName(part))!;
+      const quick = new THREE.Box3().setFromObject(node).getSize(new THREE.Vector3());
+      const exact = new THREE.Box3().setFromObject(node, true).getSize(new THREE.Vector3());
+      expect(quick.distanceTo(exact), part).toBeLessThan(1e-6);
+    }
+  });
+
+  it('puts the nozzle back on the axis the water caches are authored around', async () => {
+    // `water-caches-authored-in-rig-space`: all eight caches centre on (1.01, -22.93) cm,
+    // the nozzle axis at (0.0101, -0.2293). The offset is right exactly when this holds.
+    const scene = await loadApparatus();
+    const nozzle = scene.getObjectByName(gltfName(MESH.nozzle))!;
+    const centre = new THREE.Box3().setFromObject(nozzle).getCenter(new THREE.Vector3());
+    expect(centre.x).toBeCloseTo(0.0101, 4);
+    expect(centre.z).toBeCloseTo(-0.2293, 4);
+    expect(centre.y).toBeCloseTo(1.085, 3);
+    expect(AUTHORED_APPARATUS_OFFSET[1]).toBe(0);
   });
 });
 
