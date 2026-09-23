@@ -88,10 +88,20 @@ for (const u of uploads)
 //    built from here on asks for a content-addressed URL instead, so nothing new depends
 //    on it. Do not "fix" this into an overwrite; that would serve one generation another
 //    generation's bytes, which is the exact silent failure content-addressing prevents.
-const versionedSources = new Set(uploads.map((u) => path.join(ROOT, u.source)));
+//
+//    Versioned files are recognised by their path relative to `public/`, because that is the
+//    path Vite copies them to under `dist/`. Comparing absolute paths never matched —
+//    `public/Bedo_baked_v2.glb` against `dist/Bedo_baked_v2.glb` — so each versioned file's
+//    dist copy was offered as a stable-name asset too. Harmless while their bytes never
+//    changed; the first release to change the model (BEDO-MODEL-02) tripped the mismatch
+//    guard below on the legacy key, which is exactly the key this section must not touch.
+const PUBLIC = path.join(ROOT, 'public');
+const versionedPublicPaths = new Set(
+  uploads.map((u) => path.relative(PUBLIC, path.join(ROOT, u.source)).split(path.sep).join('/'))
+);
 for (const { abs, rel } of walk(DIST)) {
   if (rel.startsWith('assets/') || rel === 'index.html' || rel === 'runtime-manifest.json') continue;
-  if (versionedSources.has(abs)) continue;
+  if (versionedPublicPaths.has(rel)) continue;
   targets.push({ abs, key: rel, cache: SHORT_LIVED });
 }
 
