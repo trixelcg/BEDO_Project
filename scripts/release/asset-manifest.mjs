@@ -42,7 +42,7 @@ const PUBLIC = path.join(ROOT, 'public');
  */
 const VERSIONED_FILES = [
   'Bedo_baked_v2.glb',
-  'rosendal_plains_2_4k.webp',
+  'bedo_environment.webp',
   ...readdirSync(path.join(PUBLIC, 'WaterShapes')).filter((f) => f.endsWith('.glb')).sort()
     .map((f) => `WaterShapes/${f}`),
 ];

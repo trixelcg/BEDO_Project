@@ -1,7 +1,7 @@
 {
   "manifest": {
-    "Bedo_baked_v2.glb": "runtime/931202ad5da4/Bedo_baked_v2.glb",
-    "rosendal_plains_2_4k.webp": "runtime/6aaba2719789/rosendal_plains_2_4k.webp",
+    "Bedo_baked_v2.glb": "runtime/723fadf53425/Bedo_baked_v2.glb",
+    "bedo_environment.webp": "runtime/fe7d21bcfe98/bedo_environment.webp",
     "WaterShapes/Water120_HemiSphere.glb": "runtime/f7447251264e/Water120_HemiSphere.glb",
     "WaterShapes/Water135_Conical.glb": "runtime/899f1fafb4bb/Water135_Conical.glb",
     "WaterShapes/Water180_HemiSphere.glb": "runtime/0991a5990607/Water180_HemiSphere.glb",
@@ -14,16 +14,16 @@
   },
   "uploads": [
     {
-      "key": "runtime/931202ad5da4/Bedo_baked_v2.glb",
+      "key": "runtime/723fadf53425/Bedo_baked_v2.glb",
       "source": "public/Bedo_baked_v2.glb",
-      "sha256": "931202ad5da41f9eebc2dd20b81a88bec24f2219bd62f3312ab70a6590feb748",
-      "bytes": 2134472
+      "sha256": "723fadf534251145132e86bff1289272eeee7f822b1675887859a0d9d3fa3c7f",
+      "bytes": 5272536
     },
     {
-      "key": "runtime/6aaba2719789/rosendal_plains_2_4k.webp",
-      "source": "public/rosendal_plains_2_4k.webp",
-      "sha256": "6aaba271978982e93c2042d8eff238f3421ab851542ef40428ce4cba9b77e6d2",
-      "bytes": 448452
+      "key": "runtime/fe7d21bcfe98/bedo_environment.webp",
+      "source": "public/bedo_environment.webp",
+      "sha256": "fe7d21bcfe98772c90f75b30d362f3c51075ada8b84b42535d97f937246affe0",
+      "bytes": 4351692
     },
     {
       "key": "runtime/f7447251264e/Water120_HemiSphere.glb",

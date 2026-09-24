@@ -38,7 +38,7 @@ interface Scene3DProps {
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
   const { scene } = useThree();
-  const texture = useTexture(assetUrl('rosendal_plains_2_4k.webp'));
+  const texture = useTexture(assetUrl('bedo_environment.webp'));
 
   useEffect(() => {
     if (!texture) return;
