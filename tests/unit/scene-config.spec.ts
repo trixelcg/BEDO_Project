@@ -45,15 +45,14 @@ describe('apparatus placement', () => {
 });
 
 describe('renderer and environment', () => {
-  it('exposes above unity, to compensate for lighting the scene with a room', () => {
-    // The environment is the laboratory's own baked surfaces, not an outdoor panorama, and
-    // an interior is a much dimmer thing to stand in. Exposure carries that difference so
-    // the scene does not need fill lights the room does not contain — so the meaningful
-    // assertion is that it is *lifted*, not that it holds one particular number.
-    expect(SCENE_CONFIG.exposure).toBeGreaterThan(1.0);
+  it('exposes at unity: the studio environment supplies the fill (BEDO-LOOK-01b)', () => {
+    // The 1.3 that compensated for a dim captured-room environment washed the frame out
+    // once the environment became a real studio; the lift now comes from the environment
+    // intensity, and exposure is left honest.
+    expect(SCENE_CONFIG.exposure).toBeGreaterThanOrEqual(0.9);
     // Bounded: past roughly 1.6 the highlights on the steel start to clip.
     expect(SCENE_CONFIG.exposure).toBeLessThanOrEqual(1.6);
-    expect(SCENE_CONFIG.exposure).toBe(1.3);
+    expect(SCENE_CONFIG.exposure).toBe(1.0);
   });
 
   it('lights the environment at 1.0 with no rotation', () => {
@@ -74,17 +73,17 @@ describe('lighting', () => {
     // Scene3D derives each intensity from these two numbers; the fingerprint read the
     // results back as 0.15 / 0.8 / 0.3 / 0.4.
     const { selfIllumination, contrast } = SCENE_CONFIG;
-    expect(selfIllumination).toBe(0.15);
+    expect(selfIllumination).toBe(0.1);
     expect(contrast).toBe(1.0);
 
-    expect(selfIllumination * (2.0 - contrast)).toBeCloseTo(0.15, 10); // ambient
+    expect(selfIllumination * (2.0 - contrast)).toBeCloseTo(0.1, 10); // ambient
     expect(0.8 * contrast).toBeCloseTo(0.8, 10); // key light
     expect(0.3 * (2.0 - contrast)).toBeCloseTo(0.3, 10); // orange fill
     expect(0.4 * contrast).toBeCloseTo(0.4, 10); // rim
   });
 
-  it('keeps the ambient colour the scene was lit with', () => {
-    expect(SCENE_CONFIG.ambientColor).toBe('#d1f2f7');
+  it('lights the ambient white — the cyan cast is gone (BEDO-LOOK-01)', () => {
+    expect(SCENE_CONFIG.ambientColor).toBe('#ffffff');
     expect(SCENE_CONFIG.ambientColor).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
@@ -143,7 +142,7 @@ describe('the configuration itself', () => {
   it('keeps the window sun where it was approved', () => {
     expect(SCENE_CONFIG.sunAzimuth).toBe(40);
     expect(SCENE_CONFIG.sunElevation).toBe(32);
-    expect(SCENE_CONFIG.sunIntensity).toBe(2.4);
+    expect(SCENE_CONFIG.sunIntensity).toBe(2.0);
     expect(SCENE_CONFIG.sunColor).toBe('#fff4e6');
   });
 

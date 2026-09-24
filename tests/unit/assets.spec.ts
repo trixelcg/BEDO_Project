@@ -103,7 +103,7 @@ describe('every media file the source asks for', () => {
     // A guard on the scan itself: if the regex ever stops matching, the test below would
     // pass vacuously.
     expect(referenced).toContain('/Bedo_baked_v2.glb');
-    expect(referenced).toContain('/rosendal_plains_2_4k.webp');
+    expect(referenced).toContain('/bedo_environment.webp');
     expect(referenced).toContain('/WaterShapes/Water_low.glb');
     // The transcoder directory is named through assetDirUrl(), not as a file path.
     expect(referencedDirs).toContain('basis');
@@ -147,7 +147,7 @@ describe('the served asset set is closed', () => {
     'favicon-16x16.png',
     'favicon-32x32.png',
     'favicon.ico',
-    'rosendal_plains_2_4k.webp',
+    'bedo_environment.webp',
     // The worksheets the closing step opens, added by BEDO-019. Fetched on demand, never
     // at boot — `README.txt` records their provenance beside them.
     'answer-sheets/README.txt',

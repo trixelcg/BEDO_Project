@@ -75,8 +75,12 @@ describeBuilt('the production bundle', () => {
     // drei's `extendLoader` is synchronous and `KHR_texture_basisu` sits in
     // `extensionsRequired`, so the loader must be attached before the GLB is parsed.
     // That buys a 420 MB reduction in GPU texture residency. Headroom is kept tight.
+    // Raised a second time, for the frame pipeline (BEDO-LOOK-01b/04): three's
+    // EffectComposer, RenderPass, GTAOPass and OutputPass plus RoomEnvironment measure
+    // +42,640 B (11.2 KB gzip) over the previous ceiling. They cannot be split: the
+    // composer owns every frame from the first one. Headroom is kept tight again.
     expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
-      1_380_000
+      1_440_000
     );
   });
 
@@ -96,7 +100,9 @@ describeBuilt('the production bundle', () => {
     // refactor dropped it, the scene would fall back to three.js defaults and move.
     const combined = sources().join('');
     expect(combined).toContain('1.8');
-    expect(combined).toContain('#d1f2f7');
+    // The sun colour: the one scene-config literal specific enough to serve as a marker
+    // (the ambient used to be the marker, until it became plain white).
+    expect(combined).toContain('#fff4e6');
   });
 
   it('ships no stylesheet rules for the removed panel', () => {
@@ -172,7 +178,7 @@ describeBuilt('the production bundle', () => {
         'favicon-32x32.png',
         'favicon.ico',
         'index.html',
-        'rosendal_plains_2_4k.webp',
+        'bedo_environment.webp',
         'runtime-manifest.json',
         ...shipped.filter((f) => f.startsWith('assets/')),
       ].sort()

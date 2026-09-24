@@ -77,6 +77,9 @@ import {
   packPositions,
 } from '../lib/waterUv';
 import { applyGlass } from '../lib/materialFamilies';
+import { applyWallStripe, isWallPaint } from '../lib/wallStripe';
+import { pilotLampIntensity, preparePilotLamp } from '../lib/pilotLamp';
+import { attachOutline, createOutlineLayer, type OutlineHandle } from '../lib/selectionOutline';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
@@ -410,8 +413,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    */
   const sceneHidden = state.showMonitor && state.monitorExpanded;
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
-  /** Meshes currently carrying a highlight material, so they can be put back. */
-  const highlighted = useRef<Set<string>>(new Set());
+  /** Parts currently outlined, by key, with the hull meshes that draw each outline. */
+  const highlighted = useRef<Map<string, OutlineHandle>>(new Map());
+  /** Where the outline hulls live. Outside the GLB, so nothing that measures it sees them. */
+  const outlineLayer = useMemo(() => createOutlineLayer(), []);
   /**
    * The weight pan, measured from the rod's own geometry (BEDO-016).
    *
@@ -640,6 +645,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // and its floor is `Floor_1st_Floor` (the ceiling is `Floor_1st_Floor001`).
     const floorName = 'Floor_1st_Floor';
 
+    // The wall stripe is corrected in the apparatus's own frame — see `wallStripe.ts`.
+    const rigInverse = new THREE.Matrix4();
+    if (groupRef.current) {
+      groupRef.current.updateWorldMatrix(true, false);
+      rigInverse.copy(groupRef.current.matrixWorld).invert();
+    }
+
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
 
@@ -682,6 +694,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // run over this file they would repaint walls, room glass and fittings the author
         // has already set. The one surface the experience depends on is the tank: the jet
         // is read through it, so it keeps the tuned glass the scene config controls.
+        // The walls' orange stripe: its edges are evaluated from height rather than from
+        // the atlas texel, because the atlas rasterised them as a staircase.
+        if (isWallPaint(material)) applyWallStripe(material, rigInverse);
+        // The pilot lamp: a red lens that lights red. See `pilotLamp.ts`.
+        if (child.name === gltfName(MESH.powerLight)) preparePilotLamp(material);
         if (child.name === gltfName(MESH.tank)) {
           applyGlass(material, {
             roughness: glassRoughness,
@@ -694,7 +711,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
       child.visible = child.name !== liquidName && !mounted.has(child.name);
     });
-  }, [scene, gl, reflection, glassSpecular, glassRoughness, glassIor]);
+  }, [scene, gl, groupRef, reflection, glassSpecular, glassRoughness, glassIor]);
 
   /**
    * Water, rather than blue plastic.
@@ -2858,42 +2875,40 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [ghosts.length]);
 
   /**
-   * Glow a clickable part, the way the reference simulator does (it uses HighlightPlus).
+   * Outline a clickable part, the way the reference simulator does (it uses Highlight Plus).
    *
-   * The GLB's materials are shared across meshes — a single baked atlas — so tinting one
-   * in place would light up unrelated parts too. Swap in a per-object clone the first
-   * time it lights up, and put the original back when it stops.
+   * Edge only. The part's own material is never touched — no clone, no emissive, nothing
+   * to restore — so chrome stays chrome while it is hovered, and a material shared with
+   * other meshes cannot carry the highlight to them. See `src/lib/selectionOutline.ts`.
    */
   const setGlow = useCallback(
     (name: string, intensity: number) => {
-      const obj = pick(name);
-      obj?.traverse((child: any) => {
-        if (!child.isMesh || !child.material) return;
-        if (!child.userData.__baseMat) {
-          child.userData.__baseMat = child.material;
-          child.material = child.material.clone();
-        }
-        const mat = child.material;
-        if (mat.emissive) {
-          mat.emissive.set(GUIDANCE_HIGHLIGHT);
-          mat.emissiveIntensity = intensity;
-        }
-      });
+      let handle = highlighted.current.get(name);
+      if (!handle) {
+        const obj = pick(name);
+        if (!obj) return;
+        handle = attachOutline(outlineLayer, obj);
+        highlighted.current.set(name, handle);
+      }
+      handle.setIntensity(intensity);
     },
-    [pick]
+    [pick, outlineLayer]
   );
 
-  const clearGlow = useCallback(
-    (name: string) => {
-      const obj = pick(name);
-      obj?.traverse((child: any) => {
-        if (!child.isMesh || !child.userData.__baseMat) return;
-        child.material?.dispose?.();
-        child.material = child.userData.__baseMat;
-        delete child.userData.__baseMat;
-      });
+  const clearGlow = useCallback((name: string) => {
+    const handle = highlighted.current.get(name);
+    if (!handle) return;
+    handle.dispose();
+    highlighted.current.delete(name);
+  }, []);
+
+  // Unmount: nothing may be left in the layer.
+  useEffect(
+    () => () => {
+      highlighted.current.forEach((handle) => handle.dispose());
+      highlighted.current.clear();
     },
-    [pick]
+    []
   );
 
   useFrame((three, rawDelta) => {
@@ -2927,18 +2942,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (dropHighlightRef.current) wanted.add(dropHighlightRef.current);
     }
 
-    highlighted.current.forEach((key) => {
-      if (!wanted.has(key)) {
-        clearGlow(key);
-        highlighted.current.delete(key);
-      }
-    });
+    for (const key of Array.from(highlighted.current.keys())) {
+      if (!wanted.has(key)) clearGlow(key);
+    }
 
-    // Enough to read as "click me", not enough to repaint the part blue.
-    const pulse = Math.sin(t * 5.0) * 0.12 + 0.26;
+    // A steady line under the cursor; a gentle pulse on what the step is asking for.
+    const pulse = Math.sin(t * 5.0) * 0.2 + 0.7;
     wanted.forEach((key) => {
-      highlighted.current.add(key);
-      setGlow(key, key === hoveredKey ? 0.7 : pulse);
+      setGlow(key, key === hoveredKey ? 1 : pulse);
     });
 
     // --- Unscrew / re-seat sequence -------------------------------------------
@@ -3020,11 +3031,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       powerPivot.quaternion.setFromAxisAngle(powerSpindle.current, powerTurn.current);
     }
 
-    const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)
-      ?.material as any;
+    // The pilot lamp follows the power state alone — red lens, red light. Its colour and
+    // emissive mask were set once in the material pass; only the intensity moves here.
+    const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)?.material as
+      | THREE.MeshStandardMaterial
+      | undefined;
     if (lampMat?.emissive) {
-      lampMat.emissive.set(state.isPowerOn ? '#26ff7a' : '#000000');
-      lampMat.emissiveIntensity = state.isPowerOn ? 1.6 : 0;
+      lampMat.emissiveIntensity = damp(
+        lampMat.emissiveIntensity,
+        pilotLampIntensity(state.isPowerOn),
+        14
+      );
     }
 
     // --- Jet force, spring deflection, pointer ---------------------------------
@@ -3094,15 +3111,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // group is the same arithmetic without re-parenting the asset.
     const holderLift = coverOffsetRef.current + deflection;
 
-    // Central rod and pointer pin move with cover offset and deflection
+    // The central rod carries the pan, so it rides the cover offset and the deflection.
     const rodObj = pick(MESH.rod);
     if (rodObj) {
       rodObj.position.y = baseY(rodObj, MESH.rod) + holderLift;
     }
-    const pinObj = pick(MESH.pointerPin);
-    if (pinObj) {
-      pinObj.position.y = baseY(pinObj, MESH.pointerPin) + holderLift;
-    }
+    // The pointer pin (`JET Force 2_212`) does **not**. It is the thin vertical post the
+    // reference pointer is clamped to — the datum the learner reads the pan against — and
+    // it is fixed to the apparatus base, not to the cover. It used to be lifted by
+    // `holderLift` here alongside the rod, so opening the cover carried the datum up with
+    // the plate. It is never written now: its authored transform is its resting transform,
+    // through every open/close cycle (BEDO-LOOK-03). The pointer arm keeps its own pivot
+    // on this pin and its own spring-driven height below.
 
     // The spring rises with the cover offset
     const springPivot = pivots.current[MESH.spring];
@@ -3329,6 +3349,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   return (
     <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
       <primitive object={scene} />
+      <primitive object={outlineLayer} />
 
       <group ref={weightStackRef}>
         {stack.map(({ key, object, seat, recentre, index, thickness, radius }) => (

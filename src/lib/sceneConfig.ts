@@ -85,7 +85,9 @@ export interface SceneConfig {
 export const SCENE_CONFIG: Readonly<SceneConfig> = Object.freeze({
   sunAzimuth: 40,
   sunElevation: 32,
-  sunIntensity: 2.4,
+  // 2.0, from 2.4: with the studio environment supplying fill, 2.4 pushed the sunlit bench
+  // top onto the tone curve's shoulder (BEDO-LOOK-01b).
+  sunIntensity: 2.0,
   // Daylight, very slightly warm. Sunlight is not white, but it is not orange either; the
   // fills this replaces were #f58220 and had no physical basis at all.
   sunColor: '#fff4e6',
@@ -97,13 +99,19 @@ export const SCENE_CONFIG: Readonly<SceneConfig> = Object.freeze({
   // uniformly instead of re-introducing fill lights the room does not contain. Measured
   // against the pre-change baseline it restores mean luminance (90.9 -> 92.2) and improves
   // contrast (34.7 -> 38.7) with no highlight clipping.
-  exposure: 1.3,
-  selfIllumination: 0.15,
+  // 1.0. The 1.3 above compensated for a dim captured-room environment that no longer
+  // exists; with the studio environment the frame ran washed out (mean 151, p95 235).
+  // Unity exposure with the environment at 0.45 lands the white bench near 210 with its
+  // gradient intact and the black hardware off the floor (BEDO-LOOK-01b).
+  exposure: 1.0,
+  selfIllumination: 0.1,
   hdrLight: 1.0,
   hdrRotation: 0,
   reflection: 1.0,
   contrast: 1.0,
-  ambientColor: '#d1f2f7',
+  // White. It was #d1f2f7, a cyan cast that read as artificial blue grading once the
+  // environment stopped tinting everything warm (BEDO-LOOK-01).
+  ambientColor: '#ffffff',
   characterPosition: Object.freeze([0, -1.8, 0]) as [number, number, number],
   characterRotation: Object.freeze([0, 0, 0]) as [number, number, number],
   characterScale: Object.freeze([1.8, 1.8, 1.8]) as [number, number, number],

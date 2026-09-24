@@ -232,5 +232,40 @@ export function createPreviousTankGlass(): THREE.MeshStandardMaterial {
     metalness: 1,
     roughness: 0.300000012,
   });
+  applyGlassRim(material);
   return material;
+}
+
+/** Alpha of the tank wall seen face-on, and at the silhouette. */
+export const TANK_GLASS_ALPHA = 0.1;
+export const TANK_GLASS_RIM_ALPHA = 0.32;
+
+/**
+ * Let the tank's edges read (BEDO-LOOK-01).
+ *
+ * The blended glass keeps its authored alpha of 0.10, and alpha blending scales the
+ * *whole* shaded result by it — reflection included — so the vessel's rim, where a real
+ * glass wall reflects almost everything, arrived at a tenth of its strength and the tank
+ * read as a faint tint with no edge. This raises alpha with the Fresnel term alone: face-on
+ * the wall stays at 0.10 and everything inside is seen exactly as before; at grazing
+ * incidence it rises to 0.32, which is where the environment reflection now shows as a
+ * rim. Only the alpha is touched, in the fragment, so the water and hose behind it are
+ * composited exactly as they were.
+ */
+export function applyGlassRim(material: THREE.MeshStandardMaterial): void {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uBedoGlassAlpha = { value: new THREE.Vector2(TANK_GLASS_ALPHA, TANK_GLASS_RIM_ALPHA) };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec2 uBedoGlassAlpha;')
+      .replace(
+        '#include <opaque_fragment>',
+        `{
+          float bedoNdv = abs(dot(normalize(normal), normalize(vViewPosition)));
+          float bedoRim = pow(1.0 - bedoNdv, 3.0);
+          diffuseColor.a = mix(uBedoGlassAlpha.x, uBedoGlassAlpha.y, bedoRim);
+        }
+        #include <opaque_fragment>`
+      );
+  };
+  material.customProgramCacheKey = () => 'bedoGlassRim';
 }
