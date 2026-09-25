@@ -3,6 +3,7 @@
 export const RUNTIME_ASSET_MANIFEST: Record<string, string> = {
   "Bedo_baked_v2.glb": "runtime/723fadf53425/Bedo_baked_v2.glb",
   "bedo_environment.webp": "runtime/fe7d21bcfe98/bedo_environment.webp",
+  "lab-environment.glb": "runtime/6494135e75a1/lab-environment.glb",
   "WaterShapes/Water120_HemiSphere.glb": "runtime/f7447251264e/Water120_HemiSphere.glb",
   "WaterShapes/Water135_Conical.glb": "runtime/899f1fafb4bb/Water135_Conical.glb",
   "WaterShapes/Water180_HemiSphere.glb": "runtime/0991a5990607/Water180_HemiSphere.glb",

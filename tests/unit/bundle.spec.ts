@@ -179,6 +179,8 @@ describeBuilt('the production bundle', () => {
         'favicon.ico',
         'index.html',
         'bedo_environment.webp',
+        // The campus environment GLB (BEDO-ENV-01).
+        'lab-environment.glb',
         'runtime-manifest.json',
         ...shipped.filter((f) => f.startsWith('assets/')),
       ].sort()

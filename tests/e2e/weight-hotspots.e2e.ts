@@ -208,7 +208,12 @@ test.describe('the tray discs answer for themselves', () => {
     await button(page, /Free Mode/i).click();
     await trayReady(page);
 
-    const tooltip = page.locator('.scene-tooltip');
+    const tooltip = page.locator('.cursor-tooltip');
+    // Hover-only outlines (BEDO-UX-ENV): with the pointer on nothing, nothing is outlined.
+    await page.mouse.move(5, 5);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__bedoTest.hover().outlined.length))
+      .toBe(0);
     const hover = async (mesh: string) => {
       const point = await meshPoint(page, mesh);
       expect(point, `${mesh} is not on screen`).not.toBeNull();
@@ -229,11 +234,19 @@ test.describe('the tray discs answer for themselves', () => {
     await button(page, /العربية/).first().click();
     for (const weight of TRAY) {
       await hover(weight.mesh!);
-      await expect(tooltip).toHaveText(`${weight.grams} غ`);
+      await expect(tooltip).toHaveText(`وزن ${weight.grams} غ`);
     }
     await button(page, /English/).first().click();
     await hover('Weight_50');
     await expect(tooltip).toHaveText('50 g');
+    // The label rides above the cursor, clear of it, rather than sitting on the part.
+    const at = await meshPoint(page, 'Weight_50');
+    const box = await tooltip.boundingBox();
+    expect(box, 'the tooltip has no box').not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(at!.y - 10);
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__bedoTest.hover().outlined))
+      .toEqual(['Weight_50']);
 
     // 10 mm, computed from NOZZLE_AREA_M2 rather than written down twice.
     const nozzle = await hover(MESH.nozzle);
@@ -252,7 +265,11 @@ test.describe('the tray discs answer for themselves', () => {
     // Leaving the part retracts the label.
     const disc = await meshPoint(page, 'Weight_50');
     await page.mouse.move(disc!.x, disc!.y - 220);
-    await expect(tooltip).toHaveCount(0);
+    await expect(tooltip).toBeHidden();
+    // ...and so does its outline: nothing stays lit once the pointer has gone (BEDO-UX-ENV).
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__bedoTest.hover().outlined.length))
+      .toBe(0);
   });
 
   // --- F: the guided HUD steps aside at the weight step ------------------------------

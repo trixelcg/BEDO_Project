@@ -23,6 +23,7 @@ import {
   type InteriorBounds,
 } from '../lib/cameraContainment';
 import { assetUrl } from '../lib/assetUrl';
+import { CampusEnvironment } from './CampusEnvironment';
 
 interface Scene3DProps {
   state: SimulationView;
@@ -682,7 +683,22 @@ export const Scene3D: React.FC<Scene3DProps> = ({
           resolution={1024}
         />
 
+        {/*
+          The campus shares the apparatus's Suspense boundary on purpose: the boundary does
+          not resolve until both GLBs (and their textures) are in, so `DeviceModel` cannot
+          mark the scene ready — and the loading screen cannot lift — while the room is
+          still missing. See `CampusEnvironment`.
+        */}
         <Suspense fallback={<ModelLoadingPlaceholder />}>
+          <CampusEnvironment
+            position={sceneConfig.characterPosition}
+            rotation={[
+              (sceneConfig.characterRotation[0] * Math.PI) / 180,
+              (sceneConfig.characterRotation[1] * Math.PI) / 180,
+              (sceneConfig.characterRotation[2] * Math.PI) / 180,
+            ]}
+            scale={sceneConfig.characterScale}
+          />
           <DeviceModel
             state={state}
             isArabic={isArabic}

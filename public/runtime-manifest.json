@@ -2,6 +2,7 @@
   "manifest": {
     "Bedo_baked_v2.glb": "runtime/723fadf53425/Bedo_baked_v2.glb",
     "bedo_environment.webp": "runtime/fe7d21bcfe98/bedo_environment.webp",
+    "lab-environment.glb": "runtime/6494135e75a1/lab-environment.glb",
     "WaterShapes/Water120_HemiSphere.glb": "runtime/f7447251264e/Water120_HemiSphere.glb",
     "WaterShapes/Water135_Conical.glb": "runtime/899f1fafb4bb/Water135_Conical.glb",
     "WaterShapes/Water180_HemiSphere.glb": "runtime/0991a5990607/Water180_HemiSphere.glb",
@@ -24,6 +25,12 @@
       "source": "public/bedo_environment.webp",
       "sha256": "fe7d21bcfe98772c90f75b30d362f3c51075ada8b84b42535d97f937246affe0",
       "bytes": 4351692
+    },
+    {
+      "key": "runtime/6494135e75a1/lab-environment.glb",
+      "source": "public/lab-environment.glb",
+      "sha256": "6494135e75a186a507085ee40f1bc6466d106d8e116ba8a60b7704542b48734a",
+      "bytes": 2105712
     },
     {
       "key": "runtime/f7447251264e/Water120_HemiSphere.glb",

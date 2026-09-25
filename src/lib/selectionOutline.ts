@@ -50,12 +50,12 @@ export interface OutlineStyle {
 
 export const DEFAULT_OUTLINE_STYLE: OutlineStyle = {
   color: '#ffc233',
-  // Narrow enough that a weight's 14 px centre bore stays open at the closest learner
-  // view: the hull's inner wall is pushed inward by these widths, so a wider glow would
-  // fill the hole.
-  lineWidth: 1.5,
-  glowWidth: 3.5,
-  glowOpacity: 0.35,
+  // A 2.5 px contour reads at learner distance now that the outline only appears under
+  // the pointer (BEDO-UX-ENV). The glow stays narrow: the hull's inner wall is pushed into
+  // a weight's ~14 px centre bore by the glow width, so a wider glow would fill the hole.
+  lineWidth: 2.5,
+  glowWidth: 4.0,
+  glowOpacity: 0.3,
 };
 
 /** Drawn after every transparent object so the glow composites over water and glass. */

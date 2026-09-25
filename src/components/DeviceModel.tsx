@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Html, useGLTF } from '@react-three/drei';
+import { useGLTF } from '@react-three/drei';
 import { extendWithKTX2, setKTX2Renderer } from '../lib/ktx2';
 
 import { useFrame, useThree } from '@react-three/fiber';
@@ -80,6 +80,12 @@ import { applyGlass } from '../lib/materialFamilies';
 import { applyWallStripe, isWallPaint } from '../lib/wallStripe';
 import { pilotLampIntensity, preparePilotLamp } from '../lib/pilotLamp';
 import { attachOutline, createOutlineLayer, type OutlineHandle } from '../lib/selectionOutline';
+import {
+  currentCursorTooltip,
+  hideCursorTooltip,
+  showCursorTooltip,
+  trackCursorTooltip,
+} from '../lib/cursorTooltip';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
   applyCacheFrame,
@@ -332,6 +338,8 @@ interface DeviceModelProps {
  * Presentation only — nothing about which target is chosen changes.
  */
 const GUIDANCE_HIGHLIGHT = '#ffc233';
+/** Hover/outline key prefix for a disc on the pan, by its seat index. */
+const STACK_KEY = 'stack:';
 
 export const DeviceModel: React.FC<DeviceModelProps> = ({
   state,
@@ -397,6 +405,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * still has to be able to say what it is.
    */
   const [labelledKey, setLabelledKey] = useState<string | null>(null);
+  /** Where the pointer entered the current part, so the label appears there at once. */
+  const pointerAt = useRef<{ x: number; y: number } | null>(null);
 
   /**
    * The board is *covering* the apparatus, not merely open.
@@ -1741,43 +1751,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [scene, groupRef, onAnchors, onInstallFraming, tmp, modelScale, baseY]);
 
   /**
-   * Parts the student is invited to touch right now.
-   *
-   * In free mode that is everything — the state machine lets any control be clicked at
-   * any time, and the guards decide. In guided mode it is only what the step asks for,
-   * which is what the pulsing highlight and the pointer cursor key off.
-   */
-  const liveKeys = useMemo<Set<string>>(() => {
-    if (sceneHidden) return new Set();
-
-    const trayDeflectors = DEFLECTORS.map((d) => d.shelf);
-    const trayWeights = WEIGHTS.filter((w) => w.mesh).map((w) => w.mesh!);
-
-    if (!lesson.isGuided) {
-      return new Set([
-        MESH.tankCover,
-        MESH.powerSwitch,
-        MESH.flowValve,
-        MESH.volumetricValve,
-        ...trayDeflectors,
-        ...trayWeights,
-      ]);
-    }
-
-    // In guided mode it is whatever the current step invites the learner to touch. The
-    // step definition says so; this no longer works it out from a step number.
-    const parts: Record<string, string[]> = {
-      cover: [MESH.tankCover],
-      deflectors: trayDeflectors,
-      power: [MESH.powerSwitch],
-      volumetricValve: [MESH.volumetricValve],
-      flowValve: [MESH.flowValve],
-      weights: trayWeights,
-    };
-    return new Set(lesson.highlight.flatMap((key) => parts[key] ?? []));
-  }, [lesson.isGuided, lesson.highlight, sceneHidden]);
-
-  /**
    * Parts the interaction gate will actually accept a click on.
    *
    * A different question from `liveKeys`, which is what the *step* is asking for and so
@@ -1797,21 +1770,36 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * cannot drift away from the physics it is describing. Nothing here is a second source
    * of truth for either number.
    */
+  /** One disc's own mass — never the pan total. */
+  const weightLabel = useCallback(
+    (grams: number) => (isArabic ? `وزن ${grams} غ` : `${grams} g`),
+    [isArabic]
+  );
+
   const labelFor = useCallback(
     (action: Action): string | null => {
       // `غ` in Arabic, matching the app's own localised mass strings — the removal control
       // says `إزالة ${g} غ` and the balance indicator `الهدف ≈ ${n} غ`. The bare `g`
       // elsewhere is in readouts that are not translated at all.
-      if (action.kind === 'weight') return isArabic ? `${action.grams} غ` : `${action.grams} g`;
+      if (action.kind === 'weight') return weightLabel(action.grams);
       if (action.kind === 'nozzle') {
         const boreMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
         return isArabic
           ? `الفوهة — قطر ${boreMm.toFixed(0)} مم`
           : `Nozzle — ${boreMm.toFixed(0)} mm bore`;
       }
+      // Deflector names already carry their angle (`DEFLECTORS`), in both languages; the
+      // valves and the switch use the names the step card already prints for them.
+      if (action.kind === 'deflector') {
+        const d = getDeflector(action.id);
+        return isArabic ? d.nameAr : d.nameEn;
+      }
+      if (action.kind === 'power') return isArabic ? 'مفتاح الطاقة' : 'Power switch';
+      if (action.kind === 'flowValve') return isArabic ? 'صمام التحكم في التدفق' : 'Flow control valve';
+      if (action.kind === 'volumetricValve') return isArabic ? 'الصمام الحجمي' : 'Volumetric valve';
       return null;
     },
-    [isArabic]
+    [isArabic, weightLabel]
   );
 
   const actionableKeys = useMemo<Set<string>>(() => {
@@ -1988,6 +1976,69 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       recentre: recentreOffset(disc.measured),
     }));
   }, [scene, pick, holderAnchor, state.loadedWeightsG]);
+
+  /** The stack as the highlight callback sees it; a disc on the pan is a clone. */
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
+
+  // --- Hover label and stale-hover clearing (BEDO-UX-ENV) -------------------------
+  //
+  // The label text is resolved here from the same authoritative data as before: a tray
+  // disc and a disc on the pan both name their own mass, never the pan total.
+  const hoverLabel = useMemo(() => {
+    if (!labelledKey || sceneHidden) return null;
+    if (labelledKey.startsWith(STACK_KEY)) {
+      const index = Number(labelledKey.slice(STACK_KEY.length));
+      const grams = state.loadedWeightsG[index];
+      return grams === undefined ? null : weightLabel(grams);
+    }
+    const spot = hotspots.find((h) => h.key === labelledKey);
+    return spot ? labelFor(spot.action) : null;
+  }, [labelledKey, sceneHidden, state.loadedWeightsG, hotspots, labelFor, weightLabel]);
+
+  useEffect(() => {
+    trackCursorTooltip();
+  }, []);
+
+  useEffect(() => {
+    if (hoverLabel) showCursorTooltip(hoverLabel, isArabic ? 'rtl' : 'ltr', pointerAt.current ?? undefined);
+    else hideCursorTooltip();
+  }, [hoverLabel, isArabic]);
+
+  useEffect(() => hideCursorTooltip, []);
+
+  // A hovered part can vanish from under a still pointer — a disc flies off, a reset
+  // rebuilds the stack, the board covers the scene — and three.js sends no pointer-out
+  // for a proxy that is simply unmounted. Drop the hover whenever its target is gone.
+  useEffect(() => {
+    const present = (key: string | null) => {
+      if (!key) return true;
+      if (sceneHidden) return false;
+      if (key.startsWith(STACK_KEY)) {
+        const index = Number(key.slice(STACK_KEY.length));
+        return index < state.loadedWeightsG.length && !inFlightSeats.has(index);
+      }
+      const spot = hotspots.find((h) => h.key === key);
+      if (!spot) return false;
+      return !(spot.action.kind === 'weight' && hiddenTrayWeightGrams.has(spot.action.grams));
+    };
+    if (!present(hoveredKey)) setHoveredKey(null);
+    if (!present(labelledKey)) setLabelledKey(null);
+  }, [hoveredKey, labelledKey, sceneHidden, state.loadedWeightsG.length, inFlightSeats, hotspots, hiddenTrayWeightGrams]);
+
+  // Dev-only: what the cursor label says right now, for the browser checks.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const globals = window as unknown as Record<string, any>;
+    globals.__bedoTest = {
+      ...globals.__bedoTest,
+      hover: () => ({
+        hovered: hoveredKey,
+        label: currentCursorTooltip(),
+        outlined: Array.from(highlighted.current.keys()),
+      }),
+    };
+  });
 
   // ==================================================================================
   // Drag and physical transfer (BEDO-021)
@@ -2885,7 +2936,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     (name: string, intensity: number) => {
       let handle = highlighted.current.get(name);
       if (!handle) {
-        const obj = pick(name);
+        // A disc on the pan is a clone, so it is found through the stack, not by name.
+        const obj = name.startsWith(STACK_KEY)
+          ? stackRef.current.find((s) => `${STACK_KEY}${s.index}` === name)?.object
+          : pick(name);
         if (!obj) return;
         handle = attachOutline(outlineLayer, obj);
         highlighted.current.set(name, handle);
@@ -2929,28 +2983,22 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       THREE.MathUtils.damp(current, target, rate, delta);
 
     // --- Highlights -------------------------------------------------------------
-    // The part under the cursor glows steadily; in guided mode the part the step is
-    // asking for pulses, so it is obvious where to click next.
+    // Hover only (BEDO-UX-ENV). The outline follows the pointer and nothing else: no guided
+    // pulse, no latched selection, no installed-deflector glow. The step still says what
+    // to touch — the instruction card and the guide arrow — but no part lights up until
+    // the learner's pointer is actually on it.
     const wanted = new Set<string>();
-    if (!state.showMonitor) {
+    if (!sceneHidden) {
       if (hoveredKey) wanted.add(hoveredKey);
-      if (lesson.isGuided && focusTarget) liveKeys.forEach((k) => wanted.add(k));
-      // Drop-target feedback, through the highlight the rest of the scene already uses
-      // rather than a new overlay (`BEDO-021 §32`). Whichever region the pointer is over
-      // is the part that lights, so it is always one the learner can see. A wrong target
-      // simply never lights.
+      // Drop-target feedback while dragging (`BEDO-021 §32`): set only while the pointer
+      // is over that region, so it is hover feedback too.
       if (dropHighlightRef.current) wanted.add(dropHighlightRef.current);
     }
 
     for (const key of Array.from(highlighted.current.keys())) {
       if (!wanted.has(key)) clearGlow(key);
     }
-
-    // A steady line under the cursor; a gentle pulse on what the step is asking for.
-    const pulse = Math.sin(t * 5.0) * 0.2 + 0.7;
-    wanted.forEach((key) => {
-      setGlow(key, key === hoveredKey ? 1 : pulse);
-    });
+    wanted.forEach((key) => setGlow(key, 1));
 
     // --- Unscrew / re-seat sequence -------------------------------------------
     // The sequence timer runs on real time, not the clamped delta: clamping is there to
@@ -3388,13 +3436,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             */}
             {!inFlightSeats.has(index) && (
               <mesh
+                userData={{ bedoStackDisc: true }}
                 {...drag.handlersFor({ kind: 'weight', index })}
                 onPointerOver={(e) => {
                   e.stopPropagation();
-                  if (weightsAreActionable) document.body.style.cursor = 'grab';
+                  if (sceneHidden) return;
+                  pointerAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+                  const key = `${STACK_KEY}${index}`;
+                  // Named whatever the gate says — it is a real disc of a real mass — but
+                  // outlined only when taking it off would be accepted.
+                  setLabelledKey(key);
+                  if (weightsAreActionable) {
+                    document.body.style.cursor = 'grab';
+                    setHoveredKey(key);
+                  }
                 }}
                 onPointerOut={() => {
                   if (!drag.current()) document.body.style.cursor = 'default';
+                  const key = `${STACK_KEY}${index}`;
+                  setHoveredKey((k) => (k === key ? null : k));
+                  setLabelledKey((k) => (k === key ? null : k));
                 }}
               >
                 <cylinderGeometry args={[radius, radius, thickness, 24, 1]} />
@@ -3506,11 +3567,30 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
             position={h.position}
             {...(source ? drag.handlersFor(source) : {})}
             onPointerOver={(e) => {
+              // The cover's click sphere encloses the weight pan. A disc on the pan is the
+              // more precise target, so while one is under the pointer it takes the hover
+              // (and its label) and the cover steps aside. Hover only; clicks are untouched.
+              if (
+                h.key === MESH.tankCover &&
+                e.intersections.some((i) => i.eventObject.userData.bedoStackDisc)
+              ) {
+                return;
+              }
               if (!labelOnly) e.stopPropagation();
+              // Only the nearest proxy under the pointer is "hovered". The nozzle lets
+              // events through (it must not swallow clicks), so without this a proxy
+              // behind it would take the outline while the nozzle kept the label.
+              if (e.intersections[0] && e.intersections[0].eventObject !== e.eventObject) return;
+              if (sceneHidden) return;
+              pointerAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
               // Actionability, not focus: a hotspot the gate would refuse must not offer
-              // the same pointer as one it would accept (BEDO-020 §24).
+              // the same pointer — or the same outline — as one it would accept
+              // (BEDO-020 §24). The nozzle is informational: it outlines and names itself
+              // but keeps the default cursor, because there is nothing to press.
               if (actionableKeys.has(h.key)) {
                 document.body.style.cursor = draggable ? 'grab' : 'pointer';
+                setHoveredKey(h.key);
+              } else if (labelOnly) {
                 setHoveredKey(h.key);
               }
               // Naming a part is not the same promise as offering it — see `labelledKey`.
@@ -3536,22 +3616,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               <sphereGeometry args={[h.radius, 12, 10]} />
             )}
             <meshBasicMaterial visible={false} />
-            {labelledKey === h.key && (
-              // `pointer-events: none` is what keeps this a label and not an obstacle: the
-              // chip is drawn over the part it names, and a drag or a click has to reach
-              // the proxy underneath it. Without it the tooltip would swallow its own
-              // trigger and flicker as the pointer entered it.
-              <Html
-                center
-                position={[0, (h.half?.[1] ?? h.radius) + 0.035, 0]}
-                zIndexRange={[40, 0]}
-                style={{ pointerEvents: 'none' }}
-              >
-                <div className="scene-tooltip" dir={isArabic ? 'rtl' : 'ltr'}>
-                  {labelFor(h.action)}
-                </div>
-              </Html>
-            )}
           </mesh>
         );
       })}

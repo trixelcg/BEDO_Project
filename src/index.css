@@ -1058,6 +1058,32 @@ input[type="range"]::-webkit-slider-thumb:hover {
   over the proxy that triggered it, so anything but `none` would let the label eat the
   click or drag meant for the part and flicker as the pointer crossed its own tooltip.
 */
+/*
+  The cursor-following part label (BEDO-UX-ENV). One element on <body>, moved with a
+  transform by src/lib/cursorTooltip.ts. Fixed screen size whatever the camera does, and
+  never a pointer target.
+*/
+.cursor-tooltip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: rgba(16, 17, 19, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  user-select: none;
+  unicode-bidi: isolate;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  will-change: transform;
+}
+
 .scene-tooltip {
   padding: 8px 14px;
   border-radius: 9px;

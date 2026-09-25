@@ -43,6 +43,8 @@ const PUBLIC = path.join(ROOT, 'public');
 const VERSIONED_FILES = [
   'Bedo_baked_v2.glb',
   'bedo_environment.webp',
+  // The campus around the laboratory (BEDO-ENV-01): visible geometry, not lighting.
+  'lab-environment.glb',
   ...readdirSync(path.join(PUBLIC, 'WaterShapes')).filter((f) => f.endsWith('.glb')).sort()
     .map((f) => `WaterShapes/${f}`),
 ];

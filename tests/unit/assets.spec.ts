@@ -104,6 +104,7 @@ describe('every media file the source asks for', () => {
     // pass vacuously.
     expect(referenced).toContain('/Bedo_baked_v2.glb');
     expect(referenced).toContain('/bedo_environment.webp');
+    expect(referenced).toContain('/lab-environment.glb');
     expect(referenced).toContain('/WaterShapes/Water_low.glb');
     // The transcoder directory is named through assetDirUrl(), not as a file path.
     expect(referencedDirs).toContain('basis');
@@ -148,6 +149,8 @@ describe('the served asset set is closed', () => {
     'favicon-32x32.png',
     'favicon.ico',
     'bedo_environment.webp',
+    // The campus around the laboratory (BEDO-ENV-01): visible geometry, content-addressed.
+    'lab-environment.glb',
     // The worksheets the closing step opens, added by BEDO-019. Fetched on demand, never
     // at boot — `README.txt` records their provenance beside them.
     'answer-sheets/README.txt',
