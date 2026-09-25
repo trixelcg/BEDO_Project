@@ -68,7 +68,9 @@ const bundleDir = path.join(DIST, 'assets');
 const bundleText = readdirSync(bundleDir).filter((f) => f.endsWith('.js'))
   .map((f) => readFileSync(path.join(bundleDir, f), 'utf8')).join('\n');
 const declared = new Set(Object.values(manifest).map((v) => v.replace(/\/$/, '')));
-const emitted = new Set([...bundleText.matchAll(/runtime\/[A-Za-z0-9-]+(?:\/[A-Za-z0-9_.]+)?/g)]
+// The filename class includes '-': `lab-environment.glb` was read as `.../lab` and
+// reported undeclared (BEDO-ENV-01).
+const emitted = new Set([...bundleText.matchAll(/runtime\/[A-Za-z0-9-]+(?:\/[A-Za-z0-9_.-]+)?/g)]
   .map((m) => m[0]));
 const undeclared = [...emitted].filter(
   (u) => !declared.has(u) && !declared.has(path.dirname(u)) && !uploads.some((x) => x.key === u));
