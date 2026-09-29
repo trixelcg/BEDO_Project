@@ -30,3 +30,9 @@ docs/reference/*.mp4
 test-results
 playwright-report
 measurements
+
+# Local backups of replaced models: not shipped, not versioned (the history has them)
+public/*_old.glb
+
+# Local Claude Code settings
+.claude/

@@ -1,3 +1,7 @@
+// **Superseded by F08.** The scene no longer plays the authored caches; the water is
+// computed from state (`src/lib/jetFlow.ts`, `docs/57`). This module is kept, with its
+// tests, as the record of what the caches contain and how they were played.
+//
 // Playback of the authored water caches.
 //
 // ## What the assets are

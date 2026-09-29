@@ -1,6 +1,9 @@
 /**
  * The canonical lesson: eleven numbered steps, as BEDO's four experiment sheets specify.
  *
+ * F14: every step whose goal is a state of the rig finishes on that state (`condition`),
+ * checked after every change, so the lesson and the rig cannot disagree.
+ *
  * `BEDO-018` made this a data file; `BEDO-019` then made the change it was built for —
  * nine apparatus steps, then Calculate, then the closing step that opens the answer sheet.
  * The volumetric valve moved to `alwaysAvailable`, the assessment moved out of the
@@ -53,7 +56,7 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: [],
       expectation: { type: 'OPEN_COVER' },
       isSatisfied: (c) => c.simulation.apparatus.isCoverOpen,
-      advance: { kind: 'action' },
+      advance: { kind: 'condition' },
     },
     {
       id: 'install-deflector',
@@ -77,6 +80,10 @@ export const CURRENT_LESSON: Lesson = {
           c.simulation.apparatus.isCoverOpen &&
           isDeflectorInScope(c.simulation.experimentId, c.simulation.apparatus.selectedDeflectorId),
       },
+      // Confirming the step fits the deflector that is selected — the sheet's own, for a
+      // learner who never touched the tray (`docs/38 §3.1`). The runtime owns the fact
+      // (F09); it used to be an interface flag with a lesson fallback beside it.
+      onComplete: [{ type: 'FIT_DEFLECTOR' }],
     },
     {
       id: 'mount-cover',
@@ -86,7 +93,7 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: [],
       expectation: { type: 'CLOSE_COVER' },
       isSatisfied: (c) => !c.simulation.apparatus.isCoverOpen,
-      advance: { kind: 'action' },
+      advance: { kind: 'condition' },
     },
     {
       id: 'power-on',
@@ -96,7 +103,7 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: ['power'],
       expectation: { type: 'POWER_ON' },
       isSatisfied: (c) => c.simulation.apparatus.isPowerOn,
-      advance: { kind: 'action' },
+      advance: { kind: 'condition' },
     },
     {
       id: 'set-flow-reading-1',
@@ -121,8 +128,12 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: ['weights'],
       expectation: { type: 'ADD_WEIGHT' },
       isSatisfied: readingBalanced(1),
-      advance: { kind: 'confirm', when: readingBalanced(1) },
-      onComplete: [{ type: 'END_READING' }, { type: 'REMOVE_ALL_WEIGHTS' }],
+      // Balanced is done (F14). The moment the tray balances the jet the reading is taken
+      // and the lesson moves on; there is no OK to press beside a pointer that already
+      // says so. The discs stay on the carrier, so the balance just reached is what the
+      // learner sees — they come off when the next reading starts (step 7).
+      advance: { kind: 'condition' },
+      onComplete: [{ type: 'END_READING' }],
     },
     {
       id: 'increase-flow-reading-2',
@@ -133,7 +144,10 @@ export const CURRENT_LESSON: Lesson = {
       expectation: { type: 'SET_VALVE' },
       isSatisfied: valveAtLeast(SECOND_READING_VALVE),
       advance: { kind: 'confirm', when: valveAtLeast(SECOND_READING_VALVE) },
+      // Reading 1's discs come off as reading 2 begins, so its balance is found from an
+      // empty carrier, as the sheet describes.
       onComplete: [
+        { type: 'REMOVE_ALL_WEIGHTS' },
         { type: 'SET_VALVE', opening: SECOND_READING_VALVE },
         { type: 'BEGIN_READING', index: 2 },
       ],
@@ -146,8 +160,10 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: ['weights'],
       expectation: { type: 'ADD_WEIGHT' },
       isSatisfied: readingBalanced(2),
-      advance: { kind: 'confirm', when: readingBalanced(2) },
-      onComplete: [{ type: 'END_READING' }, { type: 'REMOVE_ALL_WEIGHTS' }],
+      // As reading 1. The discs of the last reading stay on: the carrier shows the
+      // balance the monitor's F_ac is about to be computed from.
+      advance: { kind: 'condition' },
+      onComplete: [{ type: 'END_READING' }],
     },
     {
       id: 'open-monitor',
@@ -156,11 +172,11 @@ export const CURRENT_LESSON: Lesson = {
       highlight: [],
       panelControls: ['monitor'],
       expectation: { type: 'OPEN_MONITOR' },
-      // Reachable from the moment the step opens: pressing OK opens the monitor, and so
-      // does opening it directly. Both paths finish the step.
-      isSatisfied: always,
-      advance: { kind: 'confirm', when: always },
-      alsoCompletesOn: 'OPEN_MONITOR',
+      // Done when the monitor is on screen (F14), however it got there — including one the
+      // learner opened earlier, which used to leave this step asking for it regardless.
+      // The dock's "Open Data Monitor" is the control; there is no second OK for it.
+      isSatisfied: (c) => c.monitorOpen === true,
+      advance: { kind: 'condition' },
     },
     {
       id: 'record-actual-force',
@@ -170,7 +186,7 @@ export const CURRENT_LESSON: Lesson = {
       panelControls: ['monitor'],
       expectation: { type: 'RECORD_ACTUAL_FORCE' },
       isSatisfied: (c) => c.simulation.isActualForceRecorded,
-      advance: { kind: 'action' },
+      advance: { kind: 'condition' },
     },
     {
       id: 'open-answer-sheet',
@@ -179,8 +195,9 @@ export const CURRENT_LESSON: Lesson = {
       highlight: [],
       panelControls: ['monitor', 'answerSheet'],
       // BEDO's sheets close with "You finished! Click the 'Document' tab to view the
-      // answer sheet". Opening it finishes the numbered procedure; the assessment sits
-      // beside the lesson, unnumbered, exactly as the sheets place it.
+      // answer sheet". The action is the step; "You finished" is not — it is the lesson's
+      // completed state, shown once this is done (F14). The assessment sits beside the
+      // lesson, unnumbered, exactly as the sheets place it.
       expectation: { type: 'OPEN_ANSWER_SHEET' },
       isSatisfied: always,
       advance: { kind: 'action' },

@@ -5,7 +5,8 @@
 // monitor table can never disagree.
 //
 // Verified cell-by-cell against BEDO's `Jet force_Mathematical model.xlsx` (docs/13 §1)
-// and pinned by tests/unit/physics.spec.ts. **No equation here may change without
+// and pinned by tests/unit/physics.spec.ts. It also reproduces `Logic(final) 2.xlsx`'s Flat
+// block row for row, the Manual row included (F19, docs/66; tests/unit/f19-calculation-consistency.spec.ts). **No equation here may change without
 // reference evidence that the current one is wrong** — that is the Phase 2 brief's rule,
 // and the specs are how it is enforced.
 //

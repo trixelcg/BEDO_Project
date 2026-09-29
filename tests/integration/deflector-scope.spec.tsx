@@ -5,6 +5,7 @@ import {
   click,
   clickMesh,
   clickOk,
+  coverState,
   currentStep,
   dismissPopup,
   loadedWeightG,
@@ -159,17 +160,26 @@ describe('free mode explores, and says what is installed', () => {
 });
 
 describe('the lesson will not confirm a mismatched deflector', () => {
-  it('withholds OK after free-mode exploration leaves the wrong disc on the rod', () => {
+  it('never hands the guided lesson a rod free mode fitted with the wrong disc', () => {
     // The one route the gate does not cover, because in free mode there is nothing to
     // refuse: explore, install the hemisphere, then go back to the guided procedure.
+    // Since F14 Guided takes back only the rig it left: this one it must reset.
     click('Free Mode');
     clickMesh('scene-cover');
     clickMesh('scene-deflector-180');
     click('Guided Mode');
+    const dialog = document.querySelector('[data-bedo-mode-dialog]');
+    expect(dialog).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /^Keep the rig/ })).toBeNull();
 
-    clickMesh('scene-cover'); // the tank is already open, so this closes it…
-    dismissPopup();
+    click('Stay in Free Mode');
+    expect(document.querySelector('[data-bedo-mode-dialog]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Guided Mode' })).toBeDefined(); // still free
+
+    click('Guided Mode');
+    click('Reset the rig and start at step 1');
     expect(currentStep()).toBe(1);
+    expect(coverState()).toBe('Closed');
   });
 });
 
@@ -185,9 +195,23 @@ describe('taking one disc off the holder', () => {
     click('+20g');
     expect(pan()).toBe(70);
 
-    click('Remove 50 g');
+    click('Remove 20 g');
 
-    expect(pan()).toBe(20);
+    expect(pan()).toBe(50);
+  });
+
+  it('offers only the top disc: the discs are threaded on the post (F03)', () => {
+    reachBalanceStep();
+    click('+50g');
+    click('+20g');
+
+    // The 50 g disc is under the 20 g one. It stays listed, but cannot come off yet.
+    const under = screen.getByRole('button', { name: 'Take off the weights above 50 g first' });
+    expect((under as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Remove 50 g' })).toBeNull();
+
+    click('Remove 20 g');
+    expect(screen.getByRole('button', { name: 'Remove 50 g' })).toBeDefined();
   });
 
   it('removes only the disc that was clicked, from the scene', () => {
@@ -219,15 +243,18 @@ describe('taking one disc off the holder', () => {
     click('+50g');
     expect(okButton()).toBeNull();
 
+    // The 50 g disc went on last, so it comes off first.
+    click('Remove 50 g');
     click('Remove 200 g');
+    click('+50g');
     click('+20g');
     click('+10g');
 
+    // 80 g balances, and the step finishes on the spot (F14) — the discs stay on.
     expect(pan()).toBe(80);
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
-    clickOk();
     dismissPopup();
     expect(currentStep()).toBe(7);
+    expect(okButton()).toBeNull();
   });
 
   it('keeps clear-all working alongside it', () => {
@@ -259,10 +286,11 @@ describe('taking one disc off the holder', () => {
     click('Remove 500 g'); // a wrong disc, taken back off
     expect(pan()).toBe(0);
 
+    // 200, 220, 240, 260 g — the first balanced total ends the reading (F14).
     click('+200g');
-    click('+50g');
-    click('+10g');
-    clickOk();
+    click('+20g');
+    click('+20g');
+    click('+20g');
     dismissPopup();
     click('Open Data Monitor');
 
@@ -272,19 +300,16 @@ describe('taking one disc off the holder', () => {
   });
 
   it('is refused at a step that is not about the pan', () => {
-    // The guided procedure clears the holder between readings, so the reachable way to
-    // stand at a non-weight step with discs loaded is to load them in free mode first.
-    click('Free Mode');
-    click('+50g');
-    click('+20g');
-    expect(pan()).toBe(70);
-    click('Guided Mode');
-    expect(currentStep()).toBe(1); // step 1 is about the cover
-    expect(discsInScene()).toBe(2);
+    // Since F14 reading 1's discs stay on the carrier through step 7 (they come off as
+    // reading 2 begins), so step 7 is a non-weight step with discs loaded.
+    walkLesson(1, 6);
+    dismissPopup();
+    expect(currentStep()).toBe(7); // about the flow valve
+    expect(discsInScene()).toBe(3);
 
     clickMesh('scene-loaded-weight-0');
 
     expect(warningText()).toBe('Follow the highlighted step first.');
-    expect(discsInScene()).toBe(2);
+    expect(discsInScene()).toBe(3);
   });
 });

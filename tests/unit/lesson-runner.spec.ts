@@ -17,10 +17,15 @@ import { selectReadings } from '../../src/simulation/selectors';
 const harness = () => {
   const simulation = createSimulationRuntime();
   const runner = createLessonRunner(CURRENT_LESSON);
+  let monitorOpen = false;
   const context = (): LessonContext => ({
     simulation: simulation.getState(),
     readings: selectReadings(simulation.getState()),
+    monitorOpen,
   });
+  const setMonitorOpen = (open: boolean) => {
+    monitorOpen = open;
+  };
   const run = (commands: SimulationCommand[]) => {
     for (const command of commands) simulation.dispatch(command);
   };
@@ -29,7 +34,7 @@ const harness = () => {
     run([...result.commands]);
     return result;
   };
-  return { simulation, runner, context, run, apply };
+  return { simulation, runner, context, run, apply, setMonitorOpen };
 };
 
 describe('progression', () => {
@@ -50,10 +55,26 @@ describe('progression', () => {
   });
 
   it('does not advance on an action the step is not waiting for', () => {
+    // install-deflector is a confirm step: no notification finishes it.
     const { runner, run, context } = harness();
     run([{ type: 'OPEN_COVER' }]);
+    runner.sync(context());
+    expect(runner.getState().currentStepId).toBe('install-deflector');
     expect(runner.notify('POWER_ON', context()).advanced).toBe(false);
-    expect(runner.getState().currentStepId).toBe('unscrew-cover');
+    expect(runner.notify('SELECT_DEFLECTOR', context()).advanced).toBe(false);
+    expect(runner.getState().currentStepId).toBe('install-deflector');
+  });
+
+  it('a condition step finishes as soon as its goal holds, by whichever route (F14)', () => {
+    const { runner, run, context } = harness();
+    expect(runner.sync(context()).advanced).toBe(false); // cover still shut
+    run([{ type: 'OPEN_COVER' }]);
+    // No notification needed: the rig changed, and that is enough.
+    const result = runner.sync(context());
+    expect(result.advanced).toBe(true);
+    expect(result.completedStepId).toBe('unscrew-cover');
+    // And once finished, it cannot finish again.
+    expect(runner.sync(context()).advanced).toBe(false);
   });
 
   it('does not advance when the action happened but the step is unsatisfied', () => {
@@ -230,84 +251,115 @@ describe('subscriptions', () => {
   });
 });
 
-describe('the shipped twelve-step walk — parity with the pre-BEDO-018 flow', () => {
-  it('runs end to end, hitting every step in order with its old number', () => {
-    const { runner, run, context, apply } = harness();
-
-    /** What the learner does at each step, and the number they see while doing it. */
-    const walk: Array<{
-      display: number;
-      id: StepId;
-      act: () => void;
-      finish: 'action' | 'confirm';
-      expectation?: Parameters<typeof runner.notify>[0];
-    }> = [
-      { display: 1, id: 'unscrew-cover', act: () => run([{ type: 'OPEN_COVER' }]), finish: 'action', expectation: 'OPEN_COVER' },
+describe('the shipped eleven-step walk (F14: condition steps finish on the rig)', () => {
+  type Finish = 'condition' | 'confirm' | 'action';
+  /** What the learner does at each step, the number they see, and how the step ends. */
+  const walkOf = (h: ReturnType<typeof harness>) => {
+    const { run, setMonitorOpen } = h;
+    return [
+      { display: 1, id: 'unscrew-cover', act: () => run([{ type: 'OPEN_COVER' }]), finish: 'condition' },
       { display: 2, id: 'install-deflector', act: () => run([{ type: 'SELECT_DEFLECTOR', deflectorId: 90 }]), finish: 'confirm' },
-      { display: 3, id: 'mount-cover', act: () => run([{ type: 'CLOSE_COVER' }]), finish: 'action', expectation: 'CLOSE_COVER' },
-      { display: 4, id: 'power-on', act: () => run([{ type: 'POWER_ON' }]), finish: 'action', expectation: 'POWER_ON' },
+      { display: 3, id: 'mount-cover', act: () => run([{ type: 'CLOSE_COVER' }]), finish: 'condition' },
+      { display: 4, id: 'power-on', act: () => run([{ type: 'POWER_ON' }]), finish: 'condition' },
       { display: 5, id: 'set-flow-reading-1', act: () => run([{ type: 'SET_VALVE', opening: 0.4 }]), finish: 'confirm' },
-      { display: 6, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
+      { display: 6, id: 'balance-reading-1', act: () => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'condition' },
       { display: 7, id: 'increase-flow-reading-2', act: () => run([{ type: 'SET_VALVE', opening: 0.5 }]), finish: 'confirm' },
-      { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), finish: 'confirm' },
-      { display: 9, id: 'open-monitor', act: () => {}, finish: 'confirm' },
-      { display: 10, id: 'record-actual-force', act: () => run([{ type: 'RECORD_ACTUAL_FORCE' }]), finish: 'action', expectation: 'RECORD_ACTUAL_FORCE' },
-    ];
+      { display: 8, id: 'balance-reading-2', act: () => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 20 }]), finish: 'condition' },
+      { display: 9, id: 'open-monitor', act: () => setMonitorOpen(true), finish: 'condition' },
+      { display: 10, id: 'record-actual-force', act: () => run([{ type: 'RECORD_ACTUAL_FORCE' }]), finish: 'condition' },
+      { display: 11, id: 'open-answer-sheet', act: () => {}, finish: 'action' },
+    ] as Array<{ display: number; id: StepId; act: () => void; finish: Finish }>;
+  };
 
-    for (const stage of walk) {
+  it('runs end to end, hitting every step in order with its number, then completes', () => {
+    const h = harness();
+    const { runner, context, apply } = h;
+    for (const stage of walkOf(h)) {
       expect(runner.getCurrentStep().id, `expected to be on ${stage.id}`).toBe(stage.id);
       expect(runner.getCurrentStep().displayNumber).toBe(stage.display);
-
+      expect(runner.getCurrentStep().advance.kind).toBe(stage.finish);
+      // A condition step offers no OK button.
+      if (stage.finish === 'condition') expect(runner.canConfirm(context())).toBe(false);
       stage.act();
       const result =
         stage.finish === 'confirm'
           ? apply(runner.confirm(context()))
-          : apply(runner.notify(stage.expectation!, context()));
+          : stage.finish === 'condition'
+            ? apply(runner.sync(context()))
+            : apply(runner.notify('OPEN_ANSWER_SHEET', context()));
       expect(result.advanced, `${stage.id} did not advance`).toBe(true);
     }
-
-    // Eleven: the closing step, which opens the answer sheet and ends the procedure.
+    // Completion is a state, not a twelfth step.
+    expect(runner.getState().isComplete).toBe(true);
     expect(runner.getCurrentStep().id).toBe('open-answer-sheet');
-    expect(runner.getCurrentStep().displayNumber).toBe(11);
+    expect(CURRENT_LESSON.steps.every((step) => runner.hasCompleted(step.id))).toBe(true);
+    // Nothing more to do: no OK, no further advance.
+    expect(runner.canConfirm(context())).toBe(false);
+    expect(runner.notify('OPEN_ANSWER_SHEET', context()).advanced).toBe(false);
+    expect(runner.sync(context()).advanced).toBe(false);
   });
 
-  it('produces the same readings the old flow produced', () => {
-    // The two rows the lesson records, balanced at the same masses as before.
-    const { runner, run, context, apply } = harness();
-    const step = (act: () => void, kind: 'action' | 'confirm', expectation?: Parameters<typeof runner.notify>[0]) => {
-      act();
-      apply(kind === 'confirm' ? runner.confirm(context()) : runner.notify(expectation!, context()));
+  it('produces the readings the flow always produced, and keeps each balance visible', () => {
+    const h = harness();
+    const { runner, context, apply, simulation } = h;
+    const walk = walkOf(h);
+    const doStage = (i: number) => {
+      walk[i].act();
+      const f = walk[i].finish;
+      apply(f === 'confirm' ? runner.confirm(context()) : runner.sync(context()));
     };
-
-    step(() => run([{ type: 'OPEN_COVER' }]), 'action', 'OPEN_COVER');
-    step(() => {}, 'confirm');
-    step(() => run([{ type: 'CLOSE_COVER' }]), 'action', 'CLOSE_COVER');
-    step(() => run([{ type: 'POWER_ON' }]), 'action', 'POWER_ON');
-    step(() => run([{ type: 'SET_VALVE', opening: 0.4 }]), 'confirm');
-    step(() => run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
-    step(() => run([{ type: 'SET_VALVE', opening: 0.5 }]), 'confirm');
-    step(() => run([{ type: 'ADD_WEIGHT', massG: 200 }, { type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 10 }]), 'confirm');
+    for (let i = 0; i < 6; i++) doStage(i);
+    // Reading 1 balanced and taken — and its discs are still on the carrier.
+    expect(context().readings[1].loadedMassG).toBe(80);
+    expect(simulation.getState().apparatus.loadedWeightsG).toEqual([50, 20, 10]);
+    doStage(6);
+    // They come off as reading 2 begins.
+    expect(simulation.getState().apparatus.loadedWeightsG).toEqual([]);
+    doStage(7);
 
     const readings = context().readings;
     expect(readings[1].loadedMassG).toBe(80);
     expect(readings[2].loadedMassG).toBe(260);
     expect(readings[1].isBalanced).toBe(true);
     expect(readings[2].isBalanced).toBe(true);
+    expect(simulation.getState().apparatus.loadedWeightsG).toEqual([200, 20, 20, 20]);
   });
 
-  it('opens the monitor step by either path, as it always could', () => {
-    const { runner, context } = harness();
-    // Jump to the monitor step by construction rather than by walking.
+  it('balances by taking a disc off, too — the goal, not the action, finishes the step', () => {
+    const h = harness();
+    const { runner, context, apply, run } = h;
+    const walk = walkOf(h);
+    for (let i = 0; i < 5; i++) {
+      walk[i].act();
+      apply(walk[i].finish === 'confirm' ? runner.confirm(context()) : runner.sync(context()));
+    }
+    expect(runner.getCurrentStep().id).toBe('balance-reading-1');
+    run([{ type: 'ADD_WEIGHT', massG: 50 }, { type: 'ADD_WEIGHT', massG: 20 }, { type: 'ADD_WEIGHT', massG: 10 }, { type: 'ADD_WEIGHT', massG: 100 }]);
+    expect(runner.sync(context()).advanced).toBe(false); // 180 g: too heavy
+    run([{ type: 'REMOVE_WEIGHT', index: 3 }]);
+    expect(apply(runner.sync(context())).completedStepId).toBe('balance-reading-1');
+  });
+
+  it('open-monitor finishes when the monitor is on screen, however it got there', () => {
+    const { context, setMonitorOpen } = harness();
     const runner2 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(8) });
     expect(runner2.getCurrentStep().id).toBe('open-monitor');
+    // No OK button: the dock's "Open Data Monitor" is the control.
+    expect(runner2.canConfirm(context())).toBe(false);
+    expect(runner2.sync(context()).advanced).toBe(false);
+    // Opened earlier, or opened now: the same.
+    setMonitorOpen(true);
+    expect(runner2.sync(context()).advanced).toBe(true);
 
-    // Path A: opening the monitor directly.
-    expect(runner2.notify('OPEN_MONITOR', context()).advanced).toBe(true);
-
-    // Path B: the OK button.
     const runner3 = createLessonRunner({ steps: CURRENT_LESSON.steps.slice(8) });
-    expect(runner3.canConfirm(context())).toBe(true);
-    expect(runner3.confirm(context()).advanced).toBe(true);
-    expect(runner.getState().currentStepId).toBe('unscrew-cover'); // untouched
+    expect(runner3.notify('OPEN_MONITOR', context()).advanced).toBe(true);
+  });
+
+  it('free mode never advances on the rig', () => {
+    const { run, context } = harness();
+    const runner2 = createLessonRunner(CURRENT_LESSON, { mode: 'free' });
+    run([{ type: 'OPEN_COVER' }]);
+    expect(runner2.sync(context()).advanced).toBe(false);
+    expect(runner2.getState().currentStepId).toBe('unscrew-cover');
   });
 });

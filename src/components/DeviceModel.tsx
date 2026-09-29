@@ -9,21 +9,26 @@ import React, {
 import { useGLTF } from '@react-three/drei';
 import { extendWithKTX2, setKTX2Renderer } from '../lib/ktx2';
 
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { LessonView, SimulationView } from '../types/index';
 import {
   DEFLECTORS,
   MESH,
-  WATER_SHAPES,
   WEIGHTS,
   getDeflector,
   type AnchorKey,
-  type WaterShapeKey,
   MISMATERIALLED_HOSE,
+  SUPPLY_HOSE,
 } from '../domain/apparatus';
 import { gltfName } from '../lib/gltfNames';
 import { adaptApparatusScene, createPreviousTankGlass } from '../lib/modelAdapter';
+import {
+  CUSTOM_WEIGHT_MESH,
+  applyWeightFamily,
+  createWeightFaceTexture,
+  type WeightFamily,
+} from '../lib/weightFamily';
 import {
   ANCHOR_VIEW,
   COVER_LIFT,
@@ -43,7 +48,17 @@ import {
   type HolderAnchor,
 } from '../lib/holderAnchor';
 import { springDeflectionMm } from '../domain/spring';
-import { NOZZLE_AREA_M2, jetState } from '../domain/physics';
+import {
+  NOZZLE_MOUTH_MESH,
+  carrierStop,
+  settleToward,
+  springCompressionLimitMm,
+  type CarrierStop,
+} from '../lib/carrierTravel';
+import { GRAVITY_MS2, NOZZLE_AREA_M2 } from '../domain/physics';
+import { gramsToNewtons } from '../domain/units';
+import { anchorIdOf, describeComponent, type ComponentRef } from '../domain/componentInfo';
+import { publishAnchorPoint, type Inspection } from '../lib/componentAnchor';
 import { attachBoardReadout, type BoardValues } from './boardReadout';
 import { markReady, markTransfer } from '../lib/readiness';
 import {
@@ -53,52 +68,87 @@ import {
   type DropOutcome,
 } from '../interaction/drag';
 import {
+  DEFLECTOR_REMOVAL_SECONDS,
+  STACK_CLEAR_STAGGER_SECONDS,
   addedWeightIndex,
   createTransferSet,
   durationOf,
   removedWeightIndex,
   type TransferKind,
 } from '../interaction/transfer';
-import { arcHeightOver, arcLift, type Obstacle } from '../lib/transferPath';
+import { type Obstacle } from '../lib/transferPath';
 import {
-  JET_ASSET,
-  WATER_MODEL_SCALE,
-  waterShapeForFlow,
-  PLUME_CUT_FULL_Y,
-  PLUME_CUT_CLEAR_Y,
-} from '../lib/waterJet';
+  HANDLING_CLEARANCE,
+  liftShare,
+  planHandling,
+  sampleHandling,
+  travelHeightOver,
+  type HandlingPlan,
+  type HandlingSample,
+  type Point3,
+} from '../lib/handlingPath';
+import { fitRigid, type Vec3 } from '../lib/rigidFit';
+import { NOZZLE_DIAMETER_M } from '../lib/waterJet';
 import {
-  RIPPLE_AMPLITUDE,
-  RIPPLE_TILES,
-  WATER_AMPLITUDE_ATTRIBUTE,
-  WATER_FLOW_SENSE,
-  WATER_UV_ATTRIBUTE,
-  buildWaterUv,
-  packPositions,
-} from '../lib/waterUv';
+  FILM_OFFSET_M,
+  POOL_DEPTH_M,
+  buildJetPaths,
+  measureCeiling,
+  measureWettedSurface,
+  type JetGeometry,
+  type JetPath,
+  type WettedSurface,
+} from '../lib/jetFlow';
+import {
+  CONDUIT_REFERENCE_SPEED,
+  CONDUIT_WALLS,
+  conduitPatternSpeed,
+  createWaterMaterial,
+  createWaterUniforms,
+  measureConduit,
+} from '../lib/waterMaterial';
+import {
+  createJetFlowGeometry,
+  createJetFlowMaterial,
+  createJetSheetMaterial,
+  createJetFlowUniforms,
+  createPoolMesh,
+  createPoolUniforms,
+  writeJetPath,
+} from '../lib/jetFlowMesh';
 import { applyGlass } from '../lib/materialFamilies';
 import { applyWallStripe, isWallPaint } from '../lib/wallStripe';
-import { pilotLampIntensity, preparePilotLamp } from '../lib/pilotLamp';
+import {
+  PILOT_LAMP_ON_INTENSITY,
+  pilotLampIntensity,
+  preparePilotLamp,
+  setPilotLampLevel,
+} from '../lib/pilotLamp';
 import { attachOutline, createOutlineLayer, type OutlineHandle } from '../lib/selectionOutline';
 import {
   currentCursorTooltip,
+  currentCursorTooltipLines,
   hideCursorTooltip,
   showCursorTooltip,
   trackCursorTooltip,
 } from '../lib/cursorTooltip';
 import { spindleAxis, spindleCentre } from '../lib/powerSwitch';
 import {
-  applyCacheFrame,
-  createCacheClock,
-  prepareCacheMesh,
-} from '../lib/waterCache';
-import {
   advanceLevel,
   measureTankInterior,
   targetLevel,
   type TankInterior,
 } from '../lib/tankWater';
-import { directionOf } from '../interaction/transfer';
+import {
+  advanceTankVolume,
+  applyColumn,
+  createBasinWater,
+  heightForV,
+  litreToV,
+  measureBasin,
+  setBasinLevel,
+  type BasinInterior,
+} from '../lib/measuringTank';
 import { useObjectDrag } from './useObjectDrag';
 import { assetUrl } from '../lib/assetUrl';
 
@@ -116,7 +166,28 @@ type Action =
    * `actionableKeys` and `handleHotspot` does nothing with it: the proxy exists only so
    * the part can name itself and its bore on hover (`docs/48 §BEDO-UX-09`).
    */
-  | { kind: 'nozzle' };
+  | { kind: 'nozzle' }
+  /**
+   * Parts that are only looked at (F17): they name themselves on hover and open their
+   * component card on a deliberate click, and pressing them does nothing to the rig.
+   */
+  | { kind: 'part'; component: InfoPart };
+
+/** The informational parts with a hit proxy of their own (F17). */
+type InfoPart = 'pointer' | 'spring' | 'weightCarrier' | 'flowmeter' | 'installedDeflector';
+
+/**
+ * The bench's measuring-tank scale (F17): the two graduated plates beside its sight tube,
+ * next to the volumetric valve. There is no separate flowmeter in the model (F18), and this
+ * is the part the QA's "flowmeter view" shows.
+ */
+const FLOWMETER_MESHES = ['Rectangle002', 'Rectangle003'];
+/** The bench's measuring tank: the deep basin in the bench top (`lib/measuringTank.ts`). */
+const MEASURING_TANK_MESH = 'Bing Sink';
+/** The weight pan on top of the rod (`modelAdapter`: `deflector_rod` = rod + pan). */
+const CARRIER_MESH = 'JET Force 2_209';
+/** Hover/outline key for the deflector on the rod — whichever one is fitted. */
+const INSTALLED_KEY = 'part:installed-deflector';
 
 /** Lever valves and the rotary switch travel 90°, not multiple revolutions. */
 const QUARTER_TURN = Math.PI / 2;
@@ -152,6 +223,12 @@ interface Hotspot {
    */
   half?: [number, number, number];
   action: Action;
+  /**
+   * Parts that ride the rod or the spring move with them every frame, and their proxy
+   * with them (F17): `holder` = the rod's lift (cover plus deflection), `cover` = the
+   * cover's lift alone.
+   */
+  follows?: 'holder' | 'cover';
 }
 
 /**
@@ -183,6 +260,78 @@ interface DropRegion {
 const DROP_REGION_PADDING = 0.15;
 
 /**
+ * How a hand moves the parts (F03). Model units are metres.
+ *
+ * A disc is lifted this far out of its tray slot before it is carried, and lowered this far
+ * into it at the end; a deflector likewise off and onto the tray.
+ */
+const TRAY_LIFT = 0.02;
+const DEFLECTOR_TRAY_LIFT = 0.025;
+/**
+ * A deflector is lined up this far **below** the end of the rod and then threaded up onto
+ * it — and unthreaded down the same distance before it is carried away.
+ */
+const DEFLECTOR_ROD_APPROACH = 0.06;
+/**
+ * A disc on the pan comes down the post from at least this far above its seat, even when the
+ * stack is already taller than the post, so the last move is always a visible set-down.
+ */
+const MIN_DISC_APPROACH = 0.012;
+/** A hand-returned part is set back down from this height. */
+const RETURN_APPROACH = 0.015;
+/**
+ * How far above the higher end of its route a disc is carried — the top of the arc QA drew:
+ * straight up out of the tray to above the post, over, and straight down (F03).
+ */
+const DISC_TRAVEL_RISE = 0.05;
+/** Apparatus-local up — the rod and post axis. */
+const UP = new THREE.Vector3(0, 1, 0);
+
+/**
+ * How a deflector's tray copy relates to its fitted copy (F03).
+ *
+ * `fittedPivot` is the fitted deflector's centre at rest, which lies on the rod and nozzle
+ * axis (measured: within 0.1 mm for all seven). `shelfPivot` is the **same material point**
+ * on the tray copy. A flying deflector is hung from that point, so it can be turned into its
+ * fitted orientation, and spun while it threads onto the rod, without ever leaving the axis.
+ */
+interface DeflectorPose {
+  readonly rotation: THREE.Quaternion;
+  readonly shelfPivot: THREE.Vector3;
+  readonly fittedPivot: THREE.Vector3;
+  readonly halfHeight: number;
+  readonly radius: number;
+}
+
+const spinTmp = new THREE.Quaternion();
+
+/**
+ * A deflector's orientation at one moment of its flight.
+ *
+ * It leaves in the pose it rests in and arrives in the pose it is fitted in, turning over
+ * during the carry — the 45° oblique deflector is stored on the tray turned over, and used
+ * to swap orientation in a single frame on arrival. While it threads onto the rod it makes
+ * one turn about the rod axis, ending exactly in the fitted pose; coming off, the reverse.
+ */
+function orientInFlight(
+  target: THREE.Quaternion,
+  turn: NonNullable<Ghost['turn']>,
+  sample: HandlingSample
+): void {
+  if (sample.phase === 'depart') target.copy(turn.from);
+  else if (sample.phase === 'approach') target.copy(turn.to);
+  else target.slerpQuaternions(turn.from, turn.to, sample.phaseProgress);
+
+  let angle = 0;
+  if (turn.spin === 'approach' && sample.phase === 'approach') {
+    angle = (1 - sample.phaseProgress) * Math.PI * 2;
+  } else if (turn.spin === 'depart' && sample.phase === 'depart') {
+    angle = -sample.phaseProgress * Math.PI * 2;
+  }
+  if (angle !== 0) target.premultiply(spinTmp.setFromAxisAngle(UP, angle));
+}
+
+/**
  * An object in the learner's hand or in flight.
  *
  * The **temporary presentation transform** `BEDO-021 §8` asks for. The GLB's own nodes are
@@ -197,9 +346,42 @@ interface Ghost {
   readonly deflectorId?: number;
   /** Disc mass, when this is a weight. Drives which tray mesh stays hidden. */
   readonly grams?: number;
-  /** Apparatus-local offset applied to the clone's baked transform. */
+  /**
+   * Where the flight starts and where it is going, in apparatus-local space — the point the
+   * wrapper's origin is at. For a disc that origin is the disc's centre; for a deflector it
+   * is its point on the rod axis (see `DeflectorPose`). `to` is the destination **at rest**:
+   * the holder's live lift is added while the part rides it.
+   */
   from: THREE.Vector3;
   to: THREE.Vector3;
+  /**
+   * The planned route (F03): lifted clear, carried, and lined up on the destination's axis
+   * before the last move. Absent only while the pointer owns the position.
+   */
+  plan?: HandlingPlan;
+  /** How much of the holder's live lift applies at the start and at the end of `plan`. */
+  liftAt?: readonly [number, number];
+  /** The holder lift already built into `plan`; only a change since then is added per frame. */
+  liftAtPlan?: number;
+  /**
+   * Orientation over the flight: the pose it leaves in, the pose it arrives in, and whether
+   * it turns one full revolution about the rod axis while threading on (`approach`) or off
+   * (`depart`). Deflectors only; a disc never turns.
+   */
+  turn?: {
+    readonly from: THREE.Quaternion;
+    readonly to: THREE.Quaternion;
+    readonly spin: 'approach' | 'depart' | null;
+  };
+  /**
+   * For a disc lifted off the pan by hand: the stack position it came from. That seat is
+   * drawn empty while the disc is in the learner's hand, so it is never in two places.
+   */
+  sourceIndex?: number;
+  /** A hand-held pan disc may only move sideways once it has been drawn up clear of the post. */
+  clearedPost?: boolean;
+  /** Where the pointer is asking a hand-held disc to be; the frame loop eases it there. */
+  carryTarget?: THREE.Vector3;
   /** True while the pointer owns the position; false once a transfer does. */
   followsPointer: boolean;
   /** The destination rides up with the tank cover — only the rod does. */
@@ -325,6 +507,18 @@ interface DeviceModelProps {
   glassSpecular: number;
   glassRoughness: number;
   glassIor: number;
+  /**
+   * The mass the custom-weight control is set to: what the custom weight — the model's own
+   * plain disc by the tank — adds when it is picked up (F04, `lib/weightFamily.ts`).
+   */
+  customWeightG: number;
+  /**
+   * The part whose component card (or focus tooltip) is open, if any. The scene projects
+   * its anchor each frame so the card can sit beside it (F17, `lib/componentAnchor.ts`).
+   */
+  inspection?: Inspection | null;
+  /** A deliberate click asked for a part's card. Hover never calls this. */
+  onInspectComponent?: (inspection: Inspection) => void;
 }
 
 /**
@@ -366,7 +560,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   glassSpecular,
   glassRoughness,
   glassIor,
+  customWeightG,
+  inspection: inspectionProp,
+  onInspectComponent,
 }) => {
+  const inspection: Inspection | null = inspectionProp ?? null;
   // PERF-04 candidate: `?glb=v3` selects the KHR_texture_basisu build. The KTX2 loader is
   // attached only here — the eight WaterShapes GLBs carry no textures.
   const { scene } = useGLTF(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2) as any;
@@ -382,18 +580,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const gl = useThree((three) => three.gl);
   setKTX2Renderer(gl);
 
-  // One simulated plume per deflector, plus the startup trickle.
-  const water = {
-    low: useGLTF(assetUrl(WATER_SHAPES.low.url)) as any,
-    d30: useGLTF(assetUrl(WATER_SHAPES.d30.url)) as any,
-    d45: useGLTF(assetUrl(WATER_SHAPES.d45.url)) as any,
-    d60: useGLTF(assetUrl(WATER_SHAPES.d60.url)) as any,
-    d90: useGLTF(assetUrl(WATER_SHAPES.d90.url)) as any,
-    d120: useGLTF(assetUrl(WATER_SHAPES.d120.url)) as any,
-    d135: useGLTF(assetUrl(WATER_SHAPES.d135.url)) as any,
-    d180: useGLTF(assetUrl(WATER_SHAPES.d180.url)) as any,
-  };
-  const waterGltfs = Object.values(water);
+  // Every disc on the tray, on the pan and in the air is one physical family: one steel,
+  // one bore, sized from its mass (F04, `src/lib/weightFamily.ts`). Put on the model here,
+  // before anything measures a disc — the anchors, the click targets, the stack and the
+  // flights all read the tray nodes, so they follow without knowing the family exists.
+  const weightFamily = useMemo<WeightFamily | null>(() => {
+    if (!scene) return null;
+    const anisotropy = Math.min(8, gl?.capabilities?.getMaxAnisotropy?.() ?? 1);
+    return applyWeightFamily(scene, {
+      customGrams: customWeightG,
+      faceTexture: (grams) => createWeightFaceTexture(grams, anisotropy),
+    });
+    // The custom mass is followed by the effect below, not by re-applying the family.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scene, gl]);
+  /** Read by the frame loop, which must not close over a stale mass. */
+  const customWeightRef = useRef(customWeightG);
+  customWeightRef.current = customWeightG;
+  /** Whether the custom control is on a mass the row already has a disc for. */
+  const customIsFixed = WEIGHTS.some((w) => w.grams === customWeightG);
+  // A layout effect, so the family hears of a new custom mass before the click targets are
+  // measured. (The custom weight itself keeps its shape; see `weightFamily.ts`.)
+  useLayoutEffect(() => {
+    weightFamily?.setCustomGrams(customWeightG);
+  }, [weightFamily, customWeightG]);
+
 
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
   /**
@@ -405,6 +616,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * still has to be able to say what it is.
    */
   const [labelledKey, setLabelledKey] = useState<string | null>(null);
+  /** Whether a plain click on the labelled part would open its card (F17). */
+  const [labelClickOpens, setLabelClickOpens] = useState(false);
   /** Where the pointer entered the current part, so the label appears there at once. */
   const pointerAt = useRef<{ x: number; y: number } | null>(null);
 
@@ -454,20 +667,23 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   } | null>(null);
 
   /**
-   * The water leaving the nozzle — BEDO's "water shape before impact" (sl. 18).
-   *
-   * Sized from `NOZZLE_AREA_M2`, never from the scene. See `src/lib/waterJet.ts`.
+   * The water, computed from state every frame (F08, `src/lib/jetFlow.ts`): the nozzle and
+   * tank it runs through, and each deflector's wetted underside, all measured at load.
    */
-  const jetGroupRef = useRef<THREE.Group>(null);
-  /** The water leaving the deflector — BEDO's "water shape after impact". */
-  const plumeGroupRef = useRef<THREE.Group>(null);
-  /**
-   * One clock per water object, because BEDO specifies the two shapes separately and they
-   * start at different moments: the column forms when the water starts flowing, the spray
-   * forms when that column reaches the deflector. See `src/lib/waterCache.ts`.
-   */
-  const jetClock = useRef(createCacheClock());
-  const plumeClock = useRef(createCacheClock());
+  const jetGeometryRef = useRef<JetGeometry | null>(null);
+  const jetAxisRef = useRef<{ x: number; z: number } | null>(null);
+  const wettedRef = useRef<Map<number, WettedSurface>>(new Map());
+  /** When the flow last started and stopped, in scene seconds, for the water front and tail. */
+  const flowEdgesRef = useRef<{ running: boolean; startedAt: number; stoppedAt: number }>({
+    running: false,
+    startedAt: -1e6,
+    stoppedAt: -1e6,
+  });
+  const jetFlowUniforms = useMemo(() => createJetFlowUniforms(), []);
+  /** The path the water was last on, so water in the air can finish its fall. */
+  const lastPathRef = useRef<JetPath[] | null>(null);
+  const poolUniforms = useMemo(() => createPoolUniforms(), []);
+  const [poolMesh, setPoolMesh] = useState<THREE.Mesh | null>(null);
   /**
    * The tank's measured interior.
    *
@@ -479,6 +695,16 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
   /** How full the tank is, 0..1 of its interior height. Presentation only. */
   const tankLevel = useRef(0);
+  /**
+   * The flowmeter column and the measuring tank's water — visual only (`lib/measuringTank`).
+   * The volume is presentation state: it follows the volumetric valve and the flow, and
+   * nothing reads it back.
+   */
+  const columnRef = useRef<{ setLevel: (y: number) => void; dispose: () => void } | null>(null);
+  const litreHeightRef = useRef<((litres: number) => number) | null>(null);
+  const basinRef = useRef<{ interior: BasinInterior; water: THREE.Mesh } | null>(null);
+  const measuringTankL = useRef(0);
+  const measuringTankRun = useRef(lesson.runId);
   /**
    * The power switch's spindle, in the space its pivot lives in, derived from the asset
    * once at install. Null until then. See `src/lib/powerSwitch.ts`.
@@ -493,7 +719,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const arrowGroupRef = useRef<THREE.Group>(null);
   const weightStackRef = useRef<THREE.Group>(null);
   /** The cover's click target has to ride up with the plate — see below. */
-  const coverHotspotRef = useRef<THREE.Mesh>(null);
+  const coverHotspotRef = useRef<THREE.Mesh | null>(null);
+  /** Every mounted hit proxy by key, so the moving ones can follow their part (F17). */
+  const proxyRefs = useRef(new Map<string, THREE.Mesh>());
+  /** The inspected part, read by the frame loop without re-subscribing it (F17). */
+  const inspectionRef = useRef<Inspection | null>(inspection);
+  inspectionRef.current = inspection;
+  const projectTmp = useRef(new THREE.Vector3());
+  /** The renderer state of the last frame — for the dev-only `parts()` check below. */
+  const lastThree = useRef<{ camera: THREE.Camera; gl: THREE.WebGLRenderer } | null>(null);
 
   // Unscrew sequence
   const animActiveRef = useRef(false);
@@ -524,6 +758,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
   /** Spring deflection as of the last frame — the rod, and so the target, ride it. */
   const deflectionRef = useRef(0);
+  /**
+   * The carrier's downward stop for each fitted deflector, and for the bare rod, measured
+   * at rest off the model (F05, `lib/carrierTravel.ts`). Keyed by deflector id; the bare
+   * rod is key 0.
+   */
+  const carrierStopsRef = useRef<Map<number, CarrierStop>>(new Map());
   /** The part to light up while the pointer is over a drop region, or null. */
   const dropHighlightRef = useRef<string | null>(null);
 
@@ -632,6 +872,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ...DEFLECTORS.map((d) => gltfName(d.installed)),
       ...DEFLECTORS.map((d) => gltfName(d.shelf)),
       ...WEIGHTS.filter((w) => w.mesh).map((w) => gltfName(w.mesh!)),
+      gltfName(CUSTOM_WEIGHT_MESH),
     ]);
 
     // The room casts too, and that is the whole mechanism behind the window light.
@@ -707,7 +948,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // The walls' orange stripe: its edges are evaluated from height rather than from
         // the atlas texel, because the atlas rasterised them as a staircase.
         if (isWallPaint(material)) applyWallStripe(material, rigInverse);
-        // The pilot lamp: a red lens that lights red. See `pilotLamp.ts`.
+        // The pilot lamp: a red lens that lights green when on. See `pilotLamp.ts`.
         if (child.name === gltfName(MESH.powerLight)) preparePilotLamp(material);
         if (child.name === gltfName(MESH.tank)) {
           applyGlass(material, {
@@ -724,48 +965,32 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [scene, gl, groupRef, reflection, glassSpecular, glassRoughness, glassIor]);
 
   /**
-   * Water, rather than blue plastic.
-   *
-   * Physically-based glass with water's index of refraction, so the jet actually refracts
-   * the tank and deflector behind it and picks up the environment along its edges. The
-   * vertex ripple keeps the stream alive — the plumes are static baked meshes, and without
-   * it a jet at full flow reads as a solid frozen sculpture. The ripple fades out at the
-   * nozzle so the column stays welded to it, and grows toward the impact where the water
-   * actually breaks up.
+   * The water in the supply hose: the shared water material's uniforms, and where the water
+   * is in the hose (`src/lib/waterMaterial.ts`). The clock runs at the water's speed through
+   * the bore, so the hose fills from the pump end, carries its ripples and bubbles at that
+   * speed, and empties from the pump end when the flow stops.
    */
-  const waterTime = useRef({ value: 0 });
+  const hoseUniforms = useMemo(() => createWaterUniforms(), []);
+  const hoseRef = useRef<{
+    length: number;
+    radius: number;
+    speed: number;
+    head: number;
+    tail: number;
+    running: boolean;
+  } | null>(null);
 
   /**
-   * How hard the water is being driven, 0..1, for the material to read.
-   *
-   * Presentation only, and read-only with respect to the simulation: it is the valve
-   * opening the learner has already set, zeroed when nothing is flowing. Aeration, ripple
-   * strength and impact roughness are all state-dependent per the brief, and a uniform is
-   * how a shared material learns that without any per-frame React state.
+   * The supply hose from the wall tap: a line under mains pressure, so it stands full of
+   * still water, and the water in it runs whenever the pump draws — at Q / A through its
+   * own bore, from the tap towards the bench.
    */
-  const waterFlow = useRef({ value: 0 });
-
-  /**
-   * How hard water is being pushed through the supply hose, 0..1.
-   *
-   * The authoritative flow, not a decoration: it is the same valve opening the jet reads,
-   * and it is zero whenever the pump is off or the valve is shut, so a dry rig shows a dry
-   * hose. Presentation only — nothing downstream of it feeds any equation.
-   */
-  const hoseFlow = useRef({ value: 0 });
-
-  /**
-   * Where the after-impact plume stops being drawn, in world Y (BEDO-WATER-15).
-   *
-   * `x` is the height at which it has faded out completely, `y` the height above which it is
-   * fully drawn. Parked far below the rig for `Water_low`, which is the pre-impact column and
-   * must not be cut at all — the two share one material, so the band travels as a uniform
-   * rather than as a second material.
-   */
-  const plumeCutUniform = useRef({ value: new THREE.Vector2(-1e9, -1e9 + 1) });
-
-  /** The hose's own world y range, so the flow coordinate is measured and not assumed. */
-  const hoseSpanUniform = useRef({ value: new THREE.Vector2(0, 1) });
+  const supplyUniforms = useMemo(() => {
+    const u = createWaterUniforms();
+    u.uFill.value = 1;
+    return u;
+  }, []);
+  const supplyRef = useRef<{ length: number; radius: number } | null>(null);
 
   /**
    * Tileable animated-water texture, generated at runtime — the project ships none.
@@ -849,519 +1074,74 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     return tex;
   }, []);
 
-  const waterMaterial = useMemo(() => {
-    // Water, and not a coloured mesh (BEDO-WATER-03).
-    //
-    // ## What the previous settings actually rendered
-    //
-    // Measured, not recalled: `scripts/render/water-review.mjs` photographs each state from
-    // three azimuths. Every plume came back as a near-white milky solid filling the glass —
-    // no visible surface motion, no highlight travel, no aeration, and no gradient across the
-    // body. The two complaints in the brief are one defect seen twice.
-    //
-    // Three things produced it, and all three are fixed here.
-    //
-    //  1. **The body colour was a paint pass, not an optical one.** The fragment stage ended
-    //     with `mix(lit, deep, 0.60 + depth * 0.34)`, so between 60 % and 83 % of the lit
-    //     colour was replaced by one constant. Whatever the lighting did, the result was
-    //     that constant plus a fifth of a highlight. That is the definition of a flat mesh.
-    //
-    //  2. **Its one gradient ran the wrong way.** `depth` came from `vRise`, which is
-    //     distance *along* the flow axis. Every horizontal slice of the column therefore had
-    //     one single value across its whole width: from the nozzle to the deflector the body
-    //     shaded, and across its 170 mm diameter it did not shade at all. A round column with
-    //     no cross-sectional gradient photographs exactly like a flat ribbon, which is why
-    //     the shape reads as squashed in depth even though it is measurably round (see
-    //     `tests/unit/water-shape.spec.ts`: X and Z agree to 0.08 % on all seven
-    //     axisymmetric shapes, and every node in the transform chain is uniformly scaled).
-    //
-    //  3. **The ripple could not be seen.** The vertex displacement was 0.022 *object* units
-    //     on bodies 17 to 28 units long — one tenth of one per cent — and it displaced along
-    //     fixed x and z, which for five of the eight shapes is partly along the flow rather
-    //     than across it.
-    //
-    // ## What replaces it
-    //
-    // Absorption instead of tinting. The lit colour is carried through Beer-Lambert
-    // extinction over a path length taken from `abs(dot(N, V))` — the eye looks through the
-    // most water where it faces the surface square on and through almost none at the
-    // silhouette. That gives the body a gradient *across* itself, makes the rim thin and
-    // bright and the core deep, and pins the colour to water's own absorption ratio however
-    // bright the room gets: no amount of environment can turn it white, because white light
-    // through 1.35 units of water is blue-grey by construction.
-    //
-    // #48628c stays, as §8 asks — it is the albedo the absorption acts on, and the settled
-    // core still lands on the recording's rgb(83, 90, 111). What changes is that it is no
-    // longer the answer on its own.
-    const mat = new THREE.MeshPhysicalMaterial({
-      // The approved base presentation, kept: rgb(72, 98, 140).
-      color: new THREE.Color('#48628c'),
-      transparent: true,
-      // Lower than the 0.86 this held, because alpha is no longer one number for the whole
-      // body: the shader drives it from the same path length the colour uses, so the core
-      // ends up *more* opaque than 0.86 and the silhouette considerably less. A single high
-      // value is what made the previous body read as a solid.
-      opacity: 0.56,
-      // Clean water is smooth, but not mirror-smooth here. These are splash meshes of 663
-      // to 1,922 vertices with long thin triangles, and at 0.13 the interpolated normals
-      // drew hard white striations along every one of them. 0.20 keeps the sheen and lets
-      // the striations read as flow rather than as scratches; the impact region is
-      // roughened further in the shader, which is where the aeration actually is.
-      roughness: 0.20,
-      metalness: 0.0,
-      // No transmission, deliberately — unchanged, and for the reason recorded at BEDO-UX:
-      // three's transmission resolve rendered the geometry behind the water as hard-edged
-      // axis-aligned blocks inside the approved glass, and cost 79 draw calls and 31,428
-      // triangles re-rendering every opaque object. The translucency is carried by the
-      // absorption below, where it can be controlled. `ior` still sets the dielectric F0.
-      ior: 1.33,
-      // Raised, but no longer able to whiten the body: every specular term now lands
-      // *before* absorption is applied to the diffuse path and is itself Fresnel-weighted,
-      // so it brightens the rim and the crests and leaves the core alone. The earlier cuts
-      // to 0.08 / 0.18 / 0.45 were the right answer to a stage that mixed toward white with
-      // no absorption to hold the colour; that stage is gone.
-      clearcoat: 0.26,
-      clearcoatRoughness: 0.24,
-      specularIntensity: 0.60,
-      envMapIntensity: 0.70,
-      // Nearly off. An emissive floor is unlit by definition, so it is a constant added to
-      // every fragment — the one thing a body that already reads flat does not need.
-      emissive: new THREE.Color('#0d2136'),
-      emissiveIntensity: 0.05,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-
-    // Two copies of one tileable ripple map drift across the surface at different scales and
-    // speeds. Their gradients bend the shading normal, so highlights and the environment
-    // reflection travel; their heights drive the glint and the aeration mask.
-    //
-    // Sampled on the water's own cylindrical coordinate (`src/lib/waterUv.ts`), not in world
-    // space, so the pattern is welded to the water and wraps around the column.
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = waterTime.current;
-      shader.uniforms.uFlow = waterFlow.current;
-      shader.uniforms.uPlumeCut = plumeCutUniform.current;
-      shader.uniforms.uWaterTex = { value: waterTex };
-
-      const tiles = {
-        a: `vec2(${RIPPLE_TILES.normal.around.toFixed(1)}, ${RIPPLE_TILES.normal.along.toFixed(1)})`,
-        b: `vec2(${RIPPLE_TILES.highlight.around.toFixed(1)}, ${RIPPLE_TILES.highlight.along.toFixed(1)})`,
-        c: `vec2(${RIPPLE_TILES.detail.around.toFixed(1)}, ${RIPPLE_TILES.detail.along.toFixed(1)})`,
-      };
-
-      shader.vertexShader =
-        'uniform float uTime;\nuniform float uFlow;\n' +
-        'attribute vec2 aWaterUv;\nattribute float aWaterAmp;\n' +
-        'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
-        'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
-        shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           // Along the surface normal, and scaled by this shape's own cross-section, so one
-           // amplitude reads the same on a 51 mm column and a 170 mm plume. objectNormal
-           // is available here: beginnormal_vertex and morphnormal_vertex both run before
-           // begin_vertex, so it is already the morph-adjusted normal.
-           //
-           // Two waves at coprime rates, so nothing repeats visibly. The angular term is
-           // multiplied by whole turns of 2*PI, which is what keeps the wave continuous
-           // across the seam where aWaterUv.x wraps from 1 back to 0.
-           //
-           // Both rates are kept low on purpose. These meshes carry 663 to 1,922 vertices;
-           // a wave the ring of vertices around the rim cannot sample turns into a sawtooth
-           // of facets rather than a ripple, which is exactly what one and two turns per
-           // revolution avoid and what four did not.
-           // Magnitude and direction ride in one attribute — see WATER_AMPLITUDE_ATTRIBUTE.
-           float sense = sign(aWaterAmp);
-           float rise = aWaterUv.y;
-           float amp = abs(aWaterAmp) * ${RIPPLE_AMPLITUDE.toFixed(3)}
-                     * (0.30 + 0.70 * rise) * (0.45 + 0.55 * uFlow);
-           // A crest of sin(N*rise + phi) sits where N*rise + phi is constant, so it travels
-           // toward increasing rise only while phi decreases: the phase has to carry -sense,
-           // or the vertex wave runs against the scroll below rather than with it. It did.
-           float wave = sin(rise * 6.0 + aWaterUv.x * 6.283 - sense * uTime * 2.1)
-                      + 0.55 * sin(rise * 11.0 - aWaterUv.x * 12.566 - sense * uTime * 3.3);
-           transformed += objectNormal * (wave * amp);
-           vRise = rise;
-           vFlow = sense;
-           vWaterUv = aWaterUv;`
-        )
-        // The world position the optics need has to be read *after* the morph cache has
-        // moved the vertex, or the view vector would describe the settled pose throughout
-        // the 1.15 s the water is still growing. `<begin_vertex>` runs before
-        // `<morphtarget_vertex>`, so it cannot be computed alongside the ripple above.
-        .replace(
-          '#include <morphtarget_vertex>',
-          `#include <morphtarget_vertex>
-           vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vWNorm = normalize(mat3(modelMatrix) * objectNormal);`
-        );
-
-      shader.fragmentShader =
-        'uniform float uTime;\nuniform float uFlow;\nuniform vec2 uPlumeCut;\n' +
-        'uniform sampler2D uWaterTex;\n' +
-        'varying float vRise;\nvarying float vFlow;\nvarying vec2 vWaterUv;\n' +
-        'varying vec3 vWPos;\nvarying vec3 vWNorm;\n' +
-        shader.fragmentShader
-          // Clean water is smooth; aerated water is not. Roughening the last fifth of the
-          // flow axis is what makes the impact region scatter rather than mirror, and it is
-          // the same region the foam mask below whitens — one physical story, told twice.
-          .replace(
-            '#include <roughnessmap_fragment>',
-            `#include <roughnessmap_fragment>
-             roughnessFactor = mix(roughnessFactor, 0.55,
-               smoothstep(0.74, 1.0, vRise) * clamp(uFlow * 1.6, 0.0, 1.0));`
-          )
-          .replace(
-            '#include <normal_fragment_maps>',
-            `#include <normal_fragment_maps>
-             {
-               // Two ripple layers on the water's own surface. x wraps around the body, y
-               // runs along the flow, and both vary — which is the correction the world-space
-               // projection this replaces could not make: across a narrow cross-section xz
-               // barely changes, so its lookup collapsed to a function of height and drew
-               // stripes (docs/43).
-               // The v offset carries the shape's own flow sense: a sample coordinate of
-               // v*N - r*t puts a fixed feature at v = (c + r*t)/N, so it climbs toward the
-               // deflector — right for the column, backwards for every plume running off one.
-               vec2 uvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.10, -vFlow * uTime * 0.55);
-               vec2 uvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.07, -vFlow * uTime * 0.85);
-               vec2 uvC = vWaterUv * ${tiles.c} + vec2(uTime * 0.16, -vFlow * uTime * 1.25);
-               vec2 grad = (texture2D(uWaterTex, uvA).rg - 0.5) * 0.55
-                         + (texture2D(uWaterTex, uvB).rg - 0.5) * 0.65
-                         + (texture2D(uWaterTex, uvC).rg - 0.5) * 0.45;
-               // A tangent frame built from the surface itself, so the perturbation is
-               // across the surface whichever way the shape is oriented. The world-space
-               // (x, ., z) vector this replaces assumed a roughly horizontal surface and
-               // therefore did almost nothing on a vertical column.
-               vec3 nW = normalize(vWNorm);
-               vec3 tW = normalize(cross(nW, abs(nW.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
-               vec3 bW = cross(nW, tW);
-               vec3 bump = (viewMatrix * vec4(tW * grad.x + bW * grad.y, 0.0)).xyz;
-               // Stronger where the flow is stronger, so a barely-open valve gives a calm
-               // surface and a full one gives a broken one.
-               //
-               // Kept modest for a measured reason. A shading normal scattered far off the
-               // surface's own catches the room environment from every direction at once,
-               // and on a body this smooth that averages to a milky white haze rather than
-               // to ripple: at 0.40 with three full-strength gradient layers the plume came
-               // back as cloud. The three layers give the *pattern*; this decides how much
-               // of it the lighting is allowed to believe.
-               normal = normalize(normal + bump * (0.26 + 0.34 * clamp(uFlow * 1.6, 0.0, 1.0)));
-             }`
-          )
-          .replace(
-            '#include <opaque_fragment>',
-            `#include <opaque_fragment>
-             {
-               vec3 V = normalize(cameraPosition - vWPos);
-               vec3 N = normalize(vWNorm);
-               float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
-               float flow = clamp(uFlow * 1.6, 0.0, 1.0);
-
-               vec2 hUvA = vWaterUv * ${tiles.a} + vec2(uTime * 0.13, -vFlow * uTime * 0.70);
-               vec2 hUvB = vWaterUv * ${tiles.b} + vec2(-uTime * 0.09, -vFlow * uTime * 0.95);
-               vec2 hUvC = vWaterUv * ${tiles.c} + vec2(uTime * 0.18, -vFlow * uTime * 1.30);
-               float hTop = texture2D(uWaterTex, hUvA).b;
-               float hSide = texture2D(uWaterTex, hUvB).b;
-               float hFine = texture2D(uWaterTex, hUvC).b;
-               float crest = hTop * 0.38 + hSide * 0.32 + hFine * 0.30;
-
-               // 1. How much water the eye is looking through.
-               //
-               // For a closed body the path is longest where the surface faces the camera
-               // and vanishes at the silhouette, so this varies **across** the shape — the
-               // axis the term it replaces had nothing on. A little more of it further from
-               // the nozzle, where the flow has thickened.
-               float thick = pow(cosView, 0.75);
-               float along = 1.0 - exp(-vRise * 0.9);
-               // The 0.16 floor is not a fudge: a fragment at the silhouette is still
-               // looking through *some* water, and without it the thin upper surfaces
-               // absorbed nothing at all and composited as a colourless film over whatever
-               // was behind them. Measured across the six states, the top band came back at
-               // luminance 137 and saturation 0.11 — milk — while the body it belonged to
-               // sat at 93 and 0.27.
-               // Surface relief changes how much water the eye looks through, so the crest
-               // field belongs in the path length and not only in the highlight. This is the
-               // one motion term that acts on a surface facing the camera square on, where
-               // Fresnel is 0.02 and every specular cue is nearly switched off.
-               float relief = (crest - 0.5) * 2.0;
-               float path = clamp((0.16 + 0.84 * thick) * (0.60 + 0.40 * along), 0.0, 1.0)
-                          * 1.55 * (1.0 + 0.20 * relief * flow);
-
-               // 2. Beer-Lambert, at water's own ratio: red is absorbed roughly four times
-               // faster than blue, which is the whole reason deep water is blue and a
-               // glassful is not. This is what holds the colour: white light through this
-               // much water arrives blue-grey whatever the room does, so the body can carry
-               // a real specular response without going white the way it did before.
-               vec3 absorb = exp(-vec3(2.95, 1.50, 0.74) * path);
-               vec3 scattered = vec3(0.016, 0.042, 0.070);
-               gl_FragColor.rgb = gl_FragColor.rgb * absorb + scattered * (1.0 - absorb);
-
-               // 3. Fresnel. Water reflects 2 % face-on and everything at grazing — the
-               // reason a glass of water is transparent looking down and a mirror looking
-               // along. Schlick, honest at F0 and scaled back at the top end, because a
-               // full-strength edge on a 170 mm plume reads as a chrome shell.
-               float fres = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
-               float edge = fres * 0.42;
-
-               // 4. Contact darkening. Where the water meets glass or steel the light that
-               // would have bounced back out is trapped between the two surfaces, and the
-               // reference shows a distinctly darker seam at the nozzle collar and again
-               // where the flow spreads across the deflector face. Both ends, none of the
-               // middle.
-               float contact = smoothstep(0.12, 0.0, vRise) + smoothstep(0.88, 1.0, vRise);
-               gl_FragColor.rgb *= 1.0 - clamp(contact, 0.0, 1.0) * 0.20;
-
-               // 5. Specular, added rather than mixed.
-               //
-               // A mix pulls the body *toward* the highlight colour and therefore washes it
-               // out; adding leaves the absorbed body underneath intact and puts light on
-               // top of it, which is what a wet surface actually does. Weighted by Fresnel
-               // so crests light up at grazing angles and stay quiet face-on — the cue that
-               // reads as "wet" rather than "pale".
-               // The Fresnel weight is what makes a highlight read as wet, but at a floor of
-               // 0.20 it also switched the crests off wherever the surface faced the camera —
-               // which is most of a cone. Measured with the geometry frozen, the conical plume
-               // changed by 0.67 levels per 0.2 s against the flat plate's 2.65, and the low-
-               // poly mesh's own static striations dominated what was left. The floor is
-               // raised and the grazing end left exactly where it was.
-               float glint = smoothstep(0.66, 0.97, crest) * (0.45 + 0.55 * fres);
-               gl_FragColor.rgb += vec3(0.62, 0.74, 0.92) * (glint * 0.22 + edge * 0.18);
-
-               // 6. Aeration.
-               //
-               // Air entrained by the flow, so it belongs only where the flow does work:
-               // the impact face at the top, the spreading foot at the bottom, and the
-               // thin torn edges of the sheet in between. Gated on the crest field so it
-               // moves with the surface rather than sitting on the geometry, and on the
-               // valve so a trickle does not foam.
-               float impact = smoothstep(0.86, 1.00, vRise);
-               float foot = smoothstep(0.14, 0.01, vRise);
-               float torn = smoothstep(0.55, 1.0, 1.0 - cosView);
-               float churn = smoothstep(0.42, 0.92, crest);
-               // Almost entirely gated on the crest field, so the aeration is a moving
-               // texture on those regions rather than a band of paint across them. An
-               // earlier, flatter version (0.30 + 0.85 * churn over the top 30 %) whitened
-               // the upper fifth of every plume wholesale.
-               float foam = clamp((impact * 0.95 + foot * 0.55) * (0.08 + 1.05 * churn)
-                                  + torn * churn * 0.16, 0.0, 1.0) * flow;
-               gl_FragColor.rgb = mix(gl_FragColor.rgb, vec3(0.78, 0.85, 0.93), foam * 0.45);
-
-               // 7. Opacity, from the same path length as the colour.
-               //
-               // Thin at the silhouette so the glass and the rod behind read through it,
-               // thick through the core so the body has substance, and firmer again where
-               // it is aerated — foam is the one part of water you cannot see through.
-               gl_FragColor.a = clamp(
-                 gl_FragColor.a * (0.40 + 0.85 * thick) + edge * 0.22 + foam * 0.30,
-                 0.06,
-                 0.97
-               );
-
-               // Keep the entry, drop the curtain (BEDO-WATER-15).
-               //
-               // The authored after-impact cache does not stop at the splash: it carries a
-               // long descending sheet all the way down to the tank floor, and inside a
-               // glass vessel that sheet reads as a blue cylinder filling the tank. Measured
-               // live at Q = 43.5 L/min, the plume spans world y 0.1117 to 0.5076 while the
-               // nozzle mouth is at 0.4712 — so roughly nine tenths of its height is below
-               // the impact, hanging in the vessel.
-               //
-               // Only that lower part goes. The fade is a smooth band rather than a plane so
-               // the sheet thins out into the tank instead of ending on a cut line, and the
-               // impact, the spread and the immediate turbulent entry are all above it and
-               // untouched. Parked out of range for the pre-impact column, which is short and
-               // must keep its full length.
-               gl_FragColor.a *= smoothstep(uPlumeCut.x, uPlumeCut.y, vWPos.y);
-             }`
-          );
-    };
-    return mat;
-  }, [waterTex]);
+  /** The jet, the films and the sheets: one swept surface, rewritten each frame (F08). */
+  const jetFlowMesh = useMemo(() => {
+    const mesh = new THREE.Mesh(
+      createJetFlowGeometry(),
+      createJetFlowMaterial(waterTex, jetFlowUniforms)
+    );
+    mesh.name = 'bedoWaterPath';
+    mesh.visible = false;
+    mesh.renderOrder = 3;
+    // The same path again for the thin sheets and run-off, which are blended rather than
+    // refracted (`waterMaterial.ts`). A child with the parent's geometry: it moves, fills
+    // and hides with it.
+    const sheets = new THREE.Mesh(mesh.geometry, createJetSheetMaterial(waterTex, jetFlowUniforms));
+    sheets.name = 'bedoWaterSheets';
+    sheets.renderOrder = 4;
+    mesh.add(sheets);
+    return mesh;
+  }, [waterTex, jetFlowUniforms]);
 
   /**
-   * Water travelling through the supply hose.
-   *
-   * One material on the hose's own geometry, so the curvature, bore and transform are the
-   * authored ones. It is deliberately not the jet material: a 30 mm tube wants a tint, a
-   * rim and a travelling shimmer, not foam, crests or a free surface (BEDO-WATER-12).
+   * Water travelling through the supply hose: the same water material as the jet, as a
+   * conduit — a clear tube, always drawn, with water inside it where the water has got to
+   * (BEDO-WATER-12, and the product-owner request of 2026-09-28).
    */
-  const hoseMaterial = useMemo(() => {
-    const mat = new THREE.MeshPhysicalMaterial({
-      // The reference hose is water-blue through the wall rather than clear, so the tint is
-      // the water family's, a little lighter than the jet because the path through a bore
-      // this narrow is short.
-      color: new THREE.Color('#5b7ba4'),
-      transparent: true,
-      // High enough that the interior carries colour and the tube has a body. The authored
-      // 0.10 is what made it a smear; the shader below still opens the walls up where the
-      // eye looks straight through them, so this is a starting point rather than a film.
-      opacity: 0.62,
-      roughness: 0.12,
-      metalness: 0.0,
-      ior: 1.33,
-      // The wall highlight the reference shows along both edges of the tube.
-      clearcoat: 0.45,
-      clearcoatRoughness: 0.18,
-      specularIntensity: 0.7,
-      envMapIntensity: 0.9,
-      // Both walls, so the far side of the bore is there to look through — a tube drawn on
-      // one side reads as a ribbon.
-      side: THREE.DoubleSide,
-      // Same reasoning as the rest of the water: writing depth from a translucent body
-      // clips whatever is behind it out of the frame.
-      depthWrite: false,
-    });
-
-    mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = waterTime.current;
-      shader.uniforms.uHoseFlow = hoseFlow.current;
-      shader.uniforms.uWaterTex = { value: waterTex };
-      shader.uniforms.uHoseSpan = hoseSpanUniform.current;
-
-      shader.vertexShader =
-        'varying vec3 vHoseW;\nvarying vec3 vHoseN;\n' +
-        shader.vertexShader.replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           vHoseW = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vHoseN = normalize(mat3(modelMatrix) * objectNormal);`
-        );
-
-      shader.fragmentShader =
-        'uniform float uTime;\nuniform float uHoseFlow;\nuniform vec2 uHoseSpan;\n' +
-        'uniform sampler2D uWaterTex;\n' +
-        'varying vec3 vHoseW;\nvarying vec3 vHoseN;\n' +
-        shader.fragmentShader.replace(
-          '#include <opaque_fragment>',
-          `#include <opaque_fragment>
-           {
-             vec3 V = normalize(cameraPosition - vHoseW);
-             vec3 N = normalize(vHoseN);
-             float cosView = clamp(abs(dot(N, V)), 0.0, 1.0);
-
-             // Where along the hose this fragment sits, 0 at the low end and 1 at the tank.
-             // A height parameter rather than a true arc length: the hose has no UVs to
-             // carry one and its ends differ by 620 mm of rise, so this tracks the run
-             // toward the tank closely enough for a shimmer at this scale. It is a
-             // presentation coordinate, not a measurement.
-             float along = clamp((vHoseW.y - uHoseSpan.x) / max(uHoseSpan.y - uHoseSpan.x, 1e-5), 0.0, 1.0);
-
-             // Water climbing the hose. Two scrolls at different rates off the jet's own
-             // ripple map, so hose, jet and tank water are made of the same texture and the
-             // speed already follows the valve through the shared clock.
-             float a = texture2D(uWaterTex, vec2(along * 6.0 - uTime * 0.55, 0.35)).g;
-             float b = texture2D(uWaterTex, vec2(along * 11.0 - uTime * 0.85, 0.71)).b;
-             float travel = (a * 0.6 + b * 0.4 - 0.5) * 2.0;
-
-             // Nothing moves and nothing fills when nothing flows.
-             float flow = clamp(uHoseFlow * 1.5, 0.0, 1.0);
-
-             // Beer-Lambert across the bore, so the middle of the tube is deeper water than
-             // its edges — the cue that says "full" rather than "tinted".
-             float path = (0.25 + 0.75 * cosView) * (0.55 + 0.45 * flow);
-             vec3 absorb = exp(-vec3(2.4, 1.25, 0.62) * path * 1.15);
-             vec3 filled = gl_FragColor.rgb * absorb + vec3(0.020, 0.048, 0.075) * (1.0 - absorb);
-             // Empty hose: almost colourless, just the wall. Full hose: water in glass.
-             gl_FragColor.rgb = mix(gl_FragColor.rgb * 0.85 + vec3(0.06), filled, flow);
-
-             // The moving part, kept small — this is a bore a few tens of millimetres
-             // across, so it should shimmer rather than churn.
-             gl_FragColor.rgb += vec3(0.30, 0.40, 0.52) * (travel * 0.10 * flow);
-
-             // The wall. Fresnel lights the tube where it turns away from the eye, which is
-             // where the reference's highlights sit, and it is what makes the silhouette
-             // read as a tube instead of a smear. This is the term the authored flat 0.10
-             // blend never had.
-             float rim = pow(1.0 - cosView, 3.0);
-             gl_FragColor.rgb += vec3(0.68, 0.76, 0.88) * rim * 0.55;
-
-             // Opacity follows the same shape: thin where the eye looks straight through
-             // the bore, firm at the walls, and a little firmer when it is carrying water.
-             gl_FragColor.a = clamp(
-               gl_FragColor.a * (0.30 + 0.55 * (1.0 - cosView)) + rim * 0.42 + flow * 0.10,
-               0.05,
-               0.94
-             );
-           }`
-        );
-    };
-    return mat;
-  }, [waterTex]);
+  const hoseMaterial = useMemo(
+    () => createWaterMaterial(waterTex, hoseUniforms, 'conduit'),
+    [waterTex, hoseUniforms]
+  );
+  /** The same water in the grey supply hose, seen through its smoked wall. */
+  const supplyMaterial = useMemo(
+    () => createWaterMaterial(waterTex, supplyUniforms, 'conduit', CONDUIT_WALLS.smoked),
+    [waterTex, supplyUniforms]
+  );
 
   /**
-   * Put the hose material on the hose, and measure the span its shader needs.
+   * Put the water material on the hose, and give the hose the flow coordinates it needs:
+   * the distance along the tube from the pump end, and the angle round it, measured off its
+   * own vertices (`measureConduit`).
    *
    * Its own effect rather than part of the big material pass, because that pass runs before
-   * this material exists. Keeping it separate also means the hose is re-dressed if the
-   * material is ever rebuilt, without re-running the whole apparatus traversal.
+   * this material exists.
    */
   useEffect(() => {
     if (!scene) return;
     const target = gltfName(MISMATERIALLED_HOSE);
+    const group = groupRef.current;
     scene.traverse((child: any) => {
       if (!child.isMesh || child.name !== target) return;
       child.material = hoseMaterial;
-      child.updateWorldMatrix(true, false);
-      const box = new THREE.Box3().setFromObject(child);
-      hoseSpanUniform.current.value.set(box.min.y, box.max.y);
+      const conduit = measureConduit(child, (v) => (group ? group.worldToLocal(v) : v));
+      if (conduit) {
+        hoseRef.current = { ...conduit, speed: 0, head: 0, tail: -1, running: false };
+      }
     });
   }, [scene, hoseMaterial]);
 
+  /** The supply hose, the same way: its own material, its flow coordinates off its mesh. */
   useEffect(() => {
-    (Object.values(water) as any[]).forEach((gltf) => {
-      // Which way this shape's water runs along its own surface coordinate.
-      //
-      // All eight caches are fed from the top and grow downward — measured frame by frame in
-      // `waterShapeForFlow`'s table: each emerges as a ~10 mm nub at the nozzle, climbs for
-      // about a tenth of a second, and then spends the remaining second falling, its floor
-      // descending toward the tank while its top stays pinned. `Water_low` was assigned
-      // `toward` at BEDO-WATER-04 on the assumption that it was a jet climbing to the plate;
-      // the cache says otherwise — its top stops at the nozzle mouth and never reaches the
-      // deflector — so it runs `away` like the rest. The sign mechanism stays because it is
-      // a property of each cache, not a constant: a re-authored column that did climb to the
-      // plate would need `toward`.
-      const sense = WATER_FLOW_SENSE.away;
-      gltf?.scene?.traverse((child: any) => {
-        if (!child.isMesh) return;
-        child.material = waterMaterial;
-        child.castShadow = false;
-        child.receiveShadow = false;
-
-        // Give the mesh the surface coordinate its shader needs, computed from its own
-        // vertices. Once, at load — the geometry never changes, only the group it hangs
-        // under does, so there is nothing to recompute per frame. See `src/lib/waterUv.ts`
-        // for why the authored TEXCOORD channels cannot serve.
-        const geometry = child.geometry as THREE.BufferGeometry;
-        if (geometry && !geometry.getAttribute(WATER_UV_ATTRIBUTE)) {
-          const position = geometry.getAttribute('position');
-          if (position) {
-            // Through the accessors, never through `.array`: these assets are meshopt-packed
-            // and their positions are interleaved four components to a vertex, so the raw
-            // buffer is not a list of xyz triples. See `packPositions`.
-            const { uv, crossRadius } = buildWaterUv(packPositions(position));
-            geometry.setAttribute(WATER_UV_ATTRIBUTE, new THREE.BufferAttribute(uv, 2));
-            // The shape's own size in the magnitude and its flow direction in the sign, so
-            // one shared material can ripple all eight by the same visible amount and still
-            // run each of them the right way — see `WATER_AMPLITUDE_ATTRIBUTE`.
-            geometry.setAttribute(
-              WATER_AMPLITUDE_ATTRIBUTE,
-              new THREE.BufferAttribute(
-                new Float32Array(position.count).fill(crossRadius * sense),
-                1
-              )
-            );
-          }
-        }
-
-        // Which morph target carries which authored frame, read from the asset's own
-        // names. Once, at load — see `src/lib/waterCache.ts`.
-        prepareCacheMesh(child as THREE.Mesh);
-      });
+    if (!scene) return;
+    const target = gltfName(SUPPLY_HOSE);
+    const group = groupRef.current;
+    scene.traverse((child: any) => {
+      if (!child.isMesh || child.name !== target) return;
+      child.material = supplyMaterial;
+      supplyRef.current = measureConduit(child, (v) => (group ? group.worldToLocal(v) : v));
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...waterGltfs, waterMaterial]);
+  }, [scene, supplyMaterial]);
+
 
   /** Built once from the measured interior; rebuilt only if the model is re-exported. */
 
@@ -1453,6 +1233,30 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           }
         });
         springInfoRef.current = { restH: sSize.y / modelScale, morph };
+
+        // Where the carrier must stop on its way down (F05): short of the nozzle by the
+        // minimum clearance, or at the spring's working compression, whichever comes first.
+        // Measured at rest, per fitted deflector — the cones hang 4.4 mm lower than the rest.
+        const mouth = pick(NOZZLE_MOUTH_MESH);
+        const bottomOf = (name: string) => {
+          const object = pick(name);
+          if (!object) return null;
+          const box = new THREE.Box3().setFromObject(object, true);
+          return box.isEmpty() ? null : box.min.y / modelScale;
+        };
+        if (mouth) {
+          const mouthY = new THREE.Box3().setFromObject(mouth, true).max.y / modelScale;
+          const springRestMm = (sSize.y / modelScale) * 1000;
+          const stops = new Map<number, CarrierStop>();
+          // The bare rod: nothing hangs below its own end.
+          const rodEnd = bottomOf('JET Force 2_210');
+          if (rodEnd !== null) stops.set(0, carrierStop(rodEnd, mouthY, springRestMm));
+          for (const d of DEFLECTORS) {
+            const bottom = bottomOf(d.installed);
+            if (bottom !== null) stops.set(d.id, carrierStop(bottom, mouthY, springRestMm));
+          }
+          carrierStopsRef.current = stops;
+        }
       }
     }
   }, [scene, pick, modelScale]);
@@ -1477,13 +1281,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const weights = ghosts.filter((g) => g.grams !== undefined);
     return {
       arriving: weights.some((g) => g.seatIndex !== undefined),
-      departing: weights.some((g) => g.seatIndex === undefined),
+      // A disc in the learner's hand is not yet leaving: letting go of it *is* the removal,
+      // and counting it here refused that very removal when the pointer came up (F03).
+      departing: weights.some((g) => g.seatIndex === undefined && !g.followsPointer),
+      held: weights.some((g) => g.followsPointer),
     };
   }, [ghosts]);
 
   const weightAvailability = useMemo<WeightAvailability>(
     () => ({
-      canAdd: !weightsInFlight.departing,
+      // Nothing goes on while the top disc is in hand: it would be seated above a gap.
+      canAdd: !weightsInFlight.departing && !weightsInFlight.held,
       canRemove: !weightsInFlight.arriving && !weightsInFlight.departing,
     }),
     [weightsInFlight]
@@ -1504,6 +1312,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     () => new Set(ghosts.map((g) => g.seatIndex).filter((i): i is number => i !== undefined)),
     [ghosts]
   );
+  /**
+   * Stack seats whose disc is in the learner's hand (F03). Drawn empty, so a disc pulled up
+   * the post is not also still sitting on the pan beneath itself.
+   */
+  const heldSeats = useMemo(
+    () =>
+      new Set(ghosts.map((g) => g.sourceIndex).filter((i): i is number => i !== undefined)),
+    [ghosts]
+  );
 
   /**
    * Tray discs that are not on the tray: on the holder, or on their way back to it.
@@ -1518,8 +1335,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   const hiddenTrayWeightGrams = useMemo(() => {
     const hidden = new Set<number>(state.loadedWeightsG);
     ghostWeightGrams.forEach((grams) => hidden.add(grams));
+    // There is one custom disc, whatever mass it was made for: while any custom mass is
+    // off the tray, so is it.
+    if ([...hidden].some((grams) => !WEIGHTS.some((w) => w.grams === grams))) {
+      hidden.add(customWeightG);
+    }
     return hidden;
-  }, [state.loadedWeightsG, ghostWeightGrams]);
+  }, [state.loadedWeightsG, ghostWeightGrams, customWeightG]);
 
   // The chosen deflector leaves the tray and appears mounted on the rod.
   //
@@ -1709,27 +1531,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 
 
     const spot = (
-      name: string,
+      /** One part, or several measured as one (the flowmeter's two scale plates). */
+      name: string | string[],
       action: Action,
       minRadius: number,
       /** Hug the part instead of ballooning to its longest side — see `Hotspot.half`. */
-      fitted = false
+      fitted = false,
+      key: string = Array.isArray(name) ? name[0] : name
     ): Hotspot | null => {
-      if (!localBox([name])) return null;
+      if (!localBox(Array.isArray(name) ? name : [name])) return null;
       tmp.box.getCenter(tmp.center);
       tmp.box.getSize(tmp.size);
       const local = group.worldToLocal(tmp.center.clone());
       const worldRadius = Math.max(tmp.size.x, tmp.size.y, tmp.size.z) * 0.6;
       const radius = THREE.MathUtils.clamp(worldRadius / modelScale, minRadius, 0.18);
-      if (!fitted) return { key: name, position: [local.x, local.y, local.z], radius, action };
+      if (!fitted) return { key, position: [local.x, local.y, local.z], radius, action };
       // Half-extents in the group's own units, floored so a disc only 3 mm thick is still
       // worth aiming at. The floor is well under the 0.0847 that separates two discs, so a
       // fitted proxy stays clear of its neighbours in every axis.
       const half = ([tmp.size.x, tmp.size.y, tmp.size.z] as const).map((v) =>
         Math.max(v / modelScale / 2, MIN_HOTSPOT_HALF)
       ) as [number, number, number];
-      return { key: name, position: [local.x, local.y, local.z], radius, half, action };
+      return { key, position: [local.x, local.y, local.z], radius, half, action };
     };
+    const riding = (h: Hotspot | null, follows: 'holder' | 'cover'): Hotspot | null =>
+      h ? { ...h, follows } : null;
 
     const list = [
       spot(MESH.tankCover, { kind: 'cover' }, 0.08),
@@ -1742,13 +1568,142 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       ...WEIGHTS.filter((w) => w.mesh).map((w) =>
         spot(w.mesh!, { kind: 'weight', grams: w.grams }, 0.022, true)
       ),
+      // The custom disc carries whatever mass the control is set to — unless that mass is
+      // one the row already has, when the row's own disc is the one to pick up.
+      ...(customIsFixed
+        ? []
+        : [spot(CUSTOM_WEIGHT_MESH, { kind: 'weight', grams: customWeightG }, 0.022, true)]),
       // Fitted for the same reason the discs are: it sits inside the tank among parts the
       // learner does aim at, so it must not stand in front of them.
       spot(MESH.nozzle, { kind: 'nozzle' }, 0.02, true),
+      // F17: the parts that are only looked at. Fitted boxes, like the nozzle, so they do
+      // not stand in front of anything; the moving ones ride what carries them.
+      spot(MESH.pointer, { kind: 'part', component: 'pointer' }, 0.015, true),
+      riding(spot(MESH.spring, { kind: 'part', component: 'spring' }, 0.015, true), 'cover'),
+      riding(spot(CARRIER_MESH, { kind: 'part', component: 'weightCarrier' }, 0.015, true), 'holder'),
+      spot(FLOWMETER_MESHES, { kind: 'part', component: 'flowmeter' }, 0.02, true),
+      // Every deflector seats in the same place on the rod; the 90° one is measured for all.
+      riding(
+        spot(getDeflector(90).installed, { kind: 'part', component: 'installedDeflector' }, 0.015, true, INSTALLED_KEY),
+        'holder'
+      ),
     ];
 
     setHotspots(list.filter((h): h is Hotspot => h !== null));
-  }, [scene, groupRef, onAnchors, onInstallFraming, tmp, modelScale, baseY]);
+  }, [scene, groupRef, onAnchors, onInstallFraming, tmp, modelScale, baseY, customWeightG, customIsFixed]);
+
+  /**
+   * The flowmeter's column and the measuring tank's water — visual only
+   * (`lib/measuringTank.ts`).
+   *
+   * Measured once the model is placed: where each litre is on the scale (from the
+   * graduation quad's own vertices and UVs), and the tank basin's floor and walls (by ray).
+   * The frame loop then draws both at the picture's own volume.
+   */
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!scene || !group) return;
+    group.updateWorldMatrix(true, true);
+    const rigInverse = group.matrixWorld.clone().invert();
+    const toRig = (world: THREE.Vector3) => world.clone().applyMatrix4(rigInverse);
+
+    const overlay = pick(FLOWMETER_MESHES[1]) as THREE.Mesh | undefined;
+    const strip = pick(FLOWMETER_MESHES[0]) as THREE.Mesh | undefined;
+    const liquid = pick(MESH.liquid) as THREE.Mesh | undefined;
+    const heightOfV = overlay?.isMesh ? heightForV(overlay, toRig) : null;
+    litreHeightRef.current = heightOfV ? (litres: number) => heightOfV(litreToV(litres)) : null;
+    const fullMap = (liquid?.material as THREE.MeshStandardMaterial | undefined)?.map ?? null;
+    columnRef.current = strip?.isMesh && fullMap ? applyColumn(strip, fullMap, rigInverse) : null;
+
+    const sink = pick(MEASURING_TANK_MESH);
+    const interior = sink ? measureBasin(sink, toRig) : null;
+    if (interior) {
+      const water = createBasinWater(interior, waterTex);
+      group.add(water);
+      basinRef.current = { interior, water };
+    }
+    return () => {
+      columnRef.current?.dispose();
+      columnRef.current = null;
+      const basin = basinRef.current;
+      if (basin) {
+        basin.water.removeFromParent();
+        basin.water.geometry.dispose();
+        // The water and its absorption pass (a child sharing the geometry).
+        basin.water.traverse((o) => ((o as THREE.Mesh).material as THREE.Material | undefined)?.dispose());
+      }
+      basinRef.current = null;
+    };
+  }, [scene, groupRef, pick, waterTex]);
+
+  /**
+   * What the water runs through, measured once the tank is (F08, `src/lib/jetFlow.ts`): the
+   * nozzle mouth and tube, the tank's wall and floor, the underside of the cover, and each
+   * deflector's wetted underside at rest. Then the pool on the floor it lands in.
+   */
+  useEffect(() => {
+    const group = groupRef.current;
+    const mouth = pick(NOZZLE_MOUTH_MESH);
+    if (!scene || !group || !tankInterior || !mouth) return;
+    group.updateWorldMatrix(true, true);
+    const toLocal = (v: THREE.Vector3) => group.worldToLocal(v);
+    const toWorld = (v: THREE.Vector3) => group.localToWorld(v);
+    const box = new THREE.Box3().setFromObject(mouth, true);
+    const lo = toLocal(box.min.clone());
+    const hi = toLocal(box.max.clone());
+    const min = lo.clone().min(hi);
+    const max = lo.clone().max(hi);
+    const axis = { x: (min.x + max.x) / 2, z: (min.z + max.z) / 2 };
+    const tubeRadius = Math.max(max.x - min.x, max.z - min.z) / 2;
+    // Above the deflectors' reach and clear of the rod: the lower plate of the cover.
+    const ceiling = measureCeiling(
+      scene,
+      axis,
+      max.y + 0.04,
+      [0.03, 0.045, 0.06, 0.075].map((r) => Math.min(r, tankInterior.radius * 0.9)),
+      toLocal,
+      toWorld
+    );
+    const geometry: JetGeometry = {
+      mouthY: max.y,
+      boreRadius: NOZZLE_DIAMETER_M / 2,
+      tubeRadius,
+      wallRadius: tankInterior.radius,
+      floorY: tankInterior.floorY,
+      ceilingY: ceiling ?? tankInterior.ceilingY,
+    };
+    jetGeometryRef.current = geometry;
+    jetAxisRef.current = axis;
+
+    const surfaces = new Map<number, WettedSurface>();
+    for (const d of DEFLECTORS) {
+      const part = pick(d.installed);
+      if (!part) continue;
+      // Measured wherever the part stands now, and stored at its rest height. Read, never
+      // recorded: `baseY` records a part's rest on first use, and that must stay the frame
+      // loop's first use, not this measurement's.
+      const rest = restY.current[d.installed];
+      const restOffset = rest === undefined ? 0 : part.position.y - rest;
+      const surface = measureWettedSurface(part, axis, toLocal, toWorld, restOffset);
+      if (surface) surfaces.set(d.id, surface);
+    }
+    wettedRef.current = surfaces;
+
+    const pool = createPoolMesh(
+      tubeRadius + FILM_OFFSET_M,
+      tankInterior.radius - FILM_OFFSET_M,
+      axis,
+      tankInterior.floorY + POOL_DEPTH_M,
+      waterTex,
+      poolUniforms
+    );
+    pool.visible = false;
+    setPoolMesh(pool);
+    return () => {
+      pool.geometry.dispose();
+      (pool.material as THREE.Material).dispose();
+    };
+  }, [scene, tankInterior, pick, waterTex, poolUniforms]);
 
   /**
    * Parts the interaction gate will actually accept a click on.
@@ -1763,43 +1718,45 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * legality, it is only told the answer.
    */
   /**
-   * What a part says when the pointer rests on it.
-   *
-   * Both labels are derived: the mass comes from `WEIGHTS`, and the bore is computed back
-   * out of `NOZZLE_AREA_M2` — the same constant the momentum equations use — so the label
-   * cannot drift away from the physics it is describing. Nothing here is a second source
-   * of truth for either number.
+   * Which part a proxy stands for, in the terms of the one component definition (F17,
+   * `domain/componentInfo.ts`). Every surface that names a part — the hover tooltip, the
+   * component card, the focus tooltip — goes through this and `describeComponent`, so the
+   * names and the numbers in them (the nozzle's bore from `NOZZLE_AREA_M2`, a disc's own
+   * mass, a deflector's angle) have one source.
    */
-  /** One disc's own mass — never the pan total. */
-  const weightLabel = useCallback(
-    (grams: number) => (isArabic ? `وزن ${grams} غ` : `${grams} g`),
-    [isArabic]
+  const refOf = useCallback(
+    (action: Action): ComponentRef => {
+      switch (action.kind) {
+        case 'cover':
+          return { key: 'tankCover' };
+        case 'deflector':
+          return { key: 'deflector', variant: action.id };
+        case 'weight':
+          return { key: 'weight', variant: action.grams };
+        case 'power':
+          return { key: 'powerSwitch' };
+        case 'flowValve':
+          return { key: 'flowValve' };
+        case 'volumetricValve':
+          return { key: 'volumetricValve' };
+        case 'nozzle':
+          return { key: 'nozzle' };
+        case 'part':
+          return action.component === 'installedDeflector'
+            ? { key: 'deflector', variant: state.selectedDeflectorId, installed: true }
+            : { key: action.component };
+      }
+    },
+    [state.selectedDeflectorId]
   );
 
-  const labelFor = useCallback(
-    (action: Action): string | null => {
-      // `غ` in Arabic, matching the app's own localised mass strings — the removal control
-      // says `إزالة ${g} غ` and the balance indicator `الهدف ≈ ${n} غ`. The bare `g`
-      // elsewhere is in readouts that are not translated at all.
-      if (action.kind === 'weight') return weightLabel(action.grams);
-      if (action.kind === 'nozzle') {
-        const boreMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
-        return isArabic
-          ? `الفوهة — قطر ${boreMm.toFixed(0)} مم`
-          : `Nozzle — ${boreMm.toFixed(0)} mm bore`;
-      }
-      // Deflector names already carry their angle (`DEFLECTORS`), in both languages; the
-      // valves and the switch use the names the step card already prints for them.
-      if (action.kind === 'deflector') {
-        const d = getDeflector(action.id);
-        return isArabic ? d.nameAr : d.nameEn;
-      }
-      if (action.kind === 'power') return isArabic ? 'مفتاح الطاقة' : 'Power switch';
-      if (action.kind === 'flowValve') return isArabic ? 'صمام التحكم في التدفق' : 'Flow control valve';
-      if (action.kind === 'volumetricValve') return isArabic ? 'الصمام الحجمي' : 'Volumetric valve';
-      return null;
+  /** A disc on the carrier, by its seat: its own mass, never the pan total. */
+  const stackRefOf = useCallback(
+    (index: number): ComponentRef | null => {
+      const grams = state.loadedWeightsG[index];
+      return grams === undefined ? null : { key: 'weight', variant: grams, onCarrier: true };
     },
-    [isArabic, weightLabel]
+    [state.loadedWeightsG]
   );
 
   const actionableKeys = useMemo<Set<string>>(() => {
@@ -1934,8 +1891,10 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }[] = [];
 
     state.loadedWeightsG.forEach((grams, idx) => {
+      // The disc for this mass, standing on its own tray place: a fixed denomination's tray
+      // node, or — for any other mass — the custom weight (F04). Never another mass's disc.
       const def = WEIGHTS.find((w) => w.grams === grams);
-      const proto = pick(def?.mesh ?? 'Weight_Custom');
+      const proto = weightFamily?.discFor(grams) ?? pick(def?.mesh ?? CUSTOM_WEIGHT_MESH);
       if (!proto) return;
 
       const object = proto.clone(true);
@@ -1975,7 +1934,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       /** Pulls the baked clone's centre onto its slot's origin. */
       recentre: recentreOffset(disc.measured),
     }));
-  }, [scene, pick, holderAnchor, state.loadedWeightsG]);
+  }, [scene, pick, holderAnchor, state.loadedWeightsG, weightFamily]);
 
   /** The stack as the highlight callback sees it; a disc on the pan is a clone. */
   const stackRef = useRef(stack);
@@ -1985,16 +1944,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   //
   // The label text is resolved here from the same authoritative data as before: a tray
   // disc and a disc on the pan both name their own mass, never the pan total.
+  //
+  // F17: every part now names itself and says what it does, from `describeComponent`, and
+  // the last line says how to open its card — a plain click where nothing operational is
+  // behind the part, a right-click everywhere (`labelClickOpens`, set on hover).
   const hoverLabel = useMemo(() => {
     if (!labelledKey || sceneHidden) return null;
+    let ref: ComponentRef | null = null;
     if (labelledKey.startsWith(STACK_KEY)) {
-      const index = Number(labelledKey.slice(STACK_KEY.length));
-      const grams = state.loadedWeightsG[index];
-      return grams === undefined ? null : weightLabel(grams);
+      ref = stackRefOf(Number(labelledKey.slice(STACK_KEY.length)));
+    } else {
+      const spot = hotspots.find((h) => h.key === labelledKey);
+      ref = spot ? refOf(spot.action) : null;
     }
-    const spot = hotspots.find((h) => h.key === labelledKey);
-    return spot ? labelFor(spot.action) : null;
-  }, [labelledKey, sceneHidden, state.loadedWeightsG, hotspots, labelFor, weightLabel]);
+    if (!ref) return null;
+    // The part's card is already open beside it: a second, smaller copy of the same words
+    // under the pointer would only cover the card.
+    if (inspection?.via === 'click' && inspection.anchorId === anchorIdOf(ref)) return null;
+    const text = describeComponent(ref, isArabic ? 'ar' : 'en', { clickOpens: labelClickOpens });
+    return { title: text.name, body: text.role, hint: text.hint };
+  }, [labelledKey, sceneHidden, hotspots, refOf, stackRefOf, isArabic, labelClickOpens, inspection]);
 
   useEffect(() => {
     trackCursorTooltip();
@@ -2035,8 +2004,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       hover: () => ({
         hovered: hoveredKey,
         label: currentCursorTooltip(),
+        lines: currentCursorTooltipLines(),
         outlined: Array.from(highlighted.current.keys()),
       }),
+      // The renderer state and the apparatus group, for browser checks that look at the
+      // scene from a chosen angle or probe what is behind a pixel.
+      stage: () => ({ three: lastThree.current, group: groupRef.current }),
+      // F17: every mounted part proxy, its anchor id and where it is on screen, so a
+      // browser check can point at each one.
+      parts: () => {
+        const t = lastThree.current;
+        if (!t) return [];
+        const rect = t.gl.domElement.getBoundingClientRect();
+        return hotspots
+          .filter((h) => proxyRefs.current.has(h.key))
+          .map((h) => {
+            const v = proxyRefs.current.get(h.key)!.getWorldPosition(new THREE.Vector3()).project(t.camera);
+            return {
+              key: h.key,
+              anchorId: anchorIdOf(refOf(h.action)),
+              x: rect.left + ((v.x + 1) / 2) * rect.width,
+              y: rect.top + ((1 - v.y) / 2) * rect.height,
+              onScreen: v.z > -1 && v.z < 1 && Math.abs(v.x) <= 1 && Math.abs(v.y) <= 1,
+            };
+          });
+      },
     };
   });
 
@@ -2097,6 +2089,8 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   useEffect(() => {
     const installed = getDeflector(state.selectedDeflectorId);
     const values: BoardValues = {
+      // No chip is marked while the rod is bare (F09).
+      deflectorFitted: state.live.deflectorFitted,
       deflectorAngle: installed.id,
       deflectorName: isArabic ? installed.nameAr : installed.nameEn,
       momentumFactor: installed.momentumFactor,
@@ -2112,17 +2106,28 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       measuredForceN: state.live.measuredForceN,
       // Rows 1 and 2 of the printed table are the two student readings; the results
       // array's index 0 is the zero-flow baseline the procedure does not record.
-      rows: state.recordedRows.slice(1, 3).map((r) => ({
-        // The reading exists once the learner has balanced it — the same test the software
-        // board's own row filter uses.
-        recorded: r.loadedMassG > 0,
-        flowLMin: r.flowRateLMin,
-        flowM3S: r.flowRateM3S,
-        nozzleVelocity: r.nozzleVelocityMS,
-        impactVelocity: r.impactVelocityMS,
-        theoreticalForceN: r.theoreticalForceN,
-        measuredForceN: state.isCalculated ? r.measuredForceN : null,
-      })),
+      // The board prints two rows: the lesson's two readings, or in free mode the first two
+      // the learner recorded (F10), which are readings by construction.
+      rows: (state.readingsSource === 'free' ? [0, 1] : [1, 2]).map((index) => {
+        const r = state.recordedRows[index];
+        // One definition of "recorded" (F15): the monitor's, the counter's and the CSV's.
+        // It used to be "has mass on it", which printed the row being balanced — the live
+        // tray — as a result.
+        const recorded = r !== undefined && state.rowStatuses[index] === 'recorded';
+        return {
+          recorded,
+          flowLMin: recorded ? r.flowRateLMin : 0,
+          flowM3S: recorded ? r.flowRateM3S : 0,
+          nozzleVelocity: recorded ? r.nozzleVelocityMS : 0,
+          impactVelocity: recorded ? r.impactVelocityMS : 0,
+          theoreticalForceN: recorded ? r.theoreticalForceN : 0,
+          // Free readings carry their own F_ac (F10); guided rows get it at Calculate.
+          measuredForceN:
+            recorded && (state.isCalculated || state.readingsSource === 'free')
+              ? r.measuredForceN
+              : null,
+        };
+      }),
     };
     boardReadout.current?.update(values, { calibrate: BOARD_CALIBRATE });
     if (import.meta.env.DEV) {
@@ -2138,7 +2143,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         rows: values.rows.map((r) => (r.recorded ? `${r.flowLMin.toFixed(3)}|Fac=${r.measuredForceN?.toFixed(4) ?? '—'}` : 'blank')),
       };
     }
-  }, [state.live, state.recordedRows, state.selectedDeflectorId, state.isCalculated, isArabic]);
+  }, [state.live, state.recordedRows, state.rowStatuses, state.readingsSource, state.selectedDeflectorId, state.isCalculated, isArabic]);
 
   const localCentreOf = useCallback(
     (name: string): THREE.Vector3 | null => {
@@ -2168,19 +2173,173 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, []);
 
   /**
-   * How high this flight has to arc, from the measured tank (BEDO-021b §24).
+   * How each deflector's tray copy maps onto its fitted copy, measured once (F03).
    *
-   * One place, so the disc going on and the disc coming off are carried over the same lid
-   * by the same arithmetic. Only weights: a deflector is installed through the *open*
-   * cover and goes straight to the rod, exactly as `BEDO-021` shipped it, so it is left
-   * alone.
+   * The GLB is baked, so both copies carry identity transforms and the relation between
+   * them is only in their vertices. Where the two share a vertex order the exact rigid
+   * transform is recovered (`lib/rigidFit.ts`); otherwise — the 30° and 60° deflectors are
+   * separately modelled on the tray — they are taken to differ by a translation, which is
+   * what their identical bounds say.
+   *
+   * Measured at rest: any lift the frame loop has put on the fitted mesh is stripped, as
+   * `raiseDeflectorGhost` always did, so the live lift is never counted twice.
    */
-  const arcBetween = useCallback(
-    (kind: TransferKind, from: THREE.Vector3, to: THREE.Vector3, radius: number): number =>
-      transferObstacle && directionOf(kind)
-        ? arcHeightOver([from.x, from.y, from.z], [to.x, to.y, to.z], transferObstacle, radius)
-        : 0,
-    [transferObstacle]
+  const deflectorPosesRef = useRef(new Map<number, DeflectorPose>());
+  const deflectorPoseOf = useCallback(
+    (deflectorId: number): DeflectorPose | null => {
+      const cached = deflectorPosesRef.current.get(deflectorId);
+      if (cached) return cached;
+      const group = groupRef.current;
+      const deflector = getDeflector(deflectorId);
+      const shelf = pick(deflector.shelf);
+      const fitted = pick(deflector.installed);
+      if (!group || !shelf || !fitted) return null;
+
+      group.updateWorldMatrix(true, false);
+      const toGroup = new THREE.Matrix4().copy(group.matrixWorld).invert();
+      const lifted = fitted.position.y - baseY(fitted, deflector.installed);
+      const vertices = (object: THREE.Object3D, dropY: number): Vec3[] => {
+        object.updateWorldMatrix(true, true);
+        const out: Vec3[] = [];
+        const local = new THREE.Matrix4();
+        const v = new THREE.Vector3();
+        object.traverse((node) => {
+          const mesh = node as THREE.Mesh;
+          const position = mesh.isMesh ? mesh.geometry?.getAttribute('position') : undefined;
+          if (!position) return;
+          local.multiplyMatrices(toGroup, mesh.matrixWorld);
+          for (let i = 0; i < position.count; i++) {
+            v.fromBufferAttribute(position, i).applyMatrix4(local);
+            out.push([v.x, v.y - dropY, v.z]);
+          }
+        });
+        return out;
+      };
+      const boundsOf = (points: Vec3[]) => {
+        const box = new THREE.Box3();
+        for (const p of points) box.expandByPoint(dragTmp.point.set(p[0], p[1], p[2]));
+        return box;
+      };
+
+      const onShelf = vertices(shelf, 0);
+      const onRod = vertices(fitted, lifted);
+      if (onShelf.length === 0 || onRod.length === 0) return null;
+      const rodBox = boundsOf(onRod);
+      const fittedPivot = rodBox.getCenter(new THREE.Vector3());
+      const size = rodBox.getSize(new THREE.Vector3());
+
+      const rotation = new THREE.Quaternion();
+      let shelfPivot: THREE.Vector3;
+      const fit = fitRigid(onShelf, onRod);
+      // Half a millimetre: a true duplicate fits to rounding error, anything else is not one.
+      if (fit && fit.maxResidual < 0.0005) {
+        rotation.set(...fit.rotation);
+        // The fitted pivot, carried back through the inverse transform onto the tray copy.
+        shelfPivot = fittedPivot
+          .clone()
+          .sub(new THREE.Vector3(...fit.toCentre))
+          .applyQuaternion(rotation.clone().invert())
+          .add(new THREE.Vector3(...fit.fromCentre));
+      } else {
+        shelfPivot = boundsOf(onShelf).getCenter(new THREE.Vector3());
+      }
+
+      const pose: DeflectorPose = {
+        rotation,
+        shelfPivot,
+        fittedPivot,
+        halfHeight: size.y / 2,
+        radius: Math.max(size.x, size.z) / 2,
+      };
+      deflectorPosesRef.current.set(deflectorId, pose);
+      return pose;
+    },
+    [groupRef, pick, baseY, dragTmp]
+  );
+
+  /**
+   * A deflector clone hung from its pivot, so turning the wrapper turns the part about the
+   * rod axis rather than about the GLB's distant shared origin.
+   */
+  const deflectorWrapper = useCallback(
+    (deflectorId: number, pose: DeflectorPose): THREE.Group | null => {
+      const shelf = pick(getDeflector(deflectorId).shelf);
+      if (!shelf) return null;
+      const wrapper = new THREE.Group();
+      const inner = new THREE.Group();
+      inner.position.copy(pose.shelfPivot).negate();
+      inner.add(cloneFor(shelf));
+      wrapper.add(inner);
+      return wrapper;
+    },
+    [pick, cloneFor]
+  );
+
+  /** How far the pan and rod are off their resting height right now. */
+  const liveHolderLift = useCallback(() => coverOffsetRef.current + deflectionRef.current, []);
+
+  /**
+   * The parts standing between the tray and the rod that a carried part must go over: the
+   * pointer's post (`JET Force 2_212`, 63 mm in front of the rod axis and 1.45 m tall) and
+   * the pointer arm clamped to it. Measured where they are *now*, because the arm swings
+   * clear when the cover is opened. Measured in the browser, a deflector's old straight
+   * route passed straight through both (F03).
+   */
+  const standingParts = useCallback((): Obstacle[] => {
+    const group = groupRef.current;
+    if (!group) return [];
+    const out: Obstacle[] = [];
+    for (const name of [MESH.pointerPin, MESH.pointer]) {
+      const object = pick(name);
+      if (!object) continue;
+      object.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(object, true);
+      if (box.isEmpty()) continue;
+      const a = group.worldToLocal(box.min.clone());
+      const b = group.worldToLocal(box.max.clone());
+      const lo = a.clone().min(b);
+      const hi = a.clone().max(b);
+      out.push({ minX: lo.x, maxX: hi.x, minZ: lo.z, maxZ: hi.z, topY: hi.y });
+    }
+    return out;
+  }, [groupRef, pick]);
+
+  /**
+   * The column a carried disc must pass over to reach the post: the pan, the post, and the
+   * discs already seated on it — `below` is how many. Apparatus-local, at the live lift.
+   */
+  const holderColumn = useCallback(
+    (below: number, entries: typeof stack, lift: number): Obstacle | null => {
+      if (!holderAnchor) return null;
+      const [x, surfaceY, z] = holderAnchor.surface;
+      const postTip = surfaceY + holderAnchor.postHeight;
+      const under = entries[below - 1];
+      const stackTop = under ? under.seat[1] + under.thickness / 2 : surfaceY;
+      const r = holderAnchor.radius;
+      return {
+        minX: x - r,
+        maxX: x + r,
+        minZ: z - r,
+        maxZ: z + r,
+        topY: Math.max(postTip, stackTop) + lift,
+      };
+    },
+    [holderAnchor]
+  );
+
+  /**
+   * Where a disc for this seat has to be before it may come down the post: centred on the
+   * axis with its underside clear of the post's tip. At rest; the caller adds the live lift.
+   */
+  const hoverOver = useCallback(
+    (entry: (typeof stack)[number]): number => {
+      const half = entry.thickness / 2;
+      const postTip = holderAnchor
+        ? holderAnchor.surface[1] + holderAnchor.postHeight
+        : entry.seat[1];
+      return Math.max(postTip + half + HANDLING_CLEARANCE, entry.seat[1] + MIN_DISC_APPROACH);
+    },
+    [holderAnchor]
   );
 
   /**
@@ -2189,8 +2348,6 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * The same recentring the stack slots use, so a disc that lifts off the holder is held
    * by the point the learner is looking at rather than by the GLB's distant shared origin
    * — and so a flight's start, its end and the seat it came from are all one arithmetic.
-   * The deflector ghosts express this differently, through `restCentre`; both say that a
-   * carried part follows the pointer by its centre.
    */
   const weightGhostWrapper = useCallback(
     (entry: (typeof stack)[number]): THREE.Group => {
@@ -2217,108 +2374,200 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         const deflector = getDeflector(ghost.deflectorId);
         const chosen =
           lesson.hasInstalledDeflector && state.selectedDeflectorId === ghost.deflectorId;
+        // Another flight may still be carrying this same deflector (a swap reversed while
+        // it was under way); then it is that flight's to put down, not this one's.
+        const stillCarried = ghostsRef.current.some(
+          (g) => g !== ghost && g.deflectorId === ghost.deflectorId
+        );
         const shelf = pick(deflector.shelf);
-        if (shelf) shelf.visible = !chosen;
+        if (shelf) shelf.visible = !chosen && !stillCarried;
         const installed = pick(deflector.installed);
-        if (installed) installed.visible = chosen;
+        if (installed) installed.visible = chosen && !stillCarried;
       } else if (ghost.grams !== undefined) {
         const definition = WEIGHTS.find((w) => w.grams === ghost.grams);
-        const tray = definition?.mesh ? pick(definition.mesh) : undefined;
-        if (tray) tray.visible = !loadedWeightsRef.current.includes(ghost.grams);
+        const tray = pick(definition?.mesh ?? CUSTOM_WEIGHT_MESH);
+        const customOnFixedMass =
+          !definition && WEIGHTS.some((w) => w.grams === customWeightRef.current);
+        if (tray) tray.visible = !loadedWeightsRef.current.includes(ghost.grams) && !customOnFixedMass;
       }
     },
     [pick, lesson.hasInstalledDeflector, state.selectedDeflectorId]
   );
 
-  /** Hands a ghost over from the pointer to a timed flight. */
+  /**
+   * Plans a ghost's route and hands it from the pointer (or from rest) to a timed flight.
+   *
+   * Every flight is planned here, from where the part actually is right now, so a part the
+   * learner let go of in mid-air and a part lifted from rest follow the same rules: whatever
+   * it is going onto, it arrives lined up on that thing's axis (F03).
+   */
   const startFlight = useCallback(
-    (id: string, kind: TransferKind, to: THREE.Vector3, liftsWithCover: boolean) => {
+    (id: string, kind: TransferKind, to: THREE.Vector3, delay = 0) => {
       const ghost = ghostsRef.current.find((g) => g.id === id);
       if (!ghost) return;
-      ghost.from = ghost.wrapper.position.clone();
+      const lift = liveHolderLift();
+      const at = ghost.wrapper.position.clone();
+      ghost.from = at.clone();
       ghost.to = to.clone();
       ghost.followsPointer = false;
-      ghost.liftsWithCover = liftsWithCover;
-      // Sized from where the flight actually starts, which for a disc the learner dragged
-      // is wherever they let go — so a disc already clear of the tank flies straight home.
-      ghost.arc = arcBetween(kind, ghost.from, ghost.to, ghost.radius);
-      transfers.start(id, kind);
+      ghost.liftAtPlan = lift;
+
+      const point = (v: THREE.Vector3, dy = 0): Point3 => [v.x, v.y + dy, v.z];
+      const resting = (a: THREE.Vector3, b: THREE.Vector3) => a.distanceTo(b) < 0.001;
+      const tank = transferObstacle;
+
+      if (ghost.deflectorId !== undefined) {
+        const pose = deflectorPoseOf(ghost.deflectorId);
+        const radius = pose?.radius ?? 0;
+        const halfHeight = pose?.halfHeight ?? 0;
+        if (kind === 'deflector-install') {
+          // Lifted off the tray, carried over the open tank, lined up under the rod, and
+          // threaded up onto it.
+          ghost.plan = planHandling({
+            start: point(at),
+            end: point(to, lift),
+            depart: pose && resting(at, pose.shelfPivot) ? DEFLECTOR_TRAY_LIFT : 0,
+            approach: -DEFLECTOR_ROD_APPROACH,
+            // Carried level at the height of the point under the rod, then threaded up.
+            travelHeight: to.y + lift - DEFLECTOR_ROD_APPROACH,
+            obstacles: [tank, ...standingParts()],
+            radius,
+            halfHeight,
+          });
+          ghost.liftAt = [0, 1];
+        } else if (kind === 'deflector-removal') {
+          // Unthreaded down off the rod, carried back, and set down in its tray slot.
+          ghost.plan = planHandling({
+            start: point(at),
+            end: point(to),
+            depart: -DEFLECTOR_ROD_APPROACH,
+            approach: DEFLECTOR_TRAY_LIFT,
+            travelHeight: at.y - DEFLECTOR_ROD_APPROACH,
+            obstacles: [tank, ...standingParts()],
+            radius,
+            halfHeight,
+          });
+          ghost.liftAt = [1, 0];
+        } else {
+          // Refused or dropped short: back to its tray slot, set down from just above it.
+          ghost.plan = planHandling({
+            start: point(at),
+            end: point(to),
+            depart: 0,
+            approach: RETURN_APPROACH,
+            obstacles: [tank, ...standingParts()],
+            radius,
+            halfHeight,
+          });
+          ghost.liftAt = [0, 0];
+          ghost.turn = {
+            from: ghost.wrapper.quaternion.clone(),
+            to: new THREE.Quaternion(),
+            spin: null,
+          };
+        }
+      } else {
+        const entry =
+          ghost.sourceIndex !== undefined ? stackRef.current[ghost.sourceIndex] : undefined;
+        const radius = ghost.radius;
+        const halfHeight = entry ? entry.thickness / 2 : 0;
+        if (kind === 'return-to-source' && entry) {
+          // Back down the post onto the seat it was lifted from.
+          const hover = hoverOver(entry) + lift;
+          ghost.plan = planHandling({
+            start: point(at),
+            end: point(to, lift),
+            depart: 0,
+            approach: hover - (to.y + lift),
+            travelHeight: travelHeightOver(at.y, hover, DISC_TRAVEL_RISE),
+            obstacles: [
+              tank,
+              holderColumn(entry.index, stackRef.current, lift),
+              ...standingParts(),
+            ],
+            radius,
+            halfHeight,
+          });
+          ghost.liftAt = [0, 1];
+        } else {
+          // A disc taken off by hand: up the post if it is still on it, then home.
+          const hover = entry ? hoverOver(entry) + lift : at.y;
+          const onPost = !ghost.clearedPost && at.y < hover;
+          ghost.plan = planHandling({
+            start: point(at),
+            end: point(to),
+            depart: onPost ? hover - at.y : 0,
+            approach: TRAY_LIFT,
+            travelHeight: travelHeightOver(
+              onPost ? hover : at.y,
+              to.y + TRAY_LIFT,
+              DISC_TRAVEL_RISE
+            ),
+            obstacles: [
+              tank,
+              entry ? holderColumn(entry.index, stackRef.current, lift) : null,
+              ...standingParts(),
+            ],
+            radius,
+            halfHeight,
+          });
+          ghost.liftAt = [onPost ? 1 : 0, 0];
+        }
+      }
+
+      transfers.start(id, kind, delay);
       syncGhosts([...ghostsRef.current]);
       // Both surfaces that can install a deflector — the drag and the 2D panel's state
       // change — funnel through here, so this is the one place the camera has to be told.
-      //
-      // The ghost stores its endpoints as displacements from `restCentre`; the camera is
-      // given absolute model-space points, and the destination includes the live cover
-      // lift the frame loop adds each tick (`liftsWithCover`).
+      // Absolute apparatus-local points; the destination includes the live cover lift.
       if (kind === 'deflector-install') {
-        const base = ghost.restCentre;
-        lastFlightRef.current = {
-          from: [base.x + ghost.from.x, base.y + ghost.from.y, base.z + ghost.from.z],
-          to: [
-            base.x + ghost.to.x,
-            base.y + ghost.to.y + coverOffsetRef.current,
-            base.z + ghost.to.z,
-          ],
-          seconds: durationOf(kind),
+        const flight: DeflectorFlight = {
+          from: [at.x, at.y, at.z],
+          to: [to.x, to.y + coverOffsetRef.current, to.z],
+          seconds: durationOf(kind) + delay,
         };
-        onDeflectorInstallStart({
-          from: [base.x + ghost.from.x, base.y + ghost.from.y, base.z + ghost.from.z],
-          to: [
-            base.x + ghost.to.x,
-            base.y + ghost.to.y + coverOffsetRef.current,
-            base.z + ghost.to.z,
-          ],
-          seconds: durationOf(kind),
-        });
+        lastFlightRef.current = flight;
+        onDeflectorInstallStart(flight);
       }
     },
-    [transfers, syncGhosts, arcBetween, onDeflectorInstallStart]
+    [
+      transfers,
+      syncGhosts,
+      transferObstacle,
+      deflectorPoseOf,
+      liveHolderLift,
+      hoverOver,
+      holderColumn,
+      standingParts,
+      onDeflectorInstallStart,
+    ]
   );
 
   /**
-   * Raises a ghost and works out where its destination is.
-   *
-   * The install destination is the **installed mesh's own resting transform**, read off
-   * the GLB rather than written down here, so the deflector lands exactly where the
-   * already-shipped installed state puts it (`§10`). Its live lift is added per frame
-   * instead of being baked in, because the rod rides up with the tank cover and the
-   * destination has to ride with it.
+   * Raises a deflector from the tray: a clone in its tray pose, hung from its pivot, that
+   * the pointer or a flight can then move. Its destination is the fitted pose at rest.
    */
   const raiseDeflectorGhost = useCallback(
     (deflectorId: number): Ghost | null => {
       const group = groupRef.current;
-      const deflector = getDeflector(deflectorId);
-      const shelf = pick(deflector.shelf);
-      const shelfCentre = localCentreOf(deflector.shelf);
-      if (!group || !shelf || !shelfCentre) return null;
-
-      const installedObject = pick(deflector.installed);
-      const installedCentre = localCentreOf(deflector.installed);
-      let seat = new THREE.Vector3();
-      if (installedObject && installedCentre) {
-        // Strip whatever lift the frame loop has already applied, so the offset below is
-        // tray-to-rod at rest and the live lift is not counted twice.
-        const lifted =
-          installedObject.position.y - baseY(installedObject, deflector.installed);
-        seat = installedCentre.clone().setY(installedCentre.y - lifted).sub(shelfCentre);
-      }
-
-      const wrapper = new THREE.Group();
-      wrapper.add(cloneFor(shelf));
-      wrapper.position.set(0, 0, 0);
+      const pose = deflectorPoseOf(deflectorId);
+      if (!group || !pose) return null;
+      const wrapper = deflectorWrapper(deflectorId, pose);
+      if (!wrapper) return null;
+      wrapper.position.copy(pose.shelfPivot);
 
       const ghost: Ghost = {
         id: `deflector:${deflectorId}`,
         wrapper,
         deflectorId,
-        from: new THREE.Vector3(),
-        to: seat,
+        from: pose.shelfPivot.clone(),
+        to: pose.fittedPivot.clone(),
         followsPointer: true,
         liftsWithCover: true,
-        // The cover is open while a deflector is installed, so it drops straight in.
         arc: 0,
-        radius: 0,
-        restCentre: shelfCentre,
+        radius: pose.radius,
+        restCentre: new THREE.Vector3(),
+        turn: { from: new THREE.Quaternion(), to: pose.rotation.clone(), spin: 'approach' },
       };
       syncGhosts([...ghostsRef.current, ghost]);
 
@@ -2328,14 +2577,53 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       camera.getWorldDirection(dragTmp.point);
       dragPlane.setFromNormalAndCoplanarPoint(
         dragTmp.point.clone().negate(),
-        group.localToWorld(shelfCentre.clone())
+        group.localToWorld(pose.shelfPivot.clone())
       );
       return ghost;
     },
-    [groupRef, pick, localCentreOf, cloneFor, baseY, syncGhosts, camera, dragTmp, dragPlane]
+    [groupRef, deflectorPoseOf, deflectorWrapper, syncGhosts, camera, dragTmp, dragPlane]
   );
 
-  /** The same, for a disc already on the holder. Its home is the tray slot it came from. */
+  /**
+   * The deflector that is on the rod, taken off it (F03).
+   *
+   * Changing deflectors used to hide the fitted one and show it back on the tray in the same
+   * frame, while the new one flew in. Now it comes off the way it went on — unthreaded down
+   * the rod axis — and is carried back to its own tray slot before the new one is fitted.
+   */
+  const raiseFittedDeflectorGhost = useCallback(
+    (deflectorId: number): Ghost | null => {
+      const pose = deflectorPoseOf(deflectorId);
+      if (!pose) return null;
+      const wrapper = deflectorWrapper(deflectorId, pose);
+      if (!wrapper) return null;
+      wrapper.position.copy(pose.fittedPivot).setY(pose.fittedPivot.y + liveHolderLift());
+      wrapper.quaternion.copy(pose.rotation);
+      const ghost: Ghost = {
+        id: `deflector-off:${deflectorId}`,
+        wrapper,
+        deflectorId,
+        from: wrapper.position.clone(),
+        to: pose.shelfPivot.clone(),
+        followsPointer: false,
+        liftsWithCover: true,
+        arc: 0,
+        radius: pose.radius,
+        restCentre: new THREE.Vector3(),
+        turn: { from: pose.rotation.clone(), to: new THREE.Quaternion(), spin: 'depart' },
+      };
+      syncGhosts([...ghostsRef.current, ghost]);
+      return ghost;
+    },
+    [deflectorPoseOf, deflectorWrapper, liveHolderLift, syncGhosts]
+  );
+
+  /**
+   * The same, for a disc already on the holder. Its home is the tray slot it came from.
+   *
+   * Only the top disc: the discs are threaded on a post, so the one on top is the only one a
+   * hand can take off (F03). The seat it came from is drawn empty while it is held.
+   */
   const raiseWeightGhost = useCallback(
     (index: number, entries: typeof stack): Ghost | null => {
       const group = groupRef.current;
@@ -2343,24 +2631,26 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!group || !entry) return null;
 
       const wrapper = weightGhostWrapper(entry);
-      const stackLift = weightStackRef.current?.position.y ?? 0;
-      wrapper.position.set(entry.seat[0], entry.seat[1] + stackLift, entry.seat[2]);
+      const lift = liveHolderLift();
+      wrapper.position.set(entry.seat[0], entry.seat[1] + lift, entry.seat[2]);
 
       const grams = state.loadedWeightsG[index];
       const ghost: Ghost = {
         id: `weight:${index}`,
         wrapper,
         grams,
-        from: wrapper.position.clone(),
+        // Where it was lifted from, at rest — where a refused removal puts it back.
+        from: new THREE.Vector3(entry.seat[0], entry.seat[1], entry.seat[2]),
         // Home is the tray slot this disc was cloned from, which is precisely where its
         // baked geometry already sits — `entry.measured` (`docs/39 §8`).
         to: entry.measured.clone(),
         followsPointer: true,
         liftsWithCover: false,
-        // Sized again by `startFlight` once it is known where the disc was let go.
         arc: 0,
         radius: entry.radius,
         restCentre: new THREE.Vector3(),
+        sourceIndex: index,
+        clearedPost: false,
       };
       syncGhosts([...ghostsRef.current, ghost]);
 
@@ -2375,6 +2665,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     [
       groupRef,
       weightGhostWrapper,
+      liveHolderLift,
       syncGhosts,
       state.loadedWeightsG,
       camera,
@@ -2644,9 +2935,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // and asking it here would be a second copy of the policy — the very shape of BUG-04
     // and BUG-05. A wrong-experiment deflector must be pickable precisely so that the gate
     // can refuse it and the learner can see why (`§7`).
+    //
+    // The one physical rule is the post's: the discs are threaded on it, so only the top one
+    // can be taken off (F03). That is not a lesson policy — it is what the apparatus allows.
     canDrag: (source) => {
       if (sceneHidden) return false;
-      if (source.kind === 'weight') return source.index < state.loadedWeightsG.length;
+      if (source.kind === 'weight') return source.index === state.loadedWeightsG.length - 1;
       const shelf = pick(getDeflector(source.deflectorId).shelf);
       return shelf?.visible === true;
     },
@@ -2671,6 +2965,29 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (!group || !ghost) return;
       if (!ray.intersectPlane(dragPlane, dragTmp.point)) return;
       group.worldToLocal(dragTmp.point);
+
+      // A disc on the post can only be drawn straight up it until it is clear of the tip;
+      // it cannot be pulled sideways through the post or the discs below it (F03).
+      const entry =
+        ghost.sourceIndex !== undefined ? stackRef.current[ghost.sourceIndex] : undefined;
+      if (entry && !ghost.clearedPost) {
+        const lift = liveHolderLift();
+        const seatY = entry.seat[1] + lift;
+        const hover = hoverOver(entry) + lift;
+        const y = Math.max(seatY, dragTmp.point.y);
+        ghost.wrapper.position.set(entry.seat[0], Math.min(y, hover), entry.seat[2]);
+        if (y >= hover) {
+          ghost.clearedPost = true;
+          ghost.carryTarget = ghost.wrapper.position.clone();
+        }
+        return;
+      }
+      if (entry) {
+        // Clear of the post: free to go anywhere, but it eases over to the pointer rather
+        // than jumping to it — the pointer may be well off to one side by now.
+        (ghost.carryTarget ??= new THREE.Vector3()).copy(dragTmp.point);
+        return;
+      }
       ghost.wrapper.position.copy(dragTmp.point).sub(ghost.restCentre);
     },
 
@@ -2682,9 +2999,18 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       if (session.source.kind === 'deflector') {
         // `commit` (a drag onto the rod) and `activate` (a plain click, which is what
         // BEDO's own storyboard describes) are the same request. Only the gate decides.
-        const accepted = commits(outcome) && onSelectDeflector(session.source.deflectorId);
-        if (accepted) startFlight(ghost.id, 'deflector-install', ghost.to, true);
-        else startFlight(ghost.id, 'return-to-source', new THREE.Vector3(), false);
+        const deflectorId = session.source.deflectorId;
+        const swapping =
+          lesson.hasInstalledDeflector && state.selectedDeflectorId !== deflectorId;
+        const accepted = commits(outcome) && onSelectDeflector(deflectorId);
+        if (accepted) {
+          // Another deflector is on the rod: it comes off first, and this one is held
+          // until it has (see the selection observer below).
+          startFlight(ghost.id, 'deflector-install', ghost.to, swapping ? DEFLECTOR_REMOVAL_SECONDS : 0);
+        } else {
+          const pose = deflectorPoseOf(deflectorId);
+          startFlight(ghost.id, 'return-to-source', pose ? pose.shelfPivot : ghost.from);
+        }
         return;
       }
 
@@ -2697,48 +3023,87 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // out of the state need not be the position that was asked for. So it is told.
         sceneHandledRemovalRef.current = true;
         // `ghost.to` is the tray slot the disc was cloned from, worked out when it was
-        // raised. It used to be the origin, which happened to land the disc back on the
-        // tray only because the wrapper carried the clone's whole baked offset.
-        startFlight(ghost.id, 'weight-removal', ghost.to, false);
+        // raised.
+        startFlight(ghost.id, 'weight-removal', ghost.to);
       } else {
-        startFlight(ghost.id, 'return-to-source', ghost.from, false);
+        // Refused, or let go short: back down the post onto the seat it came from.
+        startFlight(ghost.id, 'return-to-source', ghost.from);
       }
     },
   });
 
+  /** Whether the rod was carrying a deflector as of the previous selection. */
+  const hadFittedRef = useRef(lesson.hasInstalledDeflector);
+
   /**
-   * The 2D panel's deflector selections, animated the same way.
+   * The 2D panel's deflector selections, animated the same way — and every swap (F03).
    *
    * The scene watches `selectedDeflectorId` change rather than being told by whichever
    * control caused it (`BEDO-021 §22`), so the panel's list produces BEDO's two-second
-   * install exactly as the tray does. The 3D path has already started this flight by the
-   * time the effect runs — starting one that is already in the air is a no-op — so the two
-   * cannot double up.
+   * install exactly as the tray does. The 3D path has already raised this flight by the
+   * time this runs, so it is left alone.
    *
-   * Selection needs *both* triggers where removal needs only this one: a removal always
-   * changes state, but installing the disc the rig already carries — which is the whole of
-   * Exp. 1 step 2, since the flat deflector is what the sheet loads with — changes nothing,
-   * so there is no transition here to see.
+   * A swap is two moves, in order. The deflector that was on the rod is unthreaded down
+   * the rod axis and carried back to its own tray slot; only then is the new one threaded
+   * on. It used to be hidden from the rod and shown back on the tray in the same frame
+   * while the new one flew in.
    *
    * A reset or an experiment switch also changes the selected deflector, and neither is a
    * learner installing anything. Both take the lesson back before the step that says a
    * deflector is on the rod, so requiring `hasInstalledDeflector` excludes them.
+   *
+   * A layout effect, so the part coming off is in the air in the same commit that stops
+   * drawing it on the rod.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = selectedDeflectorRef.current;
     selectedDeflectorRef.current = state.selectedDeflectorId;
-    // `hasInstalledDeflector` is the scene's "is the rod carrying one" — false while the
-    // learner is still standing on the install step and false again after a reset — so it
-    // is also what tells a learner's swap apart from a restart, which changes the selected
-    // deflector too and must not fly anything.
+    const hadFitted = hadFittedRef.current;
+    hadFittedRef.current = lesson.hasInstalledDeflector;
     if (previous === state.selectedDeflectorId || !lesson.hasInstalledDeflector) return;
 
-    const id = `deflector:${state.selectedDeflectorId}`;
-    if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) return;
+    const next = state.selectedDeflectorId;
+    const nextId = `deflector:${next}`;
+    let delay = 0;
 
-    const ghost = raiseDeflectorGhost(state.selectedDeflectorId);
+    // The deflector the learner is moving away from.
+    const onItsWay = ghostsRef.current.find((g) => g.id === `deflector:${previous}`);
+    if (onItsWay) {
+      // It never reached the rod: it goes back to the tray from wherever it is.
+      const pose = deflectorPoseOf(previous);
+      transfers.cancel(onItsWay.id);
+      startFlight(onItsWay.id, 'return-to-source', pose ? pose.shelfPivot : onItsWay.from);
+    } else if (hadFitted && !ghostsRef.current.some((g) => g.deflectorId === previous)) {
+      const off = raiseFittedDeflectorGhost(previous);
+      if (off) {
+        startFlight(off.id, 'deflector-removal', off.to);
+        delay = DEFLECTOR_REMOVAL_SECONDS;
+      }
+    }
+
+    // The 3D path raised this one itself, with its own wait.
+    if (ghostsRef.current.some((g) => g.id === nextId)) return;
+
+    // The one being fitted may itself be on its way back to the tray (a swap reversed
+    // mid-flight). It turns round where it is rather than appearing on the tray.
+    const returning = ghostsRef.current.find((g) => g.id === `deflector-off:${next}`);
+    if (returning) {
+      transfers.cancel(returning.id);
+      returning.wrapper.visible = false;
+      ghostsRef.current = ghostsRef.current.filter((g) => g !== returning);
+    }
+    const ghost = raiseDeflectorGhost(next);
     if (!ghost) return;
-    startFlight(id, 'deflector-install', ghost.to, true);
+    if (returning) {
+      ghost.wrapper.position.copy(returning.wrapper.position);
+      ghost.wrapper.quaternion.copy(returning.wrapper.quaternion);
+      ghost.turn = {
+        from: returning.wrapper.quaternion.clone(),
+        to: ghost.turn!.to,
+        spin: 'approach',
+      };
+    }
+    startFlight(nextId, 'deflector-install', ghost.to, delay);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.selectedDeflectorId, lesson.hasInstalledDeflector]);
 
@@ -2748,8 +3113,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * `Jetforce_Storyboard.pptx` sl. 15, once per denomination: *"When the user clicks on the
    * weight, the weight moves to the tank holder."*; sl. 16 gives the duration, *"in 2
    * seconds"*; and the state machine repeats it as the event on every `Click on the weight`
-   * transition (sl. 29, 30, 32). `BEDO-021` built the return leg and left this one out, so
-   * a disc simply appeared on the pan. This is the move it should always have made.
+   * transition (sl. 29, 30, 32).
    *
    * Watched as a state transition rather than triggered by a handler, exactly as removal
    * is: the tray disc, the panel's `+50g` button and a keyboard activation of that button
@@ -2761,10 +3125,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
    * the disc is in `stack` and would be drawn sitting on its seat; `seatIndex` is what
    * keeps that seat empty until it lands.
    *
+   * The route (F03): lifted out of its tray slot, carried over the shut tank and over the
+   * pan, and then set straight down the post onto its seat. Discs added in quick succession
+   * may be in the air together, but each one only reaches the top of the post once the one
+   * before it has landed, so two can never be on the post at once.
+   *
    * A **layout** effect, so the ghost exists and the seat is emptied in the same commit the
-   * runtime's change arrives in. As a passive effect this would run after the browser had
-   * already painted one frame of the disc sitting on the pan — the duplicate `§17` forbids,
-   * and a very visible one at the frame rates a 26 MB model reaches on a software renderer.
+   * runtime's change arrives in.
    */
   useLayoutEffect(() => {
     const previous = addedFromRef.current;
@@ -2787,6 +3154,31 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const to = new THREE.Vector3(entry.seat[0], entry.seat[1], entry.seat[2]);
     wrapper.position.copy(from);
 
+    const lift = liveHolderLift();
+    const hover = hoverOver(entry) + lift;
+    const plan = planHandling({
+      start: [from.x, from.y, from.z],
+      end: [to.x, to.y + lift, to.z],
+      depart: TRAY_LIFT,
+      approach: hover - (to.y + lift),
+      // Straight up out of the tray to above the post, over, and straight down (F03).
+      travelHeight: travelHeightOver(from.y + TRAY_LIFT, hover, DISC_TRAVEL_RISE),
+      obstacles: [transferObstacle, holderColumn(index, stack, lift), ...standingParts()],
+      radius: entry.radius,
+      halfHeight: entry.thickness / 2,
+    });
+
+    // Wait, if need be, so this disc reaches the top of the post only after every disc
+    // already on its way there has landed.
+    const duration = durationOf('weight-install');
+    const reachesPost = (plan.phases[0] + plan.phases[1]) * duration;
+    const busyFor = ghostsRef.current.reduce(
+      (latest, g) =>
+        g.seatIndex !== undefined ? Math.max(latest, transfers.remainingOf(g.id) ?? 0) : latest,
+      0
+    );
+    const delay = Math.max(0, busyFor - reachesPost + 0.05);
+
     const ghost: Ghost = {
       id,
       wrapper,
@@ -2794,17 +3186,19 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       from,
       to,
       followsPointer: false,
-      // The pan rides the cover and the spring, so the destination has to ride with it —
-      // added per frame rather than baked in, the way an install already does.
+      // The pan rides the cover and the spring, so the destination has to ride with it.
       liftsWithCover: true,
-      arc: arcBetween('weight-install', from, to, entry.radius),
+      arc: 0,
       radius: entry.radius,
       seatIndex: index,
       restCentre: new THREE.Vector3(),
+      plan,
+      liftAt: [0, 1],
+      liftAtPlan: lift,
     };
     ghostsRef.current = [...ghostsRef.current, ghost];
     setGhosts(ghostsRef.current);
-    transfers.start(id, 'weight-install');
+    transfers.start(id, 'weight-install', delay);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.loadedWeightsG]);
 
@@ -2839,13 +3233,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   }, [state.loadedWeightsG]);
 
   /**
-   * The 2D panel's removals, animated the same way.
+   * The 2D panel's removals, animated the same way — and a cleared stack (F03).
    *
    * `BEDO-021 §22`: the scene watches the state transition rather than being told by
    * whichever control caused it, so the panel button and the disc in the tank produce the
    * same two-second move without either surface knowing about the animation. The 3D path
    * has already raised its own ghost under this id by the time this runs, so it is left
    * alone.
+   *
+   * Each disc goes the way a hand would take it: drawn straight up the post until it is
+   * clear of the tip, carried over the tank, and set down in its tray slot. "Clear all
+   * weights" — and the lesson clearing the pan between readings — used to make every disc
+   * vanish from the pan and reappear on the tray in the same frame. Now the stack comes off
+   * top first, one disc at a time, each starting once the one above it is clear of the post;
+   * the ones still waiting their turn stay seated, and still press on the spring.
    *
    * A layout effect for the same reason the arrival is: the disc leaves `loadedWeightsG` at
    * once, and the ghost that carries it has to be on screen in that same commit or the pan
@@ -2857,43 +3258,79 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const entries = previousStackRef.current;
     previousStackRef.current = stack;
 
-    const index = removedWeightIndex(previous, state.loadedWeightsG);
-    if (index === null) return;
-
-    // The disc in the tank was dragged or clicked, and is already flying.
-    if (sceneHandledRemovalRef.current) {
-      sceneHandledRemovalRef.current = false;
-      return;
+    let removed: number[];
+    const single = removedWeightIndex(previous, state.loadedWeightsG);
+    if (single !== null) {
+      // The disc in the tank was dragged or clicked, and is already flying.
+      if (sceneHandledRemovalRef.current) {
+        sceneHandledRemovalRef.current = false;
+        return;
+      }
+      removed = [single];
+    } else {
+      // Several at once — Clear all, or the lesson tidying the pan. Only a stack cut down to
+      // a prefix of itself is a set of discs lifted off the top; anything else is not a
+      // removal this can animate.
+      const next = state.loadedWeightsG;
+      const isPrefix =
+        next.length < previous.length && next.every((grams, i) => grams === previous[i]);
+      if (!isPrefix) return;
+      removed = [];
+      for (let i = previous.length - 1; i >= next.length; i--) removed.push(i);
     }
 
-    const id = `weight:${index}`;
-    if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) return;
-
-    const entry = entries[index];
     const group = groupRef.current;
-    if (!entry || !group) return;
+    if (!group) return;
+    const lift = liveHolderLift();
+    const duration = durationOf('weight-removal');
+    let delay = 0;
+    const launched: Ghost[] = [];
+    for (const index of removed) {
+      const id = `weight:${index}`;
+      if (transfers.has(id) || ghostsRef.current.some((g) => g.id === id)) continue;
+      const entry = entries[index];
+      if (!entry) continue;
 
-    const wrapper = weightGhostWrapper(entry);
-    const stackLift = weightStackRef.current?.position.y ?? 0;
-    wrapper.position.set(entry.seat[0], entry.seat[1] + stackLift, entry.seat[2]);
+      const wrapper = weightGhostWrapper(entry);
+      const seat = new THREE.Vector3(entry.seat[0], entry.seat[1] + lift, entry.seat[2]);
+      wrapper.position.copy(seat);
+      const hover = hoverOver(entry) + lift;
+      const plan = planHandling({
+        start: [seat.x, seat.y, seat.z],
+        end: [entry.measured.x, entry.measured.y, entry.measured.z],
+        depart: hover - seat.y,
+        approach: TRAY_LIFT,
+        travelHeight: travelHeightOver(hover, entry.measured.y + TRAY_LIFT, DISC_TRAVEL_RISE),
+        obstacles: [transferObstacle, holderColumn(index, entries, lift), ...standingParts()],
+        radius: entry.radius,
+        halfHeight: entry.thickness / 2,
+      });
 
-    const ghost: Ghost = {
-      id,
-      wrapper,
-      grams: previous[index],
-      // Off the seat it was on, back to the tray slot it came from — the same two points
-      // the 3D path uses, so the panel button and the disc in the tank fly identically.
-      from: wrapper.position.clone(),
-      to: entry.measured.clone(),
-      followsPointer: false,
-      liftsWithCover: false,
-      arc: arcBetween('weight-removal', wrapper.position, entry.measured, entry.radius),
-      radius: entry.radius,
-      restCentre: new THREE.Vector3(),
-    };
-    ghostsRef.current = [...ghostsRef.current, ghost];
+      const ghost: Ghost = {
+        id,
+        wrapper,
+        grams: previous[index],
+        // Off the seat it was on, back to the tray slot it came from — the same two points
+        // the 3D path uses, so the panel button and the disc in the tank fly identically.
+        from: new THREE.Vector3(entry.seat[0], entry.seat[1], entry.seat[2]),
+        to: entry.measured.clone(),
+        followsPointer: false,
+        liftsWithCover: false,
+        arc: 0,
+        radius: entry.radius,
+        restCentre: new THREE.Vector3(),
+        plan,
+        liftAt: [1, 0],
+        liftAtPlan: lift,
+      };
+      launched.push(ghost);
+      transfers.start(id, 'weight-removal', delay);
+      // The next disc down starts once this one is off the post.
+      delay += Math.max(STACK_CLEAR_STAGGER_SECONDS, plan.phases[0] * duration + 0.05);
+    }
+    if (!launched.length) return;
+    ghostsRef.current = [...ghostsRef.current, ...launched];
     setGhosts(ghostsRef.current);
-    transfers.start(id, 'weight-removal');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.loadedWeightsG]);
 
@@ -2966,6 +3403,7 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
   );
 
   useFrame((three, rawDelta) => {
+    lastThree.current = three;
     if (!scene) return;
     const t = three.clock.getElapsedTime();
 
@@ -3079,8 +3517,9 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       powerPivot.quaternion.setFromAxisAngle(powerSpindle.current, powerTurn.current);
     }
 
-    // The pilot lamp follows the power state alone — red lens, red light. Its colour and
-    // emissive mask were set once in the material pass; only the intensity moves here.
+    // The pilot lamp follows the power state alone, and lights green (`pilotLamp.ts`). Its
+    // colour and mask were set once in the material pass; the intensity, and how far the
+    // lens's red has faded, move here.
     const lampMat = (pick(MESH.powerLight) as THREE.Mesh | undefined)?.material as
       | THREE.MeshStandardMaterial
       | undefined;
@@ -3090,11 +3529,14 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         pilotLampIntensity(state.isPowerOn),
         14
       );
+      setPilotLampLevel(lampMat, lampMat.emissiveIntensity / PILOT_LAMP_ON_INTENSITY);
     }
 
     // --- Jet force, spring deflection, pointer ---------------------------------
-    const { theoreticalForceN } = jetState(state.valveOpening, state.selectedDeflectorId);
-    const jetForceN = state.isPowerOn && !state.isCoverOpen ? theoreticalForceN : 0;
+    // The runtime's answer (F09): a fitted deflector, the pump running, the tank shut, at
+    // the student's Q_total. This used to call `jetState` here without Q_total, so the
+    // Parameters panel's pump flow never reached the carrier or the pointer.
+    const jetForceN = state.live.jetForceOnCarrierN;
     // The mass actually **on the holder**, which during a transfer is not the whole of what
     // the runtime is carrying: a disc still in the air is not yet pressing on anything.
     //
@@ -3106,35 +3548,58 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     // Presentation only, and deliberately so: `loadedWeightsG` is untouched, so the
     // measured force, the balance window, the readings and the CSV are exactly what they
     // were. This is where the disc is, not what it weighs (`docs/40 §6`).
-    const seatedMassG = state.loadedWeightsG.reduce(
-      (total, massG, index) => (inFlightSeats.has(index) ? total : total + massG),
+    // A disc queued to come off — a cleared stack comes off one disc at a time (F03) — is
+    // still sitting on the pan until its turn, so it still presses on the spring.
+    const waitingToLeaveG = ghostsRef.current.reduce(
+      (total, g) =>
+        g.grams !== undefined &&
+        g.seatIndex === undefined &&
+        g.liftAt?.[0] === 1 &&
+        transfers.fractionOf(g.id) === 0
+          ? total + g.grams
+          : total,
       0
     );
-    const weightForceN = (seatedMassG * 9.81) / 1000;
+    const seatedMassG =
+      state.loadedWeightsG.reduce(
+        (total, massG, index) =>
+          inFlightSeats.has(index) || heldSeats.has(index) ? total : total + massG,
+        0
+      ) + waitingToLeaveG;
+    // F19: the same g and the same grams-to-newtons as F_ac everywhere else.
+    const weightForceN = gramsToNewtons(seatedMassG, GRAVITY_MS2);
 
-    // X = h_F - h_w, floored at rest and capped by the geometry above the spring.
-    // The equation and the floor are BEDO's (storyboard sl. 8/19, see domain/spring.ts);
-    // the travel limit is measured from this model, which is the scene's half of it.
+    // X = h_F - h_w (storyboard sl. 8/19, `domain/spring.ts`), signed: the carrier rises
+    // while the jet outweighs the load and sinks below rest while the load outweighs the
+    // jet, towards the fixed pointer either way (F05). Capped above by the geometry over
+    // the spring, and below by the carrier's mechanical stop — the minimum nozzle
+    // clearance for the deflector that is fitted, or the spring's working compression
+    // (`lib/carrierTravel.ts`). Past the stop, more load moves nothing.
     const restH = springInfoRef.current
       ? springInfoRef.current.restH
       : SPRING_REST_HEIGHT_MODEL_UNITS;
-    const deflection = mmToModelUnits(
-      springDeflectionMm(jetForceN, weightForceN, springTravelLimitMm(restH))
+    const fittedId = lesson.hasInstalledDeflector ? state.selectedDeflectorId : 0;
+    const stop = carrierStopsRef.current.get(fittedId) ?? carrierStopsRef.current.get(0);
+    const dropMm = stop ? stop.dropMm : springCompressionLimitMm(restH * 1000);
+    const targetDeflection = mmToModelUnits(
+      springDeflectionMm(jetForceN, weightForceN, springTravelLimitMm(restH), dropMm)
     );
+    // The carrier settles on a new load progressively and without overshoot, so its height
+    // changes monotonically from one load to the next rather than jumping there in a frame.
+    // Never past the stop in between: it starts inside the limits and only moves towards a
+    // target that is.
+    const deflection = settleToward(deflectionRef.current, targetDeflection, rawDelta);
     // The rod rides this, and so does the drop region measured from it.
     deflectionRef.current = deflection;
 
-    // The pointer rides the moving assembly and swings about the rod axis it is clamped
-    // to. Rotating the mesh itself would orbit the GLB's distant shared origin, so the
-    // swing goes through its pivot (planted on the rod axis at install time).
+    // The pointer is the fixed reference the carrier is balanced against (F05): it is
+    // clamped to its own pin, which stands on the apparatus base, at the carrier's rest
+    // height. It never moves with the load. It used to ride the carrier's deflection —
+    // so it followed the pan it was meant to be read against, and any load looked level.
+    // It only swings aside, about its pin, while the cover is open.
     const pointerPivot = pivots.current[MESH.pointer];
     if (pointerPivot) {
-      // The pointer height is driven only by spring deflection, staying in place when the cover lifts.
-      pointerPivot.position.y = damp(
-        pointerPivot.position.y,
-        baseY(pointerPivot, 'pivot:pointer') + deflection,
-        10
-      );
+      pointerPivot.position.y = baseY(pointerPivot, 'pivot:pointer');
       // Swings 90 degrees to the right when open
       pointerPivot.rotation.y = pointerSwingRef.current * QUARTER_TURN;
     }
@@ -3189,93 +3654,120 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     const deflector = getDeflector(state.selectedDeflectorId);
     const activeDef = pick(deflector.installed);
     if (activeDef) {
-      // The deflector moves with cover offset and spring deflection
-      activeDef.position.y = damp(
-        activeDef.position.y,
-        baseY(activeDef, deflector.installed) + holderLift,
-        10
-      );
+      // The deflector is screwed to the rod, so it rides exactly the lift the rod rides — the
+      // same number, in the same frame. It used to be *damped* towards it while the rod was
+      // set directly, so whenever the rod moved the deflector trailed behind: opening the
+      // cover left it hanging up to 230 mm below the end of the rod for half a second, in
+      // mid-air inside the tank (F03, measured 2026-09-28).
+      activeDef.position.y = baseY(activeDef, deflector.installed) + holderLift;
     }
 
     // --- Water ------------------------------------------------------------------
     //
-    // Two shapes, because BEDO specifies two (`Jetforce_Storyboard.pptx` sl. 18): the
-    // column leaving the nozzle, and the spray leaving the deflector. They had been one
-    // object, sized at 95% of the *tank's* diameter — seventeen times the nozzle's bore.
-    // See `src/lib/waterJet.ts` and `docs/41`.
+    // Computed from the simulation's own state, every frame (F08, `src/lib/jetFlow.ts`):
+    // the exit velocity and flow the domain computes, the deflector that is actually on the
+    // rod — none while it is off it or in the learner's hand — and the height the carrier
+    // stands at this frame. The path runs from the nozzle to the pool on the tank's floor.
     const group = groupRef.current;
     const flowing = state.isPowerOn && state.valveOpening > 0.05 && !state.isCoverOpen;
-
-    if (flowing && group && activeDef && jetGroupRef.current) {
-      // Nothing is fitted, placed or sized here any more: the caches are already in the
-      // apparatus's own coordinate system, a hundred times over. `WATER_MODEL_SCALE` is the
-      // whole transform — see `src/lib/waterJet.ts` for how that was measured.
-      //
-      // The groups carry that scale from the JSX below and never move, so the only thing
-      // left to decide each frame is which shape is visible and where its cache has got to.
-      // The storyboard defines two mutually exclusive water states, and which one is showing
-      // is decided by how much water is arriving — see `waterShapeForFlow` for the caches'
-      // own evidence that `Water_low` is the low-flow body and for why the impact velocity
-      // it used to read could never select it. Every after-impact cache already contains its
-      // own nozzle column, impact and spread, so keeping Water_low underneath it would
-      // double the stream.
-      //
-      // `state.live.flowRateLMin` is the domain's own figure for the current valve setting,
-      // over the pump capacity the student may have customised — the same fraction the tank
-      // fill below is driven by, so the two states can never disagree about which one this is.
-      const inflowFraction =
-        state.live.flowRateLMin / Math.max(state.params.pumpFlowLMin, 1e-9);
-      const activeWater = waterShapeForFlow(inflowFraction, deflector.water);
-      const impacting = activeWater !== JET_ASSET;
-
-      // The after-impact caches hang a sheet to the tank floor; the pre-impact column does
-      // not and must not be cut. Measured off the live plume at high flow: it spans world y
-      // 0.1117..0.5076 against a nozzle mouth at 0.4712, so the band sits just under the
-      // mouth and clears by the time the sheet is well inside the vessel. See the mask in
-      // the water material.
-      if (impacting) {
-        plumeCutUniform.current.value.set(PLUME_CUT_CLEAR_Y, PLUME_CUT_FULL_Y);
-      } else {
-        plumeCutUniform.current.value.set(-1e9, -1e9 + 1);
-      }
-      jetGroupRef.current.visible = !impacting;
-      if (plumeGroupRef.current) plumeGroupRef.current.visible = impacting;
-
-      // Ripple with the flow, but gently — see the material for the amplitude.
-      waterTime.current.value = t * (0.6 + state.valveOpening * 1.6);
-      waterFlow.current.value = state.valveOpening;
-      // The hose carries whatever the pump is delivering, on the same authority.
-      hoseFlow.current.value = state.valveOpening;
-
-      (Object.keys(WATER_SHAPES) as WaterShapeKey[]).forEach((key) => {
-        const gltf = (water as any)[key];
-        if (gltf?.scene) gltf.scene.visible = key === activeWater;
-      });
-
-      // --- Authored geometry playback -----------------------------------------
-      //
-      // The two shapes each run their own one-shot cache: 81 frames at 24 fps, played
-      // once and held at the settled pose. Valve movement deliberately does **not**
-      // restart them — only the flow starting does — so nudging the setpoint cannot make
-      // the water re-emerge from nothing. See `src/lib/waterCache.ts` and `docs/44 §F3`.
-      const jetSource = (water as any)[JET_ASSET]?.scene;
-      if (jetSource) {
-        applyCacheFrame(jetSource, jetClock.current.advance(!impacting, delta));
-      }
-
-      const plumeSource = (water as any)[deflector.water]?.scene;
-      if (plumeSource) {
-        applyCacheFrame(plumeSource, plumeClock.current.advance(impacting, delta));
-      }
+    const edges = flowEdgesRef.current;
+    if (flowing && !edges.running) {
+      edges.running = true;
+      // Re-opening while the last of the water is still draining keeps what is in the air.
+      edges.startedAt = t;
+    } else if (!flowing && edges.running) {
+      edges.running = false;
+      edges.stoppedAt = t;
+    }
+    const jetGeometry = jetGeometryRef.current;
+    const jetAxis = jetAxisRef.current;
+    const fittedSurface =
+      lesson.hasInstalledDeflector && !ghostDeflectorIds.has(deflector.id)
+        ? wettedRef.current.get(deflector.id) ?? null
+        : null;
+    // Water already in the air keeps falling for as long as it takes to reach the pool.
+    const draining = !flowing && t - edges.stoppedAt < 1.0 && lastPathRef.current !== null;
+    if ((flowing || draining) && group && jetGeometry && jetAxis) {
+      // While draining, the water already in the air stays on the path it was on when the
+      // flow stopped — opening the cover afterwards must not bend it.
+      const paths = flowing
+        ? buildJetPaths({
+            v0: state.live.nozzleVelocityMS,
+            q: state.live.flowRateM3S,
+            geometry: jetGeometry,
+            deflector: fittedSurface
+              ? {
+                  surface: fittedSurface,
+                  // The deflector rides the rod: the cover offset and the carrier's deflection.
+                  liftM: holderLift,
+                  nominalDeflectionRad: THREE.MathUtils.degToRad(deflector.id),
+                }
+              : null,
+          })
+        : lastPathRef.current!;
+      lastPathRef.current = paths;
+      writeJetPath(jetFlowMesh.geometry, paths, jetAxis);
+      jetFlowMesh.visible = true;
+      jetFlowUniforms.uClock.value = t;
+      jetFlowUniforms.uFlow.value = flowing ? state.valveOpening : 0;
+      // The front leaves the nozzle when the flow starts; the tail when it stops.
+      jetFlowUniforms.uHead.value = t - edges.startedAt;
+      jetFlowUniforms.uTail.value = flowing ? -1 : t - edges.stoppedAt;
+      const lastT = Math.max(...paths.map((p) => (p.points.length ? p.points[p.points.length - 1].t : 0)));
+      poolUniforms.uTime.value = t;
+      poolUniforms.uFlow.value = flowing ? state.valveOpening : 0;
+      poolUniforms.uLanding.value = paths[0].landingRadius;
+      // The floor is wet once the front has reached it, and dries after the tail has.
+      poolUniforms.uWet.value = flowing
+        ? THREE.MathUtils.clamp((t - edges.startedAt - lastT) / 0.3 + 1, 0, 1)
+        : THREE.MathUtils.clamp(1 - (t - edges.stoppedAt) / 1.0, 0, 1);
+      if (poolMesh) poolMesh.visible = poolUniforms.uWet.value > 0;
     } else {
-      if (jetGroupRef.current) jetGroupRef.current.visible = false;
-      if (plumeGroupRef.current) plumeGroupRef.current.visible = false;
-      // Parked, not reversed. No authored shutdown cache exists, so the next start plays
-      // the emergence again from frame 0 rather than inventing a drain (`docs/44 §F2`).
-      jetClock.current.advance(false, delta);
-      plumeClock.current.advance(false, delta);
-      waterFlow.current.value = 0;
-      hoseFlow.current.value = 0;
+      jetFlowMesh.visible = false;
+      if (poolMesh) poolMesh.visible = false;
+    }
+
+    // --- The hose carries what the pump delivers, on the same authority ----------
+    //
+    // The water moves through the bore at Q / A: it fills the hose from the pump end at that
+    // speed when the flow starts, carries its surface along at that speed, and runs out from
+    // the pump end when the flow stops. Parcel units are metres at 1 m/s
+    // (`CONDUIT_REFERENCE_SPEED`), so the geometry never needs rewriting.
+    const hose = hoseRef.current;
+    if (hose) {
+      const bore = Math.PI * hose.radius * 0.8 * hose.radius * 0.8;
+      if (flowing) {
+        hose.speed = state.live.flowRateM3S / Math.max(bore, 1e-9);
+        if (!hose.running) {
+          hose.running = true;
+          hose.head = 0;
+          hose.tail = -1;
+        }
+        hose.head = Math.min(hose.head + (hose.speed * rawDelta) / CONDUIT_REFERENCE_SPEED, 1e6);
+      } else {
+        if (hose.running) {
+          hose.running = false;
+          hose.tail = 0;
+        }
+        if (hose.tail >= 0) hose.tail += (Math.max(hose.speed, 0.5) * rawDelta) / CONDUIT_REFERENCE_SPEED;
+      }
+      // The pattern is carried at a pace the eye can follow (`conduitPatternSpeed`); the
+      // front above fills at the true speed.
+      hoseUniforms.uClock.value += (flowing ? conduitPatternSpeed(hose.speed) : 0) * rawDelta / CONDUIT_REFERENCE_SPEED;
+      hoseUniforms.uHead.value = hose.head;
+      hoseUniforms.uTail.value = hose.tail;
+      hoseUniforms.uFlow.value = flowing ? state.valveOpening : hose.tail >= 0 && hose.tail < hose.length ? 0.2 : 0;
+      hoseUniforms.uSpeed.value = flowing ? hose.speed : 0;
+    }
+
+    // --- The supply hose: always full, and running while the pump draws -------------
+    const supply = supplyRef.current;
+    if (supply) {
+      const bore = Math.PI * supply.radius * 0.8 * supply.radius * 0.8;
+      const speed = flowing ? state.live.flowRateM3S / Math.max(bore, 1e-9) : 0;
+      supplyUniforms.uClock.value += (conduitPatternSpeed(speed) * rawDelta) / CONDUIT_REFERENCE_SPEED;
+      supplyUniforms.uFlow.value = flowing ? state.valveOpening : 0;
+      supplyUniforms.uSpeed.value = speed;
     }
 
     // --- The tank fills once more arrives than the drain can carry -------------
@@ -3319,6 +3811,38 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       // its visualisation should remove it.
     }
 
+    // --- The flowmeter column and the measuring tank (visual only) -----------------
+    // By the bench's rules: shut, the volumetric valve lets the measuring tank collect the
+    // water the jet delivers; open, the tank drains. A picture only — no value, reading or
+    // step reads it (`lib/measuringTank.ts`). A reset or a new sheet starts it empty.
+    if (measuringTankRun.current !== lesson.runId) {
+      measuringTankRun.current = lesson.runId;
+      measuringTankL.current = 0;
+    }
+    measuringTankL.current = advanceTankVolume(
+      measuringTankL.current,
+      state.live.flowRateLMin,
+      state.isVolumetricValveOpen,
+      delta
+    );
+    const litreHeight = litreHeightRef.current;
+    if (litreHeight) {
+      // The tube and the tank are one body of water, so they stand at the same height.
+      const levelY = measuringTankL.current > 0 ? litreHeight(measuringTankL.current) : -1e6;
+      columnRef.current?.setLevel(levelY);
+      const basin = basinRef.current;
+      if (basin) {
+        setBasinLevel(basin.water, basin.interior, levelY);
+        // Water pours into the measuring tank while its valve is shut and the jet runs.
+        const stir = basin.water.userData.basinUniforms;
+        if (stir) {
+          stir.uTime.value = t;
+          const target = flowing && !state.isVolumetricValveOpen ? Math.min(state.valveOpening * 1.5, 1) : 0;
+          stir.uStir.value += (target - stir.uStir.value) * Math.min(delta * 2, 1);
+        }
+      }
+    }
+
     // --- Loaded weights ride the pan --------------------------------------------
     // The very same lift the rod above is given, so the stack cannot drift off the plate
     // when the cover is unscrewed or the spring moves under load.
@@ -3342,6 +3866,17 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       const carried = ghostsRef.current.some((g) => g.grams === w.grams);
       meshObj.visible = !carried && !state.loadedWeightsG.includes(w.grams);
     });
+    // The one custom disc: away while any custom mass is on the pan or in the air, and not
+    // shown at all when the control is on a mass the row already has.
+    const customDisc = pick(CUSTOM_WEIGHT_MESH);
+    if (customDisc) {
+      const fixed = (grams: number | undefined) =>
+        grams === undefined || WEIGHTS.some((w) => w.grams === grams);
+      const customAway =
+        state.loadedWeightsG.some((grams) => !fixed(grams)) ||
+        ghostsRef.current.some((g) => g.grams !== undefined && !fixed(g.grams));
+      customDisc.visible = !fixed(customWeightRef.current) && !customAway;
+    }
 
     // --- Ghosts: carried objects and physical transfers ---------------------------
     //
@@ -3350,16 +3885,25 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     if (ghosts.length) {
       const settled = transfers.advance(rawDelta);
       for (const ghost of ghosts) {
-        if (ghost.followsPointer) continue;
-        const progress = transfers.progressOf(ghost.id);
-        if (progress === null) continue;
-        ghost.wrapper.position.lerpVectors(ghost.from, ghost.to, progress);
-        if (ghost.liftsWithCover) {
-          ghost.wrapper.position.y += holderLift * progress;
+        if (ghost.followsPointer && ghost.carryTarget) {
+          ghost.wrapper.position.lerp(ghost.carryTarget, 1 - Math.exp(-rawDelta * 18));
         }
-        // Over the shut tank rather than through it. Zero at both ends, so the disc still
-        // leaves its tray slot and lands on its seat at exactly the measured anchors.
-        ghost.wrapper.position.y += arcLift(ghost.arc, progress);
+        if (ghost.followsPointer || !ghost.plan) continue;
+        const fraction = transfers.fractionOf(ghost.id);
+        if (fraction === null) continue;
+        // Lifted clear, carried over the tank, lined up on the destination's axis, and only
+        // then moved onto it (F03, `lib/handlingPath.ts`).
+        const sample = sampleHandling(ghost.plan, fraction);
+        const [atStart, atEnd] = ghost.liftAt ?? [0, 0];
+        // The pan and rod ride the cover and the spring. Whatever part of the route belongs
+        // to them follows any change in that lift since the flight was planned.
+        const drift = (holderLift - (ghost.liftAtPlan ?? 0)) * liftShare(sample, atStart, atEnd);
+        ghost.wrapper.position.set(
+          sample.position[0],
+          sample.position[1] + drift,
+          sample.position[2]
+        );
+        if (ghost.turn) orientInFlight(ghost.wrapper.quaternion, ghost.turn, sample);
       }
       if (settled.length) {
         // Hide the ghost and reveal the real part in the *same* frame, so the swap at the
@@ -3382,6 +3926,50 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       coverHotspotRef.current.position.y = coverSpot.position[1] + coverOffsetRef.current;
     }
 
+    // F17: the spring, the carrier and the fitted deflector ride what carries them, and so
+    // do their proxies — the same numbers, in the same frame.
+    for (const h of hotspots) {
+      if (!h.follows) continue;
+      const proxy = proxyRefs.current.get(h.key);
+      if (proxy) proxy.position.y = h.position[1] + (h.follows === 'holder' ? holderLift : coverOffsetRef.current);
+    }
+
+    // F17: where the inspected part is on screen, for its card. Resolved from the scene's
+    // own key when the click gave one, else from the stable anchor id.
+    const insp = inspectionRef.current;
+    if (!insp || sceneHidden) {
+      publishAnchorPoint(null);
+    } else {
+      const world = projectTmp.current;
+      let found = false;
+      const key = insp.sceneKey ?? hotspots.find((h) => anchorIdOf(refOf(h.action)) === insp.anchorId)?.key;
+      if (key?.startsWith(STACK_KEY)) {
+        const disc = stackRef.current.find((d) => `${STACK_KEY}${d.index}` === key)?.object;
+        if (disc) {
+          disc.getWorldPosition(world);
+          found = true;
+        }
+      } else if (key) {
+        const proxy = proxyRefs.current.get(key);
+        if (proxy) {
+          proxy.getWorldPosition(world);
+          found = true;
+        }
+      }
+      if (!found) {
+        publishAnchorPoint(null);
+      } else {
+        world.project(three.camera);
+        const rect = three.gl.domElement.getBoundingClientRect();
+        const onScreen = world.z > -1 && world.z < 1 && Math.abs(world.x) <= 1 && Math.abs(world.y) <= 1;
+        publishAnchorPoint({
+          x: rect.left + ((world.x + 1) / 2) * rect.width,
+          y: rect.top + ((1 - world.y) / 2) * rect.height,
+          onScreen,
+        });
+      }
+    }
+
     // --- Guide arrow bob ---------------------------------------------------------
     if (arrowGroupRef.current && arrowPos) {
       // Step 3 points at the plate, which by then is up in the air.
@@ -3394,6 +3982,98 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
     }
   });
 
+  // --- Hover, click and right-click on the hit proxies (F17) ---------------------------
+  //
+  // Hover is informational only: it sets the outline, the cursor and the label, and
+  // dispatches nothing. Acting on the rig still takes an explicit click on an operational
+  // part; a part's card opens on a right-click anywhere, or on a plain click on a part
+  // that only answers questions when no control is behind it.
+
+  /** Parts that only answer questions: pressing them does nothing to the rig. */
+  const isInfoOnly = (action: Action) => action.kind === 'nozzle' || action.kind === 'part';
+
+  /**
+   * Which proxy under the pointer is "the" part.
+   *
+   * A disc on the pan, whenever one is under the pointer: it sits on the carrier and inside
+   * the cover's sphere, and is the most specific thing there. Otherwise the nearest —
+   * except that the tank cover's click sphere encloses the pan, the spring, the pointer
+   * and the fitted deflector, and would otherwise always win. So when the nearest is the
+   * cover and a more precise target is also under the pointer, the nearest precise one is
+   * the part. Hover and the card only: the cover's click is untouched.
+   */
+  const winnerOf = (e: ThreeEvent<PointerEvent | MouseEvent>): THREE.Object3D | null => {
+    const hits = e.intersections.filter(
+      (i) => i.eventObject.userData.bedoProxy || i.eventObject.userData.bedoStackDisc
+    );
+    const disc = hits.find((i) => i.eventObject.userData.bedoStackDisc);
+    if (disc) return disc.eventObject;
+    const nearest = hits[0]?.eventObject ?? null;
+    if (!nearest || nearest !== coverHotspotRef.current) return nearest;
+    const precise = hits.find(
+      (i) => i.eventObject.userData.bedoStackDisc || i.eventObject.userData.bedoProxy?.precise
+    );
+    return precise?.eventObject ?? nearest;
+  };
+
+  const hoverProxy = (
+    e: ThreeEvent<PointerEvent>,
+    h: Hotspot,
+    infoOnly: boolean,
+    draggable: boolean
+  ) => {
+    if (winnerOf(e) !== e.eventObject) {
+      // Not this part: step aside without stopping the event, so the winner behind hears it.
+      setHoveredKey((k) => (k === h.key ? null : k));
+      setLabelledKey((k) => (k === h.key ? null : k));
+      return;
+    }
+    // An operational winner keeps the event; an informational one lets it through, as the
+    // nozzle always has — it must not become an obstacle.
+    if (!infoOnly) e.stopPropagation();
+    if (sceneHidden) return;
+    pointerAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
+    // Actionability, not focus: a hotspot the gate would refuse must not offer the same
+    // pointer — or the same outline — as one it would accept (BEDO-020 §24). The
+    // informational parts outline and name themselves but keep the default cursor,
+    // because there is nothing to press.
+    if (actionableKeys.has(h.key)) {
+      document.body.style.cursor = draggable ? 'grab' : 'pointer';
+      setHoveredKey(h.key);
+    } else if (infoOnly) {
+      setHoveredKey(h.key);
+    }
+    setLabelledKey(h.key);
+    setLabelClickOpens(
+      infoOnly && !e.intersections.some((i) => i.eventObject.userData.bedoProxy?.operational)
+    );
+  };
+
+  /** Where the right button went down, to tell a right-click from a right-drag (a pan). */
+  const rightPressAt = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    const down = (e: PointerEvent) => {
+      if (e.button === 2) rightPressAt.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('pointerdown', down, true);
+    return () => window.removeEventListener('pointerdown', down, true);
+  }, []);
+  const rightPressMoved = (e: MouseEvent) => {
+    const at = rightPressAt.current;
+    return !!at && Math.hypot(e.clientX - at.x, e.clientY - at.y) > 6;
+  };
+
+  const inspectProxy = (h: Hotspot) => {
+    if (sceneHidden || !onInspectComponent) return;
+    const ref = refOf(h.action);
+    onInspectComponent({ ref, anchorId: anchorIdOf(ref), via: 'click', sceneKey: h.key });
+  };
+  const inspectStackDisc = (index: number) => {
+    if (sceneHidden || !onInspectComponent) return;
+    const ref = stackRefOf(index);
+    if (ref) onInspectComponent({ ref, anchorId: anchorIdOf(ref), via: 'click', sceneKey: `${STACK_KEY}${index}` });
+  };
+
   return (
     <group ref={groupRef} position={position} rotation={rotation} scale={scale}>
       <primitive object={scene} />
@@ -3404,7 +4084,11 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           // The slot's origin *is* the disc's seat on the pan, so the disc and the target
           // the pointer hits cannot drift apart: one is recentred onto this origin, the
           // other simply sits at it (`docs/39 §7`).
-          <group key={key} position={seat} visible={!inFlightSeats.has(index)}>
+          <group
+            key={key}
+            position={seat}
+            visible={!inFlightSeats.has(index) && !heldSeats.has(index)}
+          >
             <group position={recentre}>
               <primitive object={object} />
             </group>
@@ -3434,10 +4118,20 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
               hidden proxy is precisely the invisible-but-clickable target `BUG-19` was.
               An empty seat is not something a learner can take a weight off (§18).
             */}
+            {/*
+              Only the top disc can be taken off — the discs are threaded on the post (F03).
+              The ones beneath are still named on hover, but not outlined or grabbable.
+
+              The proxy stays mounted while its disc is in the learner's hand: the drag holds
+              pointer capture on it, and unmounting it would orphan the gesture. Only the disc
+              is hidden (the slot group above).
+            */}
             {!inFlightSeats.has(index) && (
               <mesh
                 userData={{ bedoStackDisc: true }}
-                {...drag.handlersFor({ kind: 'weight', index })}
+                {...(index === stack.length - 1
+                  ? drag.handlersFor({ kind: 'weight', index })
+                  : {})}
                 onPointerOver={(e) => {
                   e.stopPropagation();
                   if (sceneHidden) return;
@@ -3446,10 +4140,15 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
                   // Named whatever the gate says — it is a real disc of a real mass — but
                   // outlined only when taking it off would be accepted.
                   setLabelledKey(key);
-                  if (weightsAreActionable) {
+                  if (weightsAreActionable && index === stack.length - 1) {
                     document.body.style.cursor = 'grab';
                     setHoveredKey(key);
                   }
+                }}
+                onContextMenu={(e) => {
+                  e.stopPropagation();
+                  e.nativeEvent.preventDefault();
+                  if (!rightPressMoved(e.nativeEvent)) inspectStackDisc(index);
                 }}
                 onPointerOut={() => {
                   if (!drag.current()) document.body.style.cursor = 'default';
@@ -3467,47 +4166,13 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
       </group>
 
       {/*
-        BEDO's two water objects, drawn separately because the storyboard specifies them
-        separately (sl. 18): the column leaving the nozzle, and the spray leaving the
-        deflector. They were one group sized at 95% of the tank's diameter — see
-        `src/lib/waterJet.ts`.
-
-        Neither shape is fitted, rotated or re-centred. BEDO authored all eight caches in
-        the apparatus's own coordinate system, in centimetres — every one of them centres on
-        x = 1.01, z = -22.93, which is the nozzle axis at (0.0101, -0.2293) times a hundred.
-        So the entire transform is `WATER_MODEL_SCALE`, and the authored position is already
-        the right position. See `src/lib/waterJet.ts`.
+        The water (F08): one path from the nozzle to the pool on the tank floor, recomputed
+        every frame from the flow, the fitted deflector and the carrier's height — see
+        `src/lib/jetFlow.ts`. It replaces BEDO's eight authored caches, which were fixed
+        shapes and could follow none of those (`docs/57`).
       */}
-      {(() => {
-        const shape = (key: WaterShapeKey) => {
-          const source = (water as any)[key]?.scene;
-          if (!source) return null;
-          return <primitive key={key} object={source} />;
-        };
-        const plumes = (Object.keys(WATER_SHAPES) as WaterShapeKey[]).filter(
-          (k) => k !== JET_ASSET
-        );
-        return (
-          <>
-            {/* Before impact — the authored column, at its authored place and size. */}
-            <group ref={jetGroupRef} visible={false} scale={WATER_MODEL_SCALE}>
-              {shape(JET_ASSET)}
-            </group>
-            {/* After impact — the authored spray, likewise. */}
-            <group ref={plumeGroupRef} visible={false} scale={WATER_MODEL_SCALE}>
-              {plumes.map(shape)}
-            </group>
-            {/*
-              No procedural tank body is drawn (BEDO-WATER-14). The standing water used to
-              be a `CylinderGeometry` inside the glass, and it read as exactly that: a blue
-              cylinder with its own walls, narrower than the bore it was meant to fill.
-              Hiding it at runtime produced the wanted frame outright, so it is gone rather
-              than reshaded. The water entering the tank is the authored Alembic plume; the
-              fill level survives as state, not as a mesh — see the frame loop.
-            */}
-          </>
-        );
-      })()}
+      <primitive object={jetFlowMesh} />
+      {poolMesh && <primitive object={poolMesh} />}
 
       {arrowPos && (
         <group ref={arrowGroupRef} position={arrowPos}>
@@ -3548,6 +4213,12 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
         // A tray disc that is not on the tray has no hit proxy either. See
         // `hiddenTrayWeightGrams` — this is BUG-19's other half.
         if (h.action.kind === 'weight' && hiddenTrayWeightGrams.has(h.action.grams)) return null;
+        // F17: the deflector on the rod exists only while one is fitted, and the pointer
+        // arm swings clear of the plate while the cover is up — no proxy where no part is.
+        if (h.action.kind === 'part') {
+          if (h.action.component === 'installedDeflector' && !lesson.hasInstalledDeflector) return null;
+          if (h.action.component === 'pointer' && state.isCoverOpen) return null;
+        }
 
         // Deflectors are dragged; everything else is pressed. Note the click path is not
         // lost — a press and release without movement resolves to `activate`, which puts
@@ -3556,59 +4227,57 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
           h.action.kind === 'deflector' ? { kind: 'deflector', deflectorId: h.action.id } : null;
         const draggable = source !== null;
         // A proxy that only names its part must not become an obstacle in front of one
-        // that does something. It takes no click and stops no event, so a press aimed at
-        // whatever sits behind it still gets there.
-        const labelOnly = h.action.kind === 'nozzle';
+        // that does something. It takes no click meant for another part and stops no
+        // event, so a press aimed at whatever sits behind it still gets there.
+        const infoOnly = isInfoOnly(h.action);
 
         return (
           <mesh
             key={h.key}
-            ref={h.key === MESH.tankCover ? coverHotspotRef : undefined}
-            position={h.position}
-            {...(source ? drag.handlersFor(source) : {})}
-            onPointerOver={(e) => {
-              // The cover's click sphere encloses the weight pan. A disc on the pan is the
-              // more precise target, so while one is under the pointer it takes the hover
-              // (and its label) and the cover steps aside. Hover only; clicks are untouched.
-              if (
-                h.key === MESH.tankCover &&
-                e.intersections.some((i) => i.eventObject.userData.bedoStackDisc)
-              ) {
-                return;
-              }
-              if (!labelOnly) e.stopPropagation();
-              // Only the nearest proxy under the pointer is "hovered". The nozzle lets
-              // events through (it must not swallow clicks), so without this a proxy
-              // behind it would take the outline while the nozzle kept the label.
-              if (e.intersections[0] && e.intersections[0].eventObject !== e.eventObject) return;
-              if (sceneHidden) return;
-              pointerAt.current = { x: e.nativeEvent.clientX, y: e.nativeEvent.clientY };
-              // Actionability, not focus: a hotspot the gate would refuse must not offer
-              // the same pointer — or the same outline — as one it would accept
-              // (BEDO-020 §24). The nozzle is informational: it outlines and names itself
-              // but keeps the default cursor, because there is nothing to press.
-              if (actionableKeys.has(h.key)) {
-                document.body.style.cursor = draggable ? 'grab' : 'pointer';
-                setHoveredKey(h.key);
-              } else if (labelOnly) {
-                setHoveredKey(h.key);
-              }
-              // Naming a part is not the same promise as offering it — see `labelledKey`.
-              if (labelFor(h.action)) setLabelledKey(h.key);
+            ref={(m: THREE.Mesh | null) => {
+              if (h.key === MESH.tankCover) coverHotspotRef.current = m;
+              if (m) proxyRefs.current.set(h.key, m);
+              else proxyRefs.current.delete(h.key);
             }}
+            position={h.position}
+            userData={{ bedoProxy: { operational: !infoOnly, precise: !!h.half } }}
+            {...(source ? drag.handlersFor(source) : {})}
+            onPointerOver={(e) => hoverProxy(e, h, infoOnly, draggable)}
+            // Also on move: the winner can change without leaving this proxy — the pointer
+            // slides from the cover onto the spring standing inside the cover's sphere.
+            onPointerMove={(e) => hoverProxy(e, h, infoOnly, draggable)}
             onPointerOut={() => {
               if (!drag.current()) document.body.style.cursor = 'default';
               setHoveredKey((k) => (k === h.key ? null : k));
               setLabelledKey((k) => (k === h.key ? null : k));
             }}
-            {...(draggable || labelOnly
+            // Right-click (a long press on touch) opens the part's card, on any part. A
+            // right-*drag* pans the camera, so a press that moved is not a request.
+            onContextMenu={(e) => {
+              if (winnerOf(e) !== e.eventObject) return;
+              e.stopPropagation();
+              e.nativeEvent.preventDefault();
+              if (rightPressMoved(e.nativeEvent)) return;
+              inspectProxy(h);
+            }}
+            {...(draggable
               ? {}
-              : {
-                  onClick: (e: { stopPropagation: () => void }) => {
-                    e.stopPropagation();
-                    handleHotspot(h.action);
-                  },
-                })}
+              : infoOnly
+                ? {
+                    // A plain click opens the card only when no control is behind the
+                    // part: it never takes a click that would have acted on the rig.
+                    onClick: (e: ThreeEvent<MouseEvent>) => {
+                      if (e.intersections.some((i) => i.eventObject.userData.bedoProxy?.operational)) return;
+                      e.stopPropagation();
+                      inspectProxy(h);
+                    },
+                  }
+                : {
+                    onClick: (e: { stopPropagation: () => void }) => {
+                      e.stopPropagation();
+                      handleHotspot(h.action);
+                    },
+                  })}
           >
             {h.half ? (
               <boxGeometry args={[h.half[0] * 2, h.half[1] * 2, h.half[2] * 2]} />
@@ -3624,7 +4293,3 @@ export const DeviceModel: React.FC<DeviceModelProps> = ({
 };
 
 useGLTF.preload(assetUrl('Bedo_baked_v2.glb'), true, true, extendWithKTX2);
-// Preload through `assetUrl` as well. Preloading the authored path while the component
-// loads the content-addressed one gives the two different cache keys, so every plume
-// was fetched twice in production — 8 redundant GLB requests per page load.
-Object.values(WATER_SHAPES).forEach((s) => useGLTF.preload(assetUrl(s.url)));

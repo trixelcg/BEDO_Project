@@ -163,16 +163,19 @@ describe('the surface coordinate is derived from the geometry', () => {
 });
 
 describe('the shader samples the surface, not the world', () => {
-  const source = () =>
-    readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
+  // The water's material lives in `src/lib/waterMaterial.ts` (shared by the jet and the
+  // hose), and its surface coordinate is the water's own: around the stream, and how long a
+  // parcel has been travelling since it left its source.
+  const source = () => readFileSync(path.join(REPO_ROOT, 'src/lib/waterMaterial.ts'), 'utf8');
   const shader = () => {
     const s = source();
-    return s.slice(s.indexOf('mat.onBeforeCompile'), s.indexOf('return mat;'));
+    const from = s.indexOf('export function createWaterMaterial');
+    return s.slice(s.indexOf('mat.onBeforeCompile', from), s.indexOf('return mat;', from));
   };
 
   /**
    * Every ripple lookup's coordinate, with local `vec2` variables resolved to their
-   * definitions — two of the four are built a line above the lookup that uses them.
+   * definitions — two of them are built a line above the lookup that uses them.
    */
   const lookupCoords = (): string[] => {
     const block = shader();
@@ -188,51 +191,53 @@ describe('the shader samples the surface, not the world', () => {
   };
 
   it('no longer uses world position as a texture coordinate', () => {
-    // The literal defect: texture2D(uWaterTex, vWPos.xz * 6.0 + ...).
     const coords = lookupCoords();
     expect(coords.length).toBeGreaterThanOrEqual(4);
     for (const arg of coords) {
       expect(arg, 'a ripple lookup still reads world position').not.toMatch(/vWPos/);
       expect(arg, 'a ripple lookup reads the camera').not.toMatch(/cameraPosition/);
-      expect(arg).toMatch(/vWaterUv/);
+      // `u` is the around coordinate, recovered from the interpolated direction; `us` is
+      // the same, turned by the conduit's swirl.
+      expect(arg).toMatch(/\bus? \* \d/);
     }
+    expect(shader()).toMatch(/float u = waterAround\(\);/);
+    expect(shader()).toMatch(/float us = u \+ pc \* [\d.]+;/);
   });
 
   it('still animates, and animates only through time', () => {
-    // §5: the coordinate is spatial, the motion is uTime. Changing the sampling space must
-    // not stop the water moving.
-    for (const arg of lookupCoords()) expect(arg).toMatch(/uTime/);
+    // The parcel coordinate is `uClock - vFlowUv.y`: fixed to the water, moving with it.
+    // In a conduit, `pc` and `pb` are the same coordinate at the speed of one depth of the
+    // bore (the pipe-flow profile): still the clock, less how far along the parcel is.
+    for (const arg of lookupCoords()) expect(arg).toMatch(/parcel|\bpc\b|\bpb\b/);
+    expect(shader()).toMatch(/float parcel = uClock - vFlowUv\.y;/);
+    expect(shader()).toMatch(/float pc = uClock \* mix\([^;]*\) - vFlowUv\.y;/);
+    expect(shader()).toMatch(/float pb = uClock \* [^;]+ - vFlowUv\.y;/);
   });
 
   it('keeps world position only for the view vector it is actually needed for', () => {
-    const block = shader();
-    expect(block).toMatch(/normalize\(cameraPosition - vWPos\)/);
+    expect(shader()).toMatch(/normalize\(cameraPosition - vWPos\)/);
   });
 
   it('binds the coordinate as an attribute the geometry carries', () => {
-    expect(shader()).toMatch(/attribute vec2 aWaterUv/);
-    // Set through the exported constant, so the shader and the geometry cannot drift apart.
-    expect(source()).toMatch(/setAttribute\(WATER_UV_ATTRIBUTE,/);
-    expect(WATER_UV_ATTRIBUTE).toBe('aWaterUv');
+    expect(shader()).toMatch(/attribute vec2 aFlowUv/);
+    const mesh = readFileSync(path.join(REPO_ROOT, 'src/lib/jetFlowMesh.ts'), 'utf8');
+    expect(mesh).toMatch(/geometry\.setAttribute\('aFlowUv',/);
+    expect(source()).toMatch(/geometry\.setAttribute\('aFlowUv',/);
   });
 
   it('treats the ripple map as data, not colour', () => {
     // §12. It is a height/gradient field the shader does arithmetic on; decoding it as sRGB
-    // would bend its response.
-    expect(source()).toMatch(/tex\.colorSpace = THREE\.NoColorSpace/);
+    // would bend its response. Still built once in `DeviceModel` and shared.
+    const deviceModel = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
+    expect(deviceModel).toMatch(/tex\.colorSpace = THREE\.NoColorSpace/);
   });
 
-  it('never falls back to tank or viewport dimensions', () => {
+  it('never falls back to tank or viewport dimensions for the coordinate', () => {
     const s = source();
-    expect(s).not.toMatch(/tankBounds/);
-    const uv = readFileSync(path.join(REPO_ROOT, 'src/lib/waterUv.ts'), 'utf8');
-    const code = uv
-      .split('\n')
-      .filter((l) => !l.trimStart().startsWith('//') && !l.trimStart().startsWith('*'))
-      .join('\n');
-    expect(code).not.toMatch(/tank|viewport|innerWidth|camera/i);
+    expect(s).not.toMatch(/tankBounds|innerWidth|viewport/);
   });
 });
+
 
 describe('ripple density', () => {
   it('keeps the along-flow density the old projection produced', () => {

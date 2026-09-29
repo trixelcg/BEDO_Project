@@ -85,7 +85,65 @@ export function trackCursorTooltip(): void {
   listen();
 }
 
-export function showCursorTooltip(text: string, dir: 'ltr' | 'rtl', at?: { x: number; y: number }): void {
+/**
+ * What the tooltip says: the part's name, then what it does and how to open its card
+ * (F17). A bare string is still accepted and shown as the name alone.
+ */
+export type CursorTooltipContent = string | { title: string; body?: string; hint?: string };
+
+/** One key per distinct content, so an unchanged label is not rebuilt on every hover. */
+const keyOf = (c: CursorTooltipContent) => (typeof c === 'string' ? c : `${c.title}\u0000${c.body ?? ''}\u0000${c.hint ?? ''}`);
+let shownKey = '';
+
+// --- Off while the camera moves (user request, 2026-09-29) ------------------------
+//
+// While the view is orbiting, panning, zooming or flying, parts stream under the pointer
+// and the label flickers from name to name over a moving scene. So camera motion turns
+// the tooltip off: `show` still records what the pointer is on, but nothing is drawn
+// until the camera has settled, and then the last requested label returns on its own —
+// the pointer has not moved, so no new pointer event would re-show it.
+
+let cameraMoving = false;
+/** What the last `show` asked for, so a label hidden by camera motion can return. */
+let requested: { content: CursorTooltipContent; dir: 'ltr' | 'rtl' } | null = null;
+
+/** The scene reports camera motion here; true hides the tooltip, false lets it back. */
+export function setCursorTooltipCameraMoving(moving: boolean): void {
+  if (moving === cameraMoving) return;
+  cameraMoving = moving;
+  if (moving) {
+    visible = false;
+    if (el) el.hidden = true;
+  } else if (requested) {
+    showCursorTooltip(requested.content, requested.dir);
+  }
+}
+
+function render(node: HTMLDivElement, content: CursorTooltipContent) {
+  const key = keyOf(content);
+  if (key === shownKey && node.childNodes.length) return;
+  shownKey = key;
+  node.replaceChildren();
+  const line = (cls: string, text: string) => {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    node.appendChild(span);
+  };
+  if (typeof content === 'string') {
+    line('cursor-tooltip-title', content);
+    return;
+  }
+  line('cursor-tooltip-title', content.title);
+  if (content.body) line('cursor-tooltip-body', content.body);
+  if (content.hint) line('cursor-tooltip-hint', content.hint);
+}
+
+export function showCursorTooltip(
+  content: CursorTooltipContent,
+  dir: 'ltr' | 'rtl',
+  at?: { x: number; y: number }
+): void {
   const node = ensure();
   if (!node) return;
   listen();
@@ -93,7 +151,9 @@ export function showCursorTooltip(text: string, dir: 'ltr' | 'rtl', at?: { x: nu
     lastX = at.x;
     lastY = at.y;
   }
-  if (node.textContent !== text) node.textContent = text;
+  requested = { content, dir };
+  if (cameraMoving) return;
+  render(node, content);
   node.dir = dir;
   node.hidden = false;
   visible = true;
@@ -102,10 +162,18 @@ export function showCursorTooltip(text: string, dir: 'ltr' | 'rtl', at?: { x: nu
 
 export function hideCursorTooltip(): void {
   visible = false;
+  requested = null;
   if (el) el.hidden = true;
 }
 
-/** The label currently shown, or null — for the browser checks. */
+/** The part name currently shown, or null — for the browser checks. */
 export function currentCursorTooltip(): string | null {
-  return visible && el ? el.textContent : null;
+  if (!visible || !el) return null;
+  return el.querySelector('.cursor-tooltip-title')?.textContent ?? el.textContent;
+}
+
+/** Everything the tooltip currently says, line by line — for the browser checks. */
+export function currentCursorTooltipLines(): string[] | null {
+  if (!visible || !el) return null;
+  return Array.from(el.children).map((c) => c.textContent ?? '');
 }

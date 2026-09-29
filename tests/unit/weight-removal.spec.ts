@@ -172,6 +172,10 @@ describe('through the runtime', () => {
     // must not erase the last one — which is exactly what the lesson does between
     // readings 1 and 2.
     const runtime = createSimulationRuntime();
+    // A reading is committed only while the jet is on the carrier (F15).
+    runtime.dispatch({ type: 'OPEN_COVER' });
+    runtime.dispatch({ type: 'SELECT_DEFLECTOR', deflectorId: 90 });
+    runtime.dispatch({ type: 'CLOSE_COVER' });
     runtime.dispatch({ type: 'POWER_ON' });
     runtime.dispatch({ type: 'SET_VALVE', opening: 0.4 });
     runtime.dispatch({ type: 'BEGIN_READING', index: 1 });

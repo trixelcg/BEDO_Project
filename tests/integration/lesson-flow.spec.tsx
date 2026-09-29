@@ -16,6 +16,7 @@ import {
   stubConfigFetch,
   walkLesson as walk,
   warning,
+  resetSimulator,
 } from '../helpers/app-harness';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
@@ -55,7 +56,7 @@ describe('the guided lesson', () => {
   it('completes all eleven steps and reaches the closing step', () => {
     walk(1, 10);
 
-    expectStep(11, 'You finished!');
+    expectStep(11, 'Open the answer sheet');
 
     // The monitor is open and F_ac has been recorded. The assessment is still here and
     // still answerable — it simply is not a numbered step any more (`docs/32 §5.3`).
@@ -71,8 +72,9 @@ describe('the guided lesson', () => {
     // Opening the answer sheet finishes the procedure; there is no step 12.
     click('Open the answer sheet');
     expect(screen.getByTestId('answer-sheet')).toBeDefined();
+    // The completed state (F14): not a step, so no step number.
     expect(screen.getByTestId('lesson-complete')).toBeDefined();
-    expect(currentStep()).toBe(11);
+    expect(document.querySelector('.step-badge')?.textContent).toMatch(/Complete/);
   });
 
   it('records exactly the two readings the student balanced', () => {
@@ -82,10 +84,16 @@ describe('the guided lesson', () => {
     expect(rows).toHaveLength(4);
 
     const massCell = (row: Element) => row.querySelectorAll('td')[5].textContent;
-    expect(massCell(rows[0])).toBe('0'); // closed-valve row
+    expect(massCell(rows[0])).toBe('0'); // closed-valve reference row
     expect(massCell(rows[1])).toBe('80'); // reading 1, n = 0.4
     expect(massCell(rows[2])).toBe('260'); // reading 2, n = 0.5
-    expect(massCell(rows[3])).toBe('0'); // untaken row
+    expect(massCell(rows[3])).toBe('—'); // untaken: no numbers at all (F15)
+    expect(rows.map((r) => (r as HTMLElement).dataset.status)).toEqual([
+      'reference',
+      'recorded',
+      'recorded',
+      'pending',
+    ]);
 
     // F_th for the flat plate at n = 0.4 and n = 0.5, from BEDO's model.
     const theoreticalForceN = (row: Element) => Number(row.querySelectorAll('td')[6].textContent);
@@ -182,15 +190,13 @@ describe('the progression rules the lesson enforces', () => {
     expect(currentStep()).toBe(5);
   });
 
-  it('refuses to open the valve before the pump is running', () => {
-    // Free mode reaches the valve without the guided sequence.
+  it('lets free mode turn the valve before the pump is running (F10)', () => {
+    // A hand valve: no invented sequence lock. It passes no water until the pump runs.
     click('Free Mode');
     setValve(0.5);
 
-    expect(document.querySelector('.warning-popup')?.textContent).toContain(
-      'Turn on the power switch before opening the valve.'
-    );
-    expect(screen.getByText('0%')).toBeDefined();
+    expect(document.querySelector('.warning-popup')).toBeNull();
+    expect(screen.getByText('50%')).toBeDefined();
   });
 });
 
@@ -209,8 +215,7 @@ describe('the observations the experiment sheets specify', () => {
     walk(1, 5);
     click('+50g');
     click('+20g');
-    click('+10g');
-    clickOk();
+    click('+10g'); // balanced: the step finishes by itself (F14)
 
     expect(document.querySelector('.warning-popup')?.textContent).toContain(
       'shape of water impinging the deflector'
@@ -231,7 +236,7 @@ describe('reset', () => {
     click('+50g');
     expect(loadedWeightG()).toBe(50);
 
-    click('Reset simulator');
+    resetSimulator(); // asks first — there is a rig to lose — and is confirmed (F15)
 
     expectStep(1, 'Unscrew the upper plate');
     expect(loadedWeightG()).toBe(0);

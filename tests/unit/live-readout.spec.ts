@@ -18,10 +18,18 @@ const withState = (
   over: Partial<ReturnType<typeof createInitialSimulationState>['apparatus']> = {}
 ) => {
   const base = createInitialSimulationState();
-  return { ...base, apparatus: { ...base.apparatus, ...over } };
+  // The pump is running unless a test says otherwise: with it off there is no flow (F10).
+  return { ...base, apparatus: { ...base.apparatus, isPowerOn: true, ...over } };
 };
 
 describe('the live readout', () => {
+  it('reports no flow while the pump is off, whatever the valve is set to (F10)', () => {
+    const live = selectLiveReadout(withState({ isPowerOn: false, valveOpening: 0.6 }));
+    expect(live.valveOpening).toBe(0.6);
+    expect(live.flowRateLMin).toBe(0);
+    expect(live.nozzleVelocityMS).toBe(0);
+  });
+
   it('reports the valve opening the learner is actually holding', () => {
     expect(selectLiveReadout(withState({ valveOpening: 0.35 })).valveOpening).toBe(0.35);
   });

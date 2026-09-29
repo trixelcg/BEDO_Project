@@ -104,8 +104,8 @@ describe('the five safety guards', () => {
   });
 
   it('has a presentation for every reason the domain can return, and no orphans', () => {
+    // Only BEDO's five documented guards (F10): the app's own valve lock is gone.
     const reasons = new Set(GUARDS.map((g) => g.reason));
-    reasons.add('VALVE_NEEDS_RUNNING_PUMP');
     expect(new Set(Object.keys(REJECTION_PRESENTATION))).toEqual(reasons);
   });
 
@@ -158,12 +158,12 @@ describe('the pump', () => {
     expect(result.state.isPowerOn).toBe(true);
   });
 
-  it('stops at any time, and shuts the valve with it', () => {
-    // Preserved from the original handler: a restart never resumes at the old flow.
+  it('stops at any time, and leaves the valve where the learner set it (F10)', () => {
+    // It used to zero the valve — a scientific input rewritten by switching off.
     const given = state({ isPowerOn: true, valveOpening: 0.5 });
     const { state: next } = expectOk(attempt(given, { type: 'POWER_OFF' }));
     expect(next.isPowerOn).toBe(false);
-    expect(next.valveOpening).toBe(0);
+    expect(next.valveOpening).toBe(0.5);
   });
 
   it('does nothing when asked for the state it is already in', () => {
@@ -185,11 +185,10 @@ describe('the flow valve', () => {
     expect(next.valveOpening).toBe(0.4);
   });
 
-  it('will not open while the pump is off', () => {
-    expectRejected(
-      attempt(state(), { type: 'SET_VALVE', opening: 0.4 }),
-      'VALVE_NEEDS_RUNNING_PUMP'
-    );
+  it('turns with the pump off too — it is a hand valve (F10)', () => {
+    const { state: next } = expectOk(attempt(state(), { type: 'SET_VALVE', opening: 0.4 }));
+    expect(next.valveOpening).toBe(0.4);
+    expect(next.isPowerOn).toBe(false);
   });
 
   it('may always be shut, pump or no pump', () => {

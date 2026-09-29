@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 import { Scene3D } from './components/Scene3D';
 import type { WeightAvailability } from './components/DeviceModel';
 import { UIOverlay } from './components/UIOverlay';
@@ -7,6 +15,11 @@ import { LoadingScreen, type LoadingPhase } from './components/LoadingScreen';
 import { ExperimentIntro } from './components/ExperimentIntro';
 import { useProgress } from '@react-three/drei';
 import { AnswerSheet } from './components/AnswerSheet';
+import { ModeSwitchDialog } from './components/ModeSwitchDialog';
+import { ResetDialog, type ResetSummary } from './components/ResetDialog';
+import { ComponentCard } from './components/ComponentCard';
+import { anchorIdOf, COMPONENT_KEYS, type ComponentKey, type ComponentRef } from './domain/componentInfo';
+import type { Inspection } from './lib/componentAnchor';
 import type { ErrorCode, Language, LessonView, Mode, SimulationView } from './types/index';
 import type { ApparatusAction, RejectionReason } from './domain/stateMachine';
 import { LESSON_BLOCK_PRESENTATION, REJECTION_PRESENTATION } from './lib/apparatusGate';
@@ -19,7 +32,18 @@ import { useSimulationRuntime, useSimulationState } from './lib/useSimulation';
 import { useLessonRunner, useLessonState } from './lib/useLesson';
 import type { LessonContext, LessonExpectation } from './lesson/schema';
 import { CURRENT_LESSON, CURRENT_LESSON_STEP_COUNT } from './lesson/currentLesson';
-import { selectExperiment, selectLiveReadout, selectReadings } from './simulation/selectors';
+import {
+  TABLE_READING_ROWS,
+  selectActualForceBlocker,
+  selectExperiment,
+  selectFreeReadingBlocker,
+  selectFreeReadings,
+  selectLiveReadout,
+  selectReadingStatuses,
+  selectReadings,
+  selectRecordedReadingCount,
+} from './simulation/selectors';
+import { MAX_FREE_READINGS } from './simulation/state';
 import {
   availableAffordances,
   deflectorsSelectableIn,
@@ -29,6 +53,7 @@ import {
   type LessonBlockReason,
 } from './interaction/gate';
 import { FIRST_READING_VALVE, VALVE_SNAP_MARGIN } from './domain/physics';
+import type { SimulationCommand } from './simulation/runtime';
 import './index.css';
 
 /**
@@ -61,23 +86,21 @@ interface LessonAndUiState {
   /** The worksheet overlay, opened by the closing step. */
   showAnswerSheet: boolean;
   quizAnswer: number | null;
-  /** A student-defined weight denomination the panel offers. Buys a button, not physics. */
-  customWeightG: number;
   /**
-   * A deflector has been installed on the rod in this run.
-   *
-   * BEDO's state machine starts the rig with *"the weights and deflectors on the table"*
-   * (storyboard sl. 29) and only puts one in the rod when the learner installs it (sl. 31,
-   * state C). "Has the lesson reached step 2" is not the same question and gave the wrong
-   * answer at exactly the wrong moment: the deflector step 2 says to drag was already
-   * drawn on the rod, and therefore not on the tray to be dragged (`BEDO-021`, `docs/38
-   * §3.1`).
-   *
-   * Kept beside the lesson rather than inside the runner because it is not a step: a
-   * learner who confirms step 2 without touching anything has still installed the disc the
-   * sheet loads with, which is what the `hasCompleted` fallback below covers.
+   * Switching to Guided is waiting on the learner's answer: the rig is mid-experiment, and
+   * the lesson starts from step 1 (F10). Nothing is changed until they choose.
    */
-  deflectorInstalled: boolean;
+  confirmGuided: boolean;
+  /** The reset confirmation is up (F15). */
+  confirmReset: boolean;
+  /*
+    The custom weight's mass and "a deflector is fitted" used to live here, as interface
+    state. Both are facts about the experiment, and both are now the simulation runtime's
+    (`SimulationState.customWeightG`, `.deflectorFitted`) — F09. The storyboard's rule for
+    the deflector (sl. 29/31: the rod starts bare) and the fallback for a learner who
+    confirms the install step untouched (`docs/38 §3.1`) are kept: the first by the
+    runtime's initial state, the second by that step's `FIT_DEFLECTOR` on completion.
+  */
   /** Bumped by Reset and by loading another sheet. See `LessonView.runId`. */
   runId: number;
   warningMessage: { en: string; ar: string; code: ErrorCode } | null;
@@ -95,8 +118,8 @@ const initialLessonState = (
   monitorBeforeBoardView: false,
   showAnswerSheet: false,
   quizAnswer: null,
-  customWeightG: 25,
-  deflectorInstalled: false,
+  confirmGuided: false,
+  confirmReset: false,
   runId,
   warningMessage: null,
   notice: null,
@@ -221,6 +244,7 @@ export default function App() {
 
   const experiment = useMemo(() => selectExperiment(simulation), [simulation]);
   const readings = useMemo(() => selectReadings(simulation), [simulation]);
+  const freeReadings = useMemo(() => selectFreeReadings(simulation), [simulation]);
   /**
    * The deflectors the panel and the tray offer.
    *
@@ -244,8 +268,8 @@ export default function App() {
 
   /** Everything a completion condition may look at. */
   const context: LessonContext = useMemo(
-    () => ({ simulation, readings }),
-    [simulation, readings]
+    () => ({ simulation, readings, monitorOpen: ui.showMonitor }),
+    [simulation, readings, ui.showMonitor]
   );
 
   const clearWarning = useCallback(() => setUi((prev) => ({ ...prev, warningMessage: null })), []);
@@ -369,6 +393,24 @@ export default function App() {
     [runtime, runner, showRejection, showLessonBlock, applyAdvance]
   );
 
+  /**
+   * The lesson follows the rig (F14).
+   *
+   * After every committed change — whichever control, panel or step made it — the runner
+   * is asked whether the current step's goal now holds. A `condition` step that is done
+   * finishes here, its commands are dispatched, and the next render asks again about the
+   * step after it. A layout effect, so it runs before the browser paints: the learner
+   * never sees a frame with the rig done and the step still current.
+   *
+   * `interact` already notifies the runner for the action it carried, so for most clicks
+   * this finds nothing left to do. It is what catches everything else: taking a disc off
+   * to reach the balance, a Q_total or custom-mass change that balances the reading, the
+   * monitor opened ahead of its step, and a return to Guided.
+   */
+  useLayoutEffect(() => {
+    applyAdvance(runner.sync(context));
+  }, [context, lessonState, runner, applyAdvance]);
+
   /** Shorthand for the common case: an apparatus intent. */
   const act = useCallback(
     (action: ApparatusAction, expectation?: LessonExpectation['type']) =>
@@ -395,11 +437,9 @@ export default function App() {
    * tray. Note the flag is set only on acceptance — the one place that knows whether the
    * rig took it is the one that asked (`docs/38 §3.3`).
    */
-  const handleSelectDeflector = (id: number): boolean => {
-    const accepted = act({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
-    if (accepted) setUi((prev) => ({ ...prev, deflectorInstalled: true }));
-    return accepted;
-  };
+  const handleSelectDeflector = (id: number): boolean =>
+    // The runtime marks the deflector fitted when it accepts the selection.
+    act({ type: 'SELECT_DEFLECTOR', deflectorId: id }, 'SELECT_DEFLECTOR');
 
   // --- Power -------------------------------------------------------------------
   const handleTogglePower = () => {
@@ -467,6 +507,40 @@ export default function App() {
    * is disabled instead, which is the half of it that is a learner's choice.
    */
   const [weights, setWeights] = useState<WeightAvailability>({ canAdd: true, canRemove: true });
+
+  // --- Component cards (F17) ------------------------------------------------------
+  //
+  // Presentation state only: which part's card is open, and whether a click opened it
+  // (it stays until closed) or keyboard focus on a panel control for that part did (it
+  // goes with the focus). Nothing here reaches the runtime — looking at a part is never an
+  // action on the rig.
+  const [inspection, setInspection] = useState<Inspection | null>(null);
+  const handleInspectComponent = useCallback((next: Inspection) => setInspection(next), []);
+  const closeInspection = useCallback(() => setInspection(null), []);
+  useEffect(() => {
+    const refFrom = (el: Element | null): ComponentRef | null => {
+      const host = el?.closest?.('[data-component]') as HTMLElement | null;
+      const key = host?.dataset.component as ComponentKey | undefined;
+      if (!host || !key || !COMPONENT_KEYS.includes(key)) return null;
+      const variant = host.dataset.componentVariant;
+      return { key, ...(variant !== undefined ? { variant: Number(variant) } : {}) };
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target as Element | null;
+      // Keyboard focus only: a mouse click on a panel button must not pop a card.
+      if (!target || !target.matches?.(':focus-visible')) return;
+      const ref = refFrom(target);
+      if (!ref) return;
+      setInspection((prev) => (prev?.via === 'click' ? prev : { ref, anchorId: anchorIdOf(ref), via: 'focus' }));
+    };
+    const onFocusOut = () => setInspection((prev) => (prev?.via === 'focus' ? null : prev));
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, []);
 
   const handleAddWeight = (weight: number) => {
     if (!weights.canAdd) return;
@@ -573,30 +647,148 @@ export default function App() {
     if (opening) applyAdvance(runner.notify('OPEN_MONITOR', context));
   };
 
+  /**
+   * Free ↔ Guided. Neither direction changes a scientific input on its own (F10).
+   *
+   * Guided picks the lesson up at its current step, and that step assumes the rig the
+   * steps before it produced. So Guided is only handed a rig it would recognise (F14):
+   *
+   *   - the rig exactly as the learner left Guided — nothing touched in Free; or
+   *   - the lesson still at step 1 with the rig at rest and the rod bare.
+   *
+   * Otherwise the switch asks: reset the rig and start at step 1 (Q_total and the custom
+   * mass are kept, F10), or stay in Free. There is no "keep it as it is" — a lesson on
+   * step 1 over a running, loaded rig could neither show the truth nor be completed (in
+   * Guided the gate refuses the pump switch at step 1, and the cover can't open with the
+   * pump on). Guided → Free never asks: free mode can continue from anything.
+   */
+  const rigWhenGuidedLeft = useRef<string | null>(null);
+  /** The parts of the rig the procedure depends on. The volumetric valve is not one. */
+  const procedureRig = () => {
+    const state = runtime.getState();
+    const { isVolumetricValveOpen: _ignored, ...apparatus } = state.apparatus;
+    return JSON.stringify({ apparatus, fitted: state.deflectorFitted });
+  };
+  const isRigAtRest = () => {
+    const state = runtime.getState();
+    const a = state.apparatus;
+    return (
+      !a.isPowerOn &&
+      !a.isCoverOpen &&
+      a.valveOpening === 0 &&
+      a.loadedWeightsG.length === 0 &&
+      !state.deflectorFitted
+    );
+  };
+  const guidedWouldRecogniseRig = () =>
+    procedureRig() === rigWhenGuidedLeft.current ||
+    (runner.getCurrentStep().id === CURRENT_LESSON.steps[0].id && isRigAtRest());
   const handleSetMode = (mode: Mode) => {
+    const from = runner.getState().mode;
+    if (mode === from) return;
+    if (mode === 'guided' && !guidedWouldRecogniseRig()) {
+      setUi((prev) => ({ ...prev, confirmGuided: true }));
+      return;
+    }
+    rigWhenGuidedLeft.current = mode === 'free' ? procedureRig() : null;
     runner.setMode(mode);
-    setUi((prev) => ({ ...prev, warningMessage: null, notice: null }));
+    setUi((prev) => ({ ...prev, warningMessage: null, notice: null, confirmGuided: false }));
+  };
+  const handleConfirmGuided = (choice: 'reset' | 'cancel') => {
+    if (choice === 'cancel') {
+      setUi((prev) => ({ ...prev, confirmGuided: false }));
+      return;
+    }
+    // The rig, not the parameters: the runtime's reset keeps Q_total and the custom mass.
+    runtime.reset();
+    runner.reset();
+    runner.setMode('guided');
+    rigWhenGuidedLeft.current = null;
+    setUi((prev) => ({ ...initialLessonState(prev.language, prev.runId + 1) }));
   };
 
   /** Switching experiment reloads the rig with that sheet's deflector, and restarts. */
   const handleSelectExperiment = (experimentId: ExperimentId) => {
     runtime.dispatch({ type: 'SELECT_EXPERIMENT', experimentId });
     runner.reset();
+    rigWhenGuidedLeft.current = null;
     setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
 
+  /**
+   * The Parameters panel: Q_total and the custom disc's mass, both simulation state (F09).
+   *
+   * Neither is an apparatus action, so neither goes through the gate — nothing about the
+   * rig becomes unsafe — and both are validated by the runtime, which ignores a value the
+   * panel could not have offered. Everything that depends on them (flow, jet, carrier,
+   * balance, board, monitor, the water) is derived from the runtime and follows.
+   */
+  /**
+   * Session inputs that are not apparatus actions: the Parameters panel's two values, and
+   * free mode's readings (F10). None goes through the gate — nothing about the rig becomes
+   * unsafe — and the runtime validates each. One commit point for all of them.
+   */
+  const runSessionCommands = (commands: SimulationCommand[]) => {
+    for (const command of commands) runtime.dispatch(command);
+  };
   const handleSetParams = (params: { pumpFlowLMin?: number; customWeightG?: number }) => {
+    const commands: SimulationCommand[] = [];
     if (params.pumpFlowLMin !== undefined) {
-      runtime.dispatch({ type: 'SET_PUMP_FLOW', lPerMin: params.pumpFlowLMin });
+      commands.push({ type: 'SET_PUMP_FLOW', lPerMin: params.pumpFlowLMin });
     }
     if (params.customWeightG !== undefined) {
-      setUi((prev) => ({ ...prev, customWeightG: params.customWeightG! }));
+      commands.push({ type: 'SET_CUSTOM_WEIGHT', grams: params.customWeightG });
     }
+    runSessionCommands(commands);
   };
+  const handleRecordFreeReading = () => runSessionCommands([{ type: 'RECORD_FREE_READING' }]);
+  const handleClearFreeReadings = () => runSessionCommands([{ type: 'CLEAR_FREE_READINGS' }]);
+
+  /**
+   * What a reset would clear (F15), from the state as it is. Nothing here → reset at once;
+   * anything → say what, and ask.
+   */
+  const resetSummary = (): ResetSummary => {
+    const state = runtime.getState();
+    const lesson = runner.getState();
+    const stepNumber = runner.getCurrentStep().displayNumber;
+    return {
+      rigInUse: !isRigAtRest(),
+      guidedStep: lesson.isComplete ? 'complete' : stepNumber > 1 ? stepNumber : null,
+      lessonReadings: selectRecordedReadingCount(state),
+      actualForceRecorded: state.isActualForceRecorded,
+      freeReadings: state.freeReadings.length,
+      pumpFlowLMin: state.pumpFlowLMin,
+      customWeightG: state.customWeightG,
+      experimentName:
+        ui.language === 'ar' ? selectExperiment(state).nameAr : selectExperiment(state).nameEn,
+    };
+  };
+  const somethingToLose = (summary: ResetSummary) =>
+    summary.rigInUse ||
+    summary.guidedStep !== null ||
+    summary.lessonReadings > 0 ||
+    summary.actualForceRecorded ||
+    summary.freeReadings > 0;
 
   const handleReset = () => {
+    if (somethingToLose(resetSummary())) {
+      setUi((prev) => ({ ...prev, confirmReset: true }));
+      return;
+    }
+    performReset();
+  };
+  const handleConfirmReset = (choice: 'reset' | 'cancel') => {
+    if (choice === 'cancel') {
+      setUi((prev) => ({ ...prev, confirmReset: false }));
+      return;
+    }
+    performReset();
+  };
+  const performReset = () => {
     runtime.reset();
     runner.reset();
+    rigWhenGuidedLeft.current = null;
     setUi((prev) => initialLessonState(prev.language, prev.runId + 1));
   };
 
@@ -662,15 +854,29 @@ export default function App() {
       // What the gate will accept, handed to the scene so a blocked hotspot need not
       // re-derive the policy — and so an always-available one is not drawn as dead.
       available: [...availableAffordances(CURRENT_LESSON, currentStep, lessonState.mode)],
-      // `hasCompleted`, not `hasReached`: while the learner is standing *on* the step that
-      // says to install a deflector, the rod is empty and the tray is full — which is what
-      // makes the instruction performable. The flag covers the learner who installs one
-      // during that step; the fallback covers the one who just presses OK.
-      hasInstalledDeflector: ui.deflectorInstalled || runner.hasCompleted('install-deflector'),
+      // The runtime's own answer (F09). While the learner is standing on the step that says
+      // to install a deflector, the rod is bare and the tray full — which is what makes the
+      // instruction performable. Installing one, or confirming that step as it stands
+      // (its `FIT_DEFLECTOR`), fits it.
+      hasInstalledDeflector: simulation.deflectorFitted,
       runId: ui.runId,
       activeReadingIndex: simulation.activeReadingIndex,
       isComplete: lessonState.isComplete,
       answerSheetUrl: answerSheetFor(simulation.experimentId),
+      progress: CURRENT_LESSON.steps.map((definition) => {
+        const copy = steps.find((step) => step.stepId === definition.id);
+        return {
+          stepId: definition.id,
+          displayNumber: definition.displayNumber,
+          titleEn: copy?.titleEn ?? '',
+          titleAr: copy?.titleAr ?? '',
+          status: runner.hasCompleted(definition.id)
+            ? ('completed' as const)
+            : definition.id === currentStep.id
+              ? ('current' as const)
+              : ('upcoming' as const),
+        };
+      }),
     }),
     [
       isGuided,
@@ -680,7 +886,7 @@ export default function App() {
       steps,
       runner,
       context,
-      ui.deflectorInstalled,
+      simulation.deflectorFitted,
       ui.runId,
       // The Board view overrides `cameraView`; without this the memo keeps handing the
       // rig the step's own framing and the camera never leaves it.
@@ -708,17 +914,32 @@ export default function App() {
       valveOpening: simulation.apparatus.valveOpening,
       loadedWeightsG: simulation.apparatus.loadedWeightsG,
       isVolumetricValveOpen: simulation.apparatus.isVolumetricValveOpen,
-      recordedRows: readings,
+      // Free mode shows the learner's own readings; guided, the lesson's (F10).
+      recordedRows: lessonState.mode === 'free' ? freeReadings : readings,
+      readingsSource: lessonState.mode === 'free' ? 'free' : 'lesson',
+      lessonRows: readings,
+      // One definition of "recorded" for every counter, row and export (F15).
+      rowStatuses:
+        lessonState.mode === 'free'
+          ? freeReadings.map(() => 'recorded' as const)
+          : selectReadingStatuses(simulation),
+      recordedCount:
+        lessonState.mode === 'free'
+          ? freeReadings.length
+          : selectRecordedReadingCount(simulation),
+      recordableCount: lessonState.mode === 'free' ? MAX_FREE_READINGS : TABLE_READING_ROWS.length,
+      actualForceBlocker: selectActualForceBlocker(simulation),
+      freeReadingBlocker: selectFreeReadingBlocker(simulation, MAX_FREE_READINGS),
       live: selectLiveReadout(simulation),
       showMonitor: ui.showMonitor,
       monitorExpanded: ui.monitorExpanded,
       isCalculated: simulation.isActualForceRecorded,
       quizAnswer: ui.quizAnswer,
-      params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: ui.customWeightG },
+      params: { pumpFlowLMin: simulation.pumpFlowLMin, customWeightG: simulation.customWeightG },
       warningMessage: ui.warningMessage,
       notice: ui.notice,
     }),
-    [ui, simulation, readings, lessonState.mode]
+    [ui, simulation, readings, freeReadings, lessonState.mode]
   );
 
   const deflector = getDeflector(simulation.apparatus.selectedDeflectorId);
@@ -749,7 +970,18 @@ export default function App() {
           onAddWeight={handleAddWeight}
           onRemoveWeight={handleRemoveWeight}
           onWeightAvailability={setWeights}
+          customWeightG={simulation.customWeightG}
+          inspection={inspection}
+          onInspectComponent={handleInspectComponent}
         />
+
+        {inspection && (
+          <ComponentCard
+            inspection={inspection}
+            language={ui.language === 'ar' ? 'ar' : 'en'}
+            onClose={closeInspection}
+          />
+        )}
 
         <UIOverlay
           state={view}
@@ -785,6 +1017,18 @@ export default function App() {
           onOpenAnswerSheet={handleOpenAnswerSheet}
         />
 
+        {ui.confirmGuided && (
+          <ModeSwitchDialog isArabic={ui.language === 'ar'} onChoose={handleConfirmGuided} />
+        )}
+
+        {ui.confirmReset && (
+          <ResetDialog
+            isArabic={ui.language === 'ar'}
+            summary={resetSummary()}
+            onChoose={handleConfirmReset}
+          />
+        )}
+
         {ui.showAnswerSheet && lessonView.answerSheetUrl && (
           <AnswerSheet
             url={lessonView.answerSheetUrl}
@@ -800,9 +1044,10 @@ export default function App() {
             experiment={experiment}
             deflectorName={deflectorName}
             onCalculate={handleCalculate}
+            onRecordReading={handleRecordFreeReading}
+            onClearReadings={handleClearFreeReadings}
             onAnswerQuiz={handleAnswerQuiz}
             onClose={handleToggleMonitor}
-            onReset={handleReset}
             onToggleExpand={() =>
               setUi((prev) => ({ ...prev, monitorExpanded: !prev.monitorExpanded }))
             }

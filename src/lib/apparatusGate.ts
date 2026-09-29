@@ -67,11 +67,6 @@ export const REJECTION_PRESENTATION: Record<RejectionReason, RejectionPresentati
     en: 'Remove all weights first before opening the tank.',
     ar: 'يرجى إزالة جميع الأوزان قبل فتح الخزان.',
   },
-  VALVE_NEEDS_RUNNING_PUMP: {
-    severity: 'notice',
-    en: 'Turn on the power switch before opening the valve.',
-    ar: 'يرجى تشغيل مفتاح الطاقة قبل فتح الصمام.',
-  },
 };
 
 /**

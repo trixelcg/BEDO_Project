@@ -1,5 +1,10 @@
 import type { RecordRow } from '../domain/physics';
-import type { LiveReadout } from '../simulation/selectors';
+import type {
+  ActualForceBlocker,
+  FreeReadingBlocker,
+  LiveReadout,
+  ReadingStatus,
+} from '../simulation/selectors';
 import type { ExperimentId, ExperimentStep, StepId } from '../domain/experiments';
 import type { AnchorKey } from '../domain/apparatus';
 import type { HighlightKey, PanelControl } from '../lesson/schema';
@@ -37,6 +42,15 @@ export interface CustomParams {
  * these out for itself by comparing `currentStep` against a number, and two of them
  * disagreed about when a step was finished.
  */
+/** One row of the Steps view (F14). */
+export interface StepProgressRow {
+  stepId: StepId;
+  displayNumber: number;
+  titleEn: string;
+  titleAr: string;
+  status: 'completed' | 'current' | 'upcoming';
+}
+
 export interface LessonView {
   isGuided: boolean;
   /** Stable identity. Components compare against this, never against a number. */
@@ -97,6 +111,13 @@ export interface LessonView {
   activeReadingIndex: number | null;
   /** The numbered procedure is finished. Not a step — there is no step 12. */
   isComplete: boolean;
+  /**
+   * Every numbered step and where the learner stands on it (F14), in order — the Steps
+   * view. Answered by the runner from the same state that drives the step card, so the
+   * two cannot disagree. Observations and the assessment are not in it: they are not
+   * steps.
+   */
+  progress: readonly StepProgressRow[];
   /** The worksheet this experiment's closing step opens, or null if none shipped. */
   answerSheetUrl: string | null;
 }
@@ -111,7 +132,28 @@ export interface SimulationView {
   /** Weights currently on the pan, in grams (e.g. [50, 100]). */
   loadedWeightsG: readonly number[];
   isVolumetricValveOpen: boolean; // volumetric valve open state
+  /**
+   * The results table the monitor and the board show: the lesson's four rows in guided
+   * mode, the learner's own readings in free mode (F10).
+   */
   recordedRows: RecordRow[];
+  /** Which of the two `recordedRows` is (F10). */
+  readingsSource: 'lesson' | 'free';
+  /** The lesson's rows, whatever the mode — the panel's "n / 2" and the balance card. */
+  lessonRows: RecordRow[];
+  /**
+   * What each of `recordedRows` is (F15): reference, recorded, live or pending. Free
+   * readings are all `recorded` — the runtime refuses an invalid one.
+   */
+  rowStatuses: ReadingStatus[];
+  /** Valid recorded readings — the one number every "n / m" counter shows (F15). */
+  recordedCount: number;
+  /** Out of: the procedure's 2 readings, or the free table's capacity. */
+  recordableCount: number;
+  /** Why F_ac cannot be recorded yet (guided Calculate), or null. */
+  actualForceBlocker: ActualForceBlocker | null;
+  /** Why a free reading cannot be recorded now, or null. */
+  freeReadingBlocker: FreeReadingBlocker | null;
   /**
    * The rig at this instant, for the software board.
    *

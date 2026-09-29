@@ -84,10 +84,11 @@ export type ApparatusAction =
 /**
  * Why an action was refused. Codes, never sentences — the domain has no language.
  *
- * The first five are the guards from BEDO's state-machine document, in its numbering:
- * `error1`..`error5`. The sixth is not one of them; it is the plain fact that a valve
- * cannot pass water the pump is not delivering, and the app has always presented it more
- * gently than a safety refusal.
+ * These are the guards from BEDO's state-machine document, in its numbering:
+ * `error1`..`error5`, and only those (F10). A sixth, "turn the pump on before opening the
+ * valve", was the app's own: the flow control valve is a hand valve, and turning it with
+ * the pump off is a thing a person can do — it simply passes no water until the pump
+ * runs (`selectors.ts` `selectJetState`).
  */
 export type RejectionReason =
   /** error1 — weights may not go on the tray while the tank is open. */
@@ -99,9 +100,7 @@ export type RejectionReason =
   /** error4 — the pump may not be started while the tank is open. */
   | 'POWER_BLOCKED_BY_OPEN_COVER'
   /** error5 — the tray must be cleared before the tank is opened. */
-  | 'COVER_BLOCKED_BY_WEIGHTS'
-  /** Not a documented guard: the pump is not running, so the valve has nothing to open. */
-  | 'VALVE_NEEDS_RUNNING_PUMP';
+  | 'COVER_BLOCKED_BY_WEIGHTS';
 
 export type TransitionResult =
   | {
@@ -170,16 +169,16 @@ export function attempt(state: ApparatusState, action: ApparatusAction): Transit
 
     case 'POWER_OFF': {
       if (!state.isPowerOn) return unchanged(state);
-      // The valve shuts with the pump: the app has always zeroed it here, so a restart
-      // never resumes at the previous flow.
-      return accept({ ...state, isPowerOn: false, valveOpening: 0 });
+      // The pump stops; the valve stays where the learner set it (F10). It used to be
+      // zeroed here, silently rewriting a scientific input: switch off and on again and
+      // the flow had gone. No water flows while the pump is off — that is derived from
+      // `isPowerOn`, not written into the valve.
+      return accept({ ...state, isPowerOn: false });
     }
 
     case 'SET_VALVE': {
-      // Shutting the valve is always legal; opening it needs a running pump.
-      if (!state.isPowerOn && action.opening > 0) {
-        return reject(state, 'VALVE_NEEDS_RUNNING_PUMP');
-      }
+      // A hand valve: always free to turn, pump or no pump (F10).
+      if (!Number.isFinite(action.opening)) return unchanged(state);
       if (state.valveOpening === action.opening) return unchanged(state);
       // The opening is taken as given. The app clamps it at the slider and snaps it to
       // the reading setpoints in the lesson layer, because both are lesson concerns; see

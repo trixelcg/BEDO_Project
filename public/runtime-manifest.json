@@ -1,8 +1,8 @@
 {
   "manifest": {
-    "Bedo_baked_v2.glb": "runtime/723fadf53425/Bedo_baked_v2.glb",
+    "Bedo_baked_v2.glb": "runtime/4cca71cae173/Bedo_baked_v2.glb",
     "bedo_environment.webp": "runtime/fe7d21bcfe98/bedo_environment.webp",
-    "lab-environment.glb": "runtime/6494135e75a1/lab-environment.glb",
+    "lab-environment.glb": "runtime/a6033f21c15d/lab-environment.glb",
     "WaterShapes/Water120_HemiSphere.glb": "runtime/f7447251264e/Water120_HemiSphere.glb",
     "WaterShapes/Water135_Conical.glb": "runtime/899f1fafb4bb/Water135_Conical.glb",
     "WaterShapes/Water180_HemiSphere.glb": "runtime/0991a5990607/Water180_HemiSphere.glb",
@@ -15,10 +15,10 @@
   },
   "uploads": [
     {
-      "key": "runtime/723fadf53425/Bedo_baked_v2.glb",
+      "key": "runtime/4cca71cae173/Bedo_baked_v2.glb",
       "source": "public/Bedo_baked_v2.glb",
-      "sha256": "723fadf534251145132e86bff1289272eeee7f822b1675887859a0d9d3fa3c7f",
-      "bytes": 5272536
+      "sha256": "4cca71cae173f8be329339dcc2cb43cf949fab51acb4e6226df2e8374166b536",
+      "bytes": 4947560
     },
     {
       "key": "runtime/fe7d21bcfe98/bedo_environment.webp",
@@ -27,10 +27,10 @@
       "bytes": 4351692
     },
     {
-      "key": "runtime/6494135e75a1/lab-environment.glb",
+      "key": "runtime/a6033f21c15d/lab-environment.glb",
       "source": "public/lab-environment.glb",
-      "sha256": "6494135e75a186a507085ee40f1bc6466d106d8e116ba8a60b7704542b48734a",
-      "bytes": 2105712
+      "sha256": "a6033f21c15ddbb36c9a7fafe71f8826033e101fd6c59b19776f44d4ad821cde",
+      "bytes": 1720128
     },
     {
       "key": "runtime/f7447251264e/Water120_HemiSphere.glb",

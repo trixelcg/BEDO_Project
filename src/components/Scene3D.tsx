@@ -1,6 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, ContactShadows, useTexture } from '@react-three/drei';
+import type { Inspection } from '../lib/componentAnchor';
 import * as THREE from 'three';
 import {
   DeviceModel,
@@ -10,11 +11,13 @@ import {
 } from './DeviceModel';
 import type { LessonView, SimulationView } from '../types/index';
 import type { SceneConfig } from '../lib/sceneConfig';
-import type { AnchorKey } from '../domain/apparatus';
+import { MESH, type AnchorKey } from '../domain/apparatus';
+import { gltfName } from '../lib/gltfNames';
 import { ANCHOR_VIEW, COVER_LIFT, type Anchors } from '../lib/apparatusView';
 import { fitDistance, regionOffset, usableRect } from '../lib/cameraFraming';
 import { TRANSFER_SECONDS } from '../interaction/transfer';
 import { STUDIO_ENV_INTENSITY, buildStudioEnvironment } from '../lib/studioEnvironment';
+import { applyReflectionProbe, captureReflectionProbe, type ReflectionProbe } from '../lib/reflectionProbe';
 import { createLabComposer, type LabComposer } from '../lib/labPostProcessing';
 import {
   containCamera,
@@ -24,6 +27,7 @@ import {
 } from '../lib/cameraContainment';
 import { assetUrl } from '../lib/assetUrl';
 import { CampusEnvironment } from './CampusEnvironment';
+import { setCursorTooltipCameraMoving } from '../lib/cursorTooltip';
 
 interface Scene3DProps {
   state: SimulationView;
@@ -41,6 +45,11 @@ interface Scene3DProps {
   onRemoveWeight: (index: number) => boolean;
   /** What the weights will accept while discs are in flight. See `WeightAvailability`. */
   onWeightAvailability: (availability: WeightAvailability) => void;
+  /** The custom-weight control's mass: what the custom weight adds (F04). */
+  customWeightG: number;
+  /** The part whose card is open (F17) — see `DeviceModel`'s own prop. */
+  inspection?: Inspection | null;
+  onInspectComponent?: (inspection: Inspection) => void;
 }
 
 const LabEnvironment: React.FC<{ config: SceneConfig }> = ({ config }) => {
@@ -95,6 +104,52 @@ const StudioLighting: React.FC<{ intensity: number }> = ({ intensity }) => {
   useEffect(() => {
     scene.environmentIntensity = STUDIO_ENV_INTENSITY * intensity;
   }, [scene, intensity]);
+
+  return null;
+};
+
+/**
+ * What the glass and the water reflect: the laboratory, photographed once from just above
+ * the tank (`src/lib/reflectionProbe.ts`).
+ *
+ * Taken a second after the apparatus is in the graph, so its textures are on the GPU and
+ * the shadow maps are drawn; then the glass and water materials are given it, and checked
+ * again now and then for water built later (the hoses, the measuring tank).
+ */
+const LabReflections: React.FC = () => {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  const probe = useRef<ReflectionProbe | null>(null);
+  const frames = useRef(0);
+
+  useEffect(
+    () => () => {
+      probe.current?.dispose();
+      probe.current = null;
+    },
+    []
+  );
+
+  useFrame(() => {
+    frames.current++;
+    if (!probe.current) {
+      const tank = scene.getObjectByName(gltfName(MESH.tank));
+      if (!tank) {
+        frames.current = 0;
+        return;
+      }
+      if (frames.current < 60) return;
+      // Above the tank, not in it: from inside, the rod and the nozzle filled the probe and
+      // showed as ghosts in the tank's own walls. From here it sees the room the glass and
+      // the water stand in.
+      const box = new THREE.Box3().setFromObject(tank);
+      const at = box.getCenter(new THREE.Vector3()).setY(box.max.y + 0.35);
+      probe.current = captureReflectionProbe(gl, scene, at);
+      applyReflectionProbe(scene, probe.current.texture);
+      return;
+    }
+    if (frames.current % 90 === 0) applyReflectionProbe(scene, probe.current.texture);
+  });
 
   return null;
 };
@@ -265,6 +320,41 @@ const ModelLoadingPlaceholder: React.FC = () => (
     <meshStandardMaterial color="#f58220" wireframe />
   </mesh>
 );
+
+/** Camera movement smaller than this per frame counts as settled (m², and quaternion). */
+const CAMERA_STILL_EPSILON = 1e-10;
+/** The camera must hold still this many frames before the tooltip may return. */
+const CAMERA_STILL_FRAMES = 8;
+
+/**
+ * Turns the part tooltip off while the camera moves (user request, 2026-09-29). Watches
+ * the camera itself each frame, so every source of motion counts the same — orbiting,
+ * panning and zooming, OrbitControls' damping tail, the guided rig's flights and the
+ * cover lift — with no coupling to who moved it. The label returns only after the view
+ * has held still for a few frames, so the damping tail does not flicker it.
+ */
+const CameraMotionGate: React.FC = () => {
+  const last = useRef<{ p: THREE.Vector3; q: THREE.Quaternion } | null>(null);
+  const still = useRef(CAMERA_STILL_FRAMES);
+  useFrame(({ camera }) => {
+    const l =
+      last.current ?? (last.current = { p: camera.position.clone(), q: camera.quaternion.clone() });
+    const moved =
+      l.p.distanceToSquared(camera.position) > CAMERA_STILL_EPSILON ||
+      1 - Math.abs(l.q.dot(camera.quaternion)) > CAMERA_STILL_EPSILON;
+    l.p.copy(camera.position);
+    l.q.copy(camera.quaternion);
+    if (moved) {
+      still.current = 0;
+      setCursorTooltipCameraMoving(true);
+    } else if (still.current < CAMERA_STILL_FRAMES && ++still.current === CAMERA_STILL_FRAMES) {
+      setCursorTooltipCameraMoving(false);
+    }
+  });
+  // Never leave the tooltip switched off if the scene unmounts mid-move.
+  useEffect(() => () => setCursorTooltipCameraMoving(false), []);
+  return null;
+};
 
 /** World up, for building the camera's own right/up basis when shifting the frame. */
 const UP = new THREE.Vector3(0, 1, 0);
@@ -605,6 +695,9 @@ export const Scene3D: React.FC<Scene3DProps> = ({
   onAddWeight,
   onRemoveWeight,
   onWeightAvailability,
+  customWeightG,
+  inspection = null,
+  onInspectComponent,
 }) => {
   const apparatusRef = useRef<THREE.Group>(null);
   const [anchors, setAnchors] = useState<Anchors>({});
@@ -641,7 +734,9 @@ export const Scene3D: React.FC<Scene3DProps> = ({
         // Near/far bound the room, not the world: the ambient-occlusion pass reads depth
         // and 1000 units of range would leave it nothing to resolve a 14 cm radius with.
         camera={{ position: [-3.7, 0.95, -0.2], fov: 42, near: 0.05, far: 60 }}
-        gl={{ antialias: true, preserveDrawingBuffer: true }}
+        // `stencil`: the selection outline masks itself off the highlighted part
+        // (`selectionOutline.ts`). The composer's own target has one too.
+        gl={{ antialias: true, preserveDrawingBuffer: true, stencil: true }}
       >
         <RendererController config={sceneConfig} />
 
@@ -728,11 +823,16 @@ export const Scene3D: React.FC<Scene3DProps> = ({
             glassSpecular={sceneConfig.glassSpecular}
             glassRoughness={sceneConfig.glassRoughness}
             glassIor={sceneConfig.glassIor}
+            customWeightG={customWeightG}
+            inspection={inspection}
+            onInspectComponent={onInspectComponent}
           />
         </Suspense>
 
         <StudioLighting intensity={sceneConfig.hdrLight} />
+        <LabReflections />
         <LabFrame groupRef={apparatusRef} />
+        <CameraMotionGate />
 
         <CameraRig
           target={cameraTarget}

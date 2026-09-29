@@ -153,7 +153,25 @@ describe('completion conditions', () => {
         { type: 'ADD_WEIGHT', massG: 10 },
       ],
     },
-    { id: 'record-actual-force', satisfyWith: [{ type: 'RECORD_ACTUAL_FORCE' }] },
+    // F_ac is recordable only once both readings are (F15), so the case takes both first.
+    {
+      id: 'record-actual-force',
+      satisfyWith: [
+        { type: 'OPEN_COVER' },
+        { type: 'SELECT_DEFLECTOR', deflectorId: 90 },
+        { type: 'CLOSE_COVER' },
+        { type: 'POWER_ON' },
+        { type: 'SET_VALVE', opening: 0.4 },
+        { type: 'BEGIN_READING', index: 1 },
+        { type: 'ADD_WEIGHT', massG: 80 },
+        { type: 'END_READING' },
+        { type: 'REMOVE_ALL_WEIGHTS' },
+        { type: 'BEGIN_READING', index: 2 },
+        { type: 'ADD_WEIGHT', massG: 260 },
+        { type: 'END_READING' },
+        { type: 'RECORD_ACTUAL_FORCE' },
+      ],
+    },
   ];
 
   it.each(CASES)('$id becomes satisfied by its own condition', ({ id, satisfyWith }) => {

@@ -1,6 +1,27 @@
 /**
  * The deflector spring.
  *
+ * ## F05 — below rest, down to a mechanical stop
+ *
+ * QA (F05) supersedes the floor below. The pointer is a fixed reference at the carrier's
+ * rest height, and the carrier must move *towards* it as the load changes — from above it
+ * while the jet wins, and from below it while the load wins. A floor at rest drew an
+ * overloaded pan exactly on the pointer, which is what a balanced pan looks like: 580 g
+ * against an 80 g jet read as balanced (measured 2026-09-28).
+ *
+ * So the displacement is signed, X = h_F − h_w, and bounded on both sides:
+ *
+ *   * **up** by the travel above the spring — the storyboard's "will not exceed the cover
+ *     or holder surface" (`maxTravelMm`, unchanged);
+ *   * **down** by the carrier's mechanical stop (`maxCompressionMm`): the lesser of the
+ *     spring's working compression and the travel left before the deflector comes within
+ *     the minimum safe clearance of the nozzle. Measured and set by the scene
+ *     (`lib/carrierTravel.ts`); the domain has no geometry. Past the stop, more load moves
+ *     nothing.
+ *
+ * `maxCompressionMm` defaults to 0, which is exactly the storyboard's floor — every caller
+ * that does not pass it keeps the BEDO-007 behaviour described next.
+ *
  * ## The specification
  *
  * From BEDO's storyboard, `Jetforce_Storyboard.pptx` slide 8, which tabulates the spring
@@ -54,12 +75,15 @@ export const springHeightMm = (forceN: number, rateNPerM: number = SPRING_RATE_N
 /**
  * `X = h_F − h_w`, clamped to the physically reachable range.
  *
- * @param jetForceN     F_th, the jet pushing the deflector up.
- * @param weightForceN  F_ac, the weight on the holder pulling it down.
- * @param maxTravelMm   How far the spring may rise before it meets the surface above it.
- *                      Measured from the model by the scene layer — the domain has no
- *                      geometry.
- * @returns             Net upward displacement from rest, in millimetres. Never negative.
+ * @param jetForceN         F_th, the jet pushing the deflector up.
+ * @param weightForceN      F_ac, the weight on the holder pulling it down.
+ * @param maxTravelMm       How far the spring may rise before it meets the surface above
+ *                          it. Measured from the model by the scene layer — the domain has
+ *                          no geometry.
+ * @param maxCompressionMm  How far the carrier may go *below* rest before its mechanical
+ *                          stop (F05). 0 — the default — is the storyboard's floor.
+ * @returns                 Net displacement from rest, in millimetres: positive up,
+ *                          negative down, never past either limit.
  *
  * Positional rather than an options object: this is read once per rendered frame, and a
  * fresh object sixty times a second is a cost with no reader.
@@ -68,14 +92,20 @@ export function springDeflectionMm(
   jetForceN: number,
   weightForceN: number,
   maxTravelMm: number,
+  maxCompressionMm: number = 0,
   rateNPerM: number = SPRING_RATE_N_PER_M
 ): number {
   const heightFromJetMm = springHeightMm(jetForceN, rateNPerM);
   const heightFromWeightsMm = springHeightMm(weightForceN, rateNPerM);
-
-  // Storyboard sl. 8: "If hF ≤ hw, The X = 0 and the deflector spring will not move."
   const netMm = heightFromJetMm - heightFromWeightsMm;
-  if (!(netMm > 0)) return 0;
+
+  // Below rest: down to the mechanical stop, and no further (F05). With no allowance this
+  // is storyboard sl. 8's "If hF ≤ hw, The X = 0 and the deflector spring will not move."
+  if (!(netMm > 0)) {
+    const stopMm = maxCompressionMm > 0 ? maxCompressionMm : 0;
+    if (!(netMm < 0) || stopMm === 0) return 0;
+    return netMm > -stopMm ? netMm : -stopMm;
+  }
 
   // "The spring will not exceed the cover or holder surface."
   const limitMm = maxTravelMm > 0 ? maxTravelMm : 0;

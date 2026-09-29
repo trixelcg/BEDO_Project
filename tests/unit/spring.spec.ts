@@ -185,3 +185,62 @@ describe('as a function', () => {
     }
   });
 });
+
+describe('below rest, down to the mechanical stop (F05)', () => {
+  const STOP = 17.76;
+
+  it('goes below rest when the load outweighs the jet', () => {
+    // Reading 1's jet (0.82 N) against 200 g: 4.10 − 9.81 = −5.71 mm.
+    expect(springDeflectionMm(0.8199, weightForceN(200), UNBOUNDED, STOP)).toBeCloseTo(
+      springHeightMm(0.8199) - springHeightMm(weightForceN(200)),
+      12
+    );
+  });
+
+  it('falls strictly with every gram of valid load, then holds at the stop', () => {
+    let previous = Infinity;
+    let stopped = false;
+    for (let g = 0; g <= 2000; g += 10) {
+      const x = springDeflectionMm(0.8199, weightForceN(g), UNBOUNDED, STOP);
+      if (stopped) {
+        expect(x, `${g} g`).toBe(-STOP);
+      } else if (x === -STOP) {
+        stopped = true;
+      } else {
+        expect(x, `${g} g`).toBeLessThan(previous);
+      }
+      previous = x;
+    }
+    expect(stopped).toBe(true);
+  });
+
+  it('never goes past the stop, however heavy the load', () => {
+    for (const kg of [1, 5, 50, 1e6]) {
+      expect(springDeflectionMm(0.8199, kg * 9.81, UNBOUNDED, STOP)).toBe(-STOP);
+      expect(springDeflectionMm(0, kg * 9.81, UNBOUNDED, STOP)).toBe(-STOP);
+    }
+  });
+
+  it('with no jet at all, the load alone compresses the spring', () => {
+    expect(springDeflectionMm(0, weightForceN(100), UNBOUNDED, STOP)).toBeCloseTo(
+      -springHeightMm(weightForceN(100)),
+      12
+    );
+  });
+
+  it('is exactly at rest when the load balances the jet', () => {
+    expect(springDeflectionMm(0.8199, 0.8199, UNBOUNDED, STOP)).toBe(0);
+  });
+
+  it('leaves everything above rest exactly as it was', () => {
+    for (const [jet, load] of [[0.8199, 0], [2.5303, weightForceN(100)], [100, 0]]) {
+      expect(springDeflectionMm(jet, load, 25.38, STOP)).toBe(springDeflectionMm(jet, load, 25.38));
+    }
+  });
+
+  it('keeps the storyboard floor when no stop allowance is given', () => {
+    expect(springDeflectionMm(0.8199, weightForceN(380), UNBOUNDED)).toBe(0);
+    expect(springDeflectionMm(0.8199, weightForceN(380), UNBOUNDED, 0)).toBe(0);
+    expect(springDeflectionMm(0.8199, weightForceN(380), UNBOUNDED, -3)).toBe(0);
+  });
+});

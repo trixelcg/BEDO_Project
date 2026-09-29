@@ -1,9 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup } from '@testing-library/react';
+import { cleanup, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { screen } from '@testing-library/react';
-import { click, renderApp, setValve, stubConfigFetch, walkLesson } from '../helpers/app-harness';
-import { flowRateLMin } from '../../src/domain/physics';
+import {
+  click,
+  renderApp,
+  resetSimulator,
+  setValve,
+  stubConfigFetch,
+  walkLesson,
+} from '../helpers/app-harness';
+import { SECOND_READING_VALVE, flowRateLMin } from '../../src/domain/physics';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
 
@@ -35,8 +42,8 @@ const closeBoard = () => click(/^Close$/);
  *
  * The guided steps each expose only the control that step asks for, so at the step that
  * opens the board the valve and the weights are deliberately not rendered. Free mode is
- * where every control is live at once, which is what these assertions need — and the valve
- * is inert until the pump runs, by domain rule.
+ * where every control is live at once, which is what these assertions need. The valve turns
+ * with the pump off too (F10), but gives no flow until the pump runs.
  */
 const freeRig = () => {
   click('Free Mode');
@@ -179,19 +186,18 @@ describe('the live software board', () => {
 
   it('keeps a recorded row frozen when the live state moves on afterwards', () => {
     walkLesson(1, 8);
-    openBoard();
+    openBoard(); // also finishes step 9 (F14: the monitor is on screen)
     // Reading 1 has been taken; row 2 of the table is its record.
     const recorded = tableRow(2);
     expect(recorded[1], 'row 2 carries a recorded flow').not.toBe('0.000');
 
-    // Moving the valve afterwards changes the live panel and must not touch the record.
-    // Free mode is used only because the step that opens the board does not offer the
-    // valve; the recorded rows belong to the rig and survive the mode switch.
-    closeBoard();
-    click('Free Mode');
-    setValve(0.9);
-    openBoard();
-    expect(liveValue('Valve opening')).toBe('90 %');
+    // Move the live rig without leaving the procedure: Q_total, from Parameters (F09).
+    // The live flow follows it; the recorded row keeps the Q_total it was taken at.
+    const liveQ = liveValue('Q');
+    click('Experiments');
+    click('Parameters');
+    fireEvent.change(document.getElementById('bedo-param-qtotal')!, { target: { value: '60' } });
+    expect(liveValue('Q')).not.toBe(liveQ);
     expect(tableRow(2)).toEqual(recorded);
   });
 
@@ -205,7 +211,7 @@ describe('the live software board', () => {
     expect(document.querySelector('.dfl-selected-note')?.textContent).toContain('k = 1.000');
 
     closeBoard();
-    click(/Reset simulator/i);
+    resetSimulator();
     freeRigWith(/Conical surface/);
     openBoard();
 
@@ -227,7 +233,7 @@ describe('the live software board', () => {
     const flat = parseFloat(liveValue('F_th'));
 
     closeBoard();
-    click(/Reset simulator/i);
+    resetSimulator();
     freeRigWith(/Conical surface/);
     setValve(0.6);
     openBoard();
@@ -255,11 +261,13 @@ describe('the live software board', () => {
   it('shows F_ac only once Calculate is pressed', () => {
     // Stop at 9: `walkLesson`'s step-10 action is the Calculate press itself.
     walkLesson(1, 9);
-    expect(tableRow(2).at(-1), 'unrecorded actual force reads as a dash').toBe('—');
+    // Column 8 is F_ac; the last column is the row's status (F15).
+    expect(tableRow(2)[7], 'unrecorded actual force reads as a dash').toBe('—');
+    expect(tableRow(2).at(-1)).toBe('✓ Recorded');
 
     click(/^Calculate$/);
-    expect(tableRow(2).at(-1)).not.toBe('—');
-    expect(Number(tableRow(2).at(-1))).toBeGreaterThan(0);
+    expect(tableRow(2)[7]).not.toBe('—');
+    expect(Number(tableRow(2)[7])).toBeGreaterThan(0);
   });
 });
 
@@ -320,14 +328,21 @@ describe('the docked software board', () => {
     expect(totalWeightG()).toBe(0);
   });
 
-  it('keeps a recorded row frozen while the live panel moves', () => {
+  it('gives the lesson its rows back, unchanged, after a trip through Free Mode', () => {
     walkLesson(1, 8);
     openBoard();
     const recorded = tableRow(2);
 
+    // Free Mode shows its own readings (F10); the valve moves with nothing asked.
     click('Free Mode');
     setValve(0.9);
     expect(liveValue('Valve opening')).toBe('90 %');
+
+    // Put the rig back as Guided left it, and Guided takes it back without a dialog
+    // (F14) — with the lesson's rows as they were.
+    setValve(SECOND_READING_VALVE);
+    click('Guided Mode');
+    expect(document.querySelector('[data-bedo-mode-dialog]')).toBeNull();
     expect(tableRow(2), 'a recorded reading must not follow the valve').toEqual(recorded);
   });
 

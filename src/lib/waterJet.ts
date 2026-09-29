@@ -123,6 +123,12 @@ export const WATER_MODEL_SCALE = 0.01;
 /**
  * Select the one authored cache that represents the current water state.
  *
+ * **Superseded by F08 — no longer used to draw the water.** The scene now computes the
+ * water from state (`src/lib/jetFlow.ts`, `docs/57`); this mapping is kept as the record of
+ * what the authored caches are. Its premise — that at the first reading the jet stops at
+ * the nozzle mouth — is the caches' own, and contradicts the force the domain applies to
+ * the deflector at that reading, which is one of the defects F08 corrects.
+ *
  * ## What the two shapes actually are (BEDO-WATER-05)
  *
  * `Jetforce_Storyboard.pptx` sl. 18 names them "water shape before impact" and "water shape
@@ -191,6 +197,9 @@ export const waterShapeForFlow = (
 
 /**
  * The world-height band over which the after-impact plume fades out (BEDO-WATER-15).
+ *
+ * **Superseded by F08 — nothing reads it.** The computed water runs to the tank floor and
+ * ends there, so there is nothing to fade out in mid-air.
  *
  * The authored caches do not stop at the splash — each carries a descending sheet down to
  * the tank floor, and seen through a glass vessel that sheet reads as a blue cylinder

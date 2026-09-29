@@ -99,6 +99,81 @@ try {
   console.error('Failed to read runtime manifest; falling back to GCS for runtime assets.', e);
 }
 
+/**
+ * A `Range: bytes=…` header, resolved against a file of `size` bytes (F13).
+ *
+ * Media elements seek by asking for a byte range. A server that ignores the header and
+ * returns the whole file with 200 — as this one did — leaves the browser nothing to seek
+ * with: the walkthrough video's timeline snapped back or did nothing. One range only
+ * (browsers ask for one); anything else is served whole, which the spec allows.
+ *
+ *   null        no usable Range header — send the whole file
+ *   'invalid'   a range that cannot be satisfied — 416
+ */
+export const parseByteRange = (
+  header: string | undefined,
+  size: number
+): { start: number; end: number } | null | 'invalid' => {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === '') {
+    // Suffix: the last N bytes.
+    const n = Number(m[2]);
+    if (n === 0) return 'invalid';
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= size || start > end) return 'invalid';
+  return { start, end };
+};
+
+/**
+ * Headers and status for a body of `size` bytes, honouring Range. Returns the byte span
+ * to stream, or null when the response is already complete (416, or HEAD).
+ */
+const beginBody = (
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  size: number
+): { start: number; end: number } | null => {
+  res.setHeader('Accept-Ranges', 'bytes');
+  const range = parseByteRange(req.headers.range, size);
+  if (range === 'invalid') {
+    res.statusCode = 416;
+    res.setHeader('Content-Range', `bytes */${size}`);
+    res.end();
+    return null;
+  }
+  const span = range ?? { start: 0, end: size - 1 };
+  if (range) {
+    res.statusCode = 206;
+    res.setHeader('Content-Range', `bytes ${span.start}-${span.end}/${size}`);
+  } else {
+    res.statusCode = 200;
+  }
+  res.setHeader('Content-Length', String(size === 0 ? 0 : span.end - span.start + 1));
+  if (req.method === 'HEAD' || size === 0) {
+    res.end();
+    return null;
+  }
+  return span;
+};
+
+/** A local file, with Range. */
+const sendLocalFile = (req: http.IncomingMessage, res: http.ServerResponse, filePath: string) => {
+  const span = beginBody(req, res, fs.statSync(filePath).size);
+  if (!span) return;
+  const stream = fs.createReadStream(filePath, span);
+  stream.on('error', () => res.destroy());
+  stream.pipe(res);
+};
+
 const server = http.createServer(async (req, res) => {
   const urlObj = new URL(req.url || '', `http://${req.headers.host}`);
   const pathname = urlObj.pathname;
@@ -131,8 +206,7 @@ const server = http.createServer(async (req, res) => {
     const rtExt = path.extname(localRuntime).toLowerCase();
     res.setHeader('Content-Type', MIME_TYPES[rtExt] || 'application/octet-stream');
     res.setHeader('Cache-Control', cacheControlFor(pathname, rtExt));
-    res.statusCode = 200;
-    fs.createReadStream(localRuntime).pipe(res);
+    sendLocalFile(req, res, localRuntime);
     return;
   }
 
@@ -156,8 +230,12 @@ const server = http.createServer(async (req, res) => {
             const ext = path.extname(filename).toLowerCase();
             res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
             res.setHeader('Cache-Control', cacheControlFor(pathname, ext));
-            res.statusCode = 200;
-            file.createReadStream().pipe(res);
+            const [meta] = await file.getMetadata();
+            const span = beginBody(req, res, Number(meta.size ?? 0));
+            if (!span) return;
+            const stream = file.createReadStream({ start: span.start, end: span.end });
+            stream.on('error', () => res.destroy());
+            stream.pipe(res);
             return;
           }
         } catch (e) {
@@ -178,9 +256,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Cache-Control', cacheControlFor(pathname, ext));
 
   if (fs.existsSync(filePath)) {
-    const stream = fs.createReadStream(filePath);
-    res.statusCode = 200;
-    stream.pipe(res);
+    sendLocalFile(req, res, filePath);
   } else {
     res.statusCode = 404;
     res.end('Not Found');

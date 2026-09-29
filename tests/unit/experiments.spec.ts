@@ -168,7 +168,7 @@ describe('the guided procedure', () => {
       'Balance the pointer (reading 2)',
       'Open the software monitor',
       'Record the actual force',
-      'You finished!',
+      'Open the answer sheet',
     ]);
   });
 

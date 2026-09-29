@@ -61,10 +61,18 @@ export interface LessonRunner {
   /** The learner pressed OK. */
   confirm(context: LessonContext): AdvanceResult;
   /**
-   * An action happened. Advances only if the current step was waiting for exactly that
-   * and completes on the action rather than on a confirmation.
+   * An action happened. Advances if the current step was waiting for exactly that and
+   * completes on the action, or if it is a `condition` step whose goal now holds.
    */
   notify(expectation: LessonExpectation['type'], context: LessonContext): AdvanceResult;
+  /**
+   * The rig changed, by whatever route (F14). Finishes the current step if it is a
+   * `condition` step and its goal now holds; otherwise does nothing.
+   *
+   * One step at a time: the caller dispatches the finished step's commands and asks
+   * again, because the next step's condition must be read against the rig *after* them.
+   */
+  sync(context: LessonContext): AdvanceResult;
 
   /** True once the lesson has reached or passed a step — semantic, not a number. */
   hasReached(id: StepId): boolean;
@@ -140,13 +148,13 @@ export function createLessonRunner(
     },
 
     canConfirm(context) {
-      if (state.mode !== 'guided') return false;
+      if (state.mode !== 'guided' || state.isComplete) return false;
       const step = current();
       return step.advance.kind === 'confirm' && step.advance.when(context);
     },
 
     confirm(context) {
-      if (state.mode !== 'guided') return NOTHING;
+      if (state.mode !== 'guided' || state.isComplete) return NOTHING;
       const step = current();
       if (step.advance.kind !== 'confirm') return NOTHING;
       // The OK button is only offered when `when` holds, but a caller may ask anyway.
@@ -154,9 +162,20 @@ export function createLessonRunner(
       return complete(step);
     },
 
-    notify(expectation, context) {
-      if (state.mode !== 'guided') return NOTHING;
+    sync(context) {
+      if (state.mode !== 'guided' || state.isComplete) return NOTHING;
       const step = current();
+      if (step.advance.kind !== 'condition') return NOTHING;
+      if (!step.isSatisfied(context)) return NOTHING;
+      return complete(step);
+    },
+
+    notify(expectation, context) {
+      if (state.mode !== 'guided' || state.isComplete) return NOTHING;
+      const step = current();
+      if (step.advance.kind === 'condition') {
+        return step.isSatisfied(context) ? complete(step) : NOTHING;
+      }
       const completesOnThisAction =
         (step.advance.kind === 'action' && step.expectation?.type === expectation) ||
         step.alsoCompletesOn === expectation;
@@ -172,7 +191,9 @@ export function createLessonRunner(
 
     hasCompleted(id) {
       const target = indexOf(id);
-      return target !== -1 && indexOf(state.currentStepId) > target;
+      if (target === -1) return false;
+      // Finishing the last step leaves it current, flagged complete: it is done too.
+      return indexOf(state.currentStepId) > target || (state.isComplete && indexOf(state.currentStepId) >= target);
     },
 
     reset() {

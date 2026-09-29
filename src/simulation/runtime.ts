@@ -31,15 +31,42 @@ import { attempt, type ApparatusAction, type RejectionReason } from '../domain/s
 import type { ExperimentId } from '../domain/experiments';
 import { getExperiment } from '../domain/experiments';
 import {
+  isFixedDenomination,
+  isValidCustomWeightG,
+  isValidPumpFlowLMin,
+} from '../domain/parameters';
+import {
+  MAX_FREE_READINGS,
   createInitialSimulationState,
   freezeSimulationState,
   type SimulationState,
 } from './state';
+import {
+  isValidMeasurement,
+  selectActualForceBlocker,
+  selectFreeReadingBlocker,
+  selectLiveReadout,
+  selectReadings,
+} from './selectors';
 
 /** Commands the simulation understands beyond the apparatus itself. */
 export type SimulationCommand =
   | ApparatusAction
   | { readonly type: 'SET_PUMP_FLOW'; readonly lPerMin: number }
+  /**
+   * The custom disc's mass. A disc already on the carrier is that disc, so it follows:
+   * the load, the spring, the balance and the monitor all move with it (F09).
+   */
+  | { readonly type: 'SET_CUSTOM_WEIGHT'; readonly grams: number }
+  /**
+   * The sheet's deflector is fitted without the learner touching the tray — a guided
+   * learner who confirms the install step as it stands (`docs/38 §3.1`).
+   */
+  | { readonly type: 'FIT_DEFLECTOR' }
+  /** Free mode: take a reading of the rig as it stands (F10). */
+  | { readonly type: 'RECORD_FREE_READING' }
+  /** Free mode: clear the readings taken. */
+  | { readonly type: 'CLEAR_FREE_READINGS' }
   | { readonly type: 'SELECT_EXPERIMENT'; readonly experimentId: ExperimentId }
   /** Start balancing a results row; its row follows the tray until the reading ends. */
   | { readonly type: 'BEGIN_READING'; readonly index: number }
@@ -95,14 +122,69 @@ const isApparatusAction = (command: SimulationCommand): command is ApparatusActi
 function applyCommand(state: SimulationState, command: SimulationCommand): SimulationState {
   switch (command.type) {
     case 'SET_PUMP_FLOW':
+      // Only values the panel can offer. Anything else is ignored rather than clamped, so
+      // a caller with a bad number finds out from the unchanged state, not from a
+      // different number than it asked for.
+      if (!isValidPumpFlowLMin(command.lPerMin)) return state;
       if (state.pumpFlowLMin === command.lPerMin) return state;
       return { ...state, pumpFlowLMin: command.lPerMin };
+
+    case 'SET_CUSTOM_WEIGHT': {
+      if (!isValidCustomWeightG(command.grams)) return state;
+      if (state.customWeightG === command.grams) return state;
+      // The one mass on the carrier that is not a tray denomination is the custom disc.
+      const loaded = state.apparatus.loadedWeightsG;
+      const onCarrier = loaded.some((g) => !isFixedDenomination(g));
+      return {
+        ...state,
+        customWeightG: command.grams,
+        apparatus: onCarrier
+          ? {
+              ...state.apparatus,
+              loadedWeightsG: loaded.map((g) => (isFixedDenomination(g) ? g : command.grams)),
+            }
+          : state.apparatus,
+      };
+    }
+
+    case 'FIT_DEFLECTOR':
+      if (state.deflectorFitted) return state;
+      return { ...state, deflectorFitted: true };
+
+    case 'RECORD_FREE_READING': {
+      // A reading is a measurement of F_ac, so it needs one (F15): a fitted deflector,
+      // water on it, a load on the carrier, the carrier balanced — and room in the table.
+      // The panel says which is missing and disables its button; this is the rule behind it.
+      if (selectFreeReadingBlocker(state, MAX_FREE_READINGS) !== null) return state;
+      const { apparatus } = state;
+      return {
+        ...state,
+        freeReadings: [
+          ...state.freeReadings,
+          {
+            valveOpening: apparatus.isPowerOn ? apparatus.valveOpening : 0,
+            pumpFlowLMin: state.pumpFlowLMin,
+            deflectorId: apparatus.selectedDeflectorId,
+            weightsG: [...apparatus.loadedWeightsG],
+          },
+        ],
+      };
+    }
+
+    case 'CLEAR_FREE_READINGS':
+      if (state.freeReadings.length === 0) return state;
+      return { ...state, freeReadings: [] };
 
     case 'SELECT_EXPERIMENT': {
       if (state.experimentId === command.experimentId) return state;
       // Loading a sheet re-runs the whole procedure: a fresh rig with that experiment's
       // deflector, and no readings carried over. This is what the app has always done.
-      return createInitialSimulationState(command.experimentId, state.pumpFlowLMin);
+      // The two parameters are the student's, and carry over — both of them.
+      return createInitialSimulationState(
+        command.experimentId,
+        state.pumpFlowLMin,
+        state.customWeightG
+      );
     }
 
     case 'BEGIN_READING': {
@@ -118,19 +200,34 @@ function applyCommand(state: SimulationState, command: SimulationCommand): Simul
     case 'END_READING': {
       const index = state.activeReadingIndex;
       if (index === null) return state;
+      // Only a valid measurement is committed as a reading (F15). The lesson ends a reading
+      // only when its row balances, so this never refuses a lesson step; it is what makes
+      // "recorded" mean the same thing wherever it is read.
+      if (!isValidMeasurement(selectReadings(state)[index])) return state;
+      // And the jet must actually be on the carrier: deflector fitted, pump on, tank shut.
+      if (selectLiveReadout(state).jetForceOnCarrierN <= 0) return state;
       const committedWeightsG = [...state.committedWeightsG];
       while (committedWeightsG.length <= index) committedWeightsG.push([]);
       committedWeightsG[index] = [...state.apparatus.loadedWeightsG];
+      // What the reading was taken *with* is part of the reading.
+      const committedPumpFlowLMin = [...state.committedPumpFlowLMin];
+      const committedDeflectorIds = [...state.committedDeflectorIds];
+      committedPumpFlowLMin[index] = state.pumpFlowLMin;
+      committedDeflectorIds[index] = state.apparatus.selectedDeflectorId;
       return {
         ...state,
         activeReadingIndex: null,
         committedReadingCount: Math.max(state.committedReadingCount, index + 1),
         committedWeightsG,
+        committedPumpFlowLMin,
+        committedDeflectorIds,
       };
     }
 
     case 'RECORD_ACTUAL_FORCE':
-      if (state.isActualForceRecorded) return state;
+      // F_ac is the weight of each balanced reading: both must be recorded, and none in
+      // progress (F15). Calculate is disabled, with the reason, until then.
+      if (selectActualForceBlocker(state) !== null) return state;
       return { ...state, isActualForceRecorded: true };
 
     default:
@@ -169,7 +266,13 @@ export function createSimulationRuntime(
           // is notified. Feedback is the caller's business.
           return { ok: false, state, reason: result.reason };
         }
-        const changed = result.changed && commit({ ...state, apparatus: result.state });
+        let next = result.changed ? { ...state, apparatus: result.state } : state;
+        // An accepted selection puts that deflector on the rod — even the one already
+        // selected, which the state machine reports as unchanged: the rod was bare.
+        if (command.type === 'SELECT_DEFLECTOR' && !next.deflectorFitted) {
+          next = { ...next, deflectorFitted: true };
+        }
+        const changed = commit(next);
         return { ok: true, state, changed };
       }
 
@@ -185,7 +288,15 @@ export function createSimulationRuntime(
     },
 
     reset(experimentId) {
-      commit(createInitialSimulationState(experimentId ?? state.experimentId, state.pumpFlowLMin));
+      // The rig, not the parameters panel: Q_total and the custom mass stay as the student
+      // set them — both of them, where the custom mass used to reset and Q_total not.
+      commit(
+        createInitialSimulationState(
+          experimentId ?? state.experimentId,
+          state.pumpFlowLMin,
+          state.customWeightG
+        )
+      );
       return state;
     },
   };

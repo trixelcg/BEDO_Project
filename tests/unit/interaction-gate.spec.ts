@@ -176,11 +176,10 @@ describe('always available', () => {
     expect(ask(act({ type: 'OPEN_VOLUMETRIC_VALVE' }), 'unscrew-cover')).toMatchObject({
       allowed: true,
     });
-    // (the resting rig permits it; VALVE_NEEDS_RUNNING_PUMP guards the flow valve)
-    expect(ask(act({ type: 'SET_VALVE', opening: 0.4 }), 'set-flow-reading-1')).toEqual({
-      allowed: false,
-      blockedBy: 'apparatus',
-      reason: 'VALVE_NEEDS_RUNNING_PUMP',
+    // The flow valve is a hand valve and turns on the resting rig (F10); a real apparatus
+    // guard still refuses — error2, a deflector with the tank shut.
+    expect(ask(act({ type: 'SET_VALVE', opening: 0.4 }), 'set-flow-reading-1')).toMatchObject({
+      allowed: true,
     });
   });
 });
@@ -262,7 +261,6 @@ describe('precedence', () => {
       'COVER_BLOCKED_BY_POWER',
       'POWER_BLOCKED_BY_OPEN_COVER',
       'COVER_BLOCKED_BY_WEIGHTS',
-      'VALVE_NEEDS_RUNNING_PUMP',
     ];
     expect(lessonReasons.filter((r) => apparatusReasons.includes(r))).toEqual([]);
   });

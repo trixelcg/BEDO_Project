@@ -18,6 +18,7 @@ import { getDeflector } from '../../src/domain/apparatus';
 const values = (over: Partial<BoardValues> = {}): BoardValues => {
   const jet = jetState(0.35, 90);
   return {
+    deflectorFitted: true,
     deflectorAngle: 90,
     deflectorName: 'Flat surface (90°)',
     momentumFactor: getDeflector(90).momentumFactor,
@@ -69,6 +70,14 @@ describe('the physical board readout', () => {
     drawBoard(ctx, values({ loadedMassG: 150, measuredForceN: (150 * GRAVITY_MS2) / 1000 }));
     expect(text).toContain('150');
     expect(text).toContain('1.472');
+  });
+
+  it('marks nothing, and prints no F_th, while the rod is bare (F09)', () => {
+    const { ctx, text } = recordingContext();
+    drawBoard(ctx, values({ deflectorFitted: false, deflectorAngle: 135 }));
+    expect(text.join(' ')).not.toContain('k = ');
+    expect(text.join(' ')).toContain('F_th  —');
+    expect(boardSignature(values({ deflectorFitted: false }))).not.toBe(boardSignature(values()));
   });
 
   it('marks the installed deflector with its momentum factor', () => {

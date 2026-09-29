@@ -24,6 +24,11 @@
   --accent-blue: #f58220;
   --accent-gold: #ff9100;
   --danger-red: #ff3d71;
+  /* Filled danger controls and the refusal popup carry white text: this red keeps it at
+     5.6:1 where #ff3d71 managed 3.4:1 (F16). #ff3d71 stays for red text on dark. */
+  --danger-fill: #c81e4a;
+  /* The focus ring: one colour no state or brand fill uses. */
+  --focus-ring: #ffd166;
   --success-green: #4caf50;
 
   /* Glassmorphism system */
@@ -110,6 +115,19 @@ body {
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* The sidebar header had no layout of its own (F16): the logo, the title and the Video /
+   language buttons stacked as blocks, and the button row sat flush on the mode toggle. It is
+   one wrapping row now, with the buttons pushed to the inline end in either direction. */
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-bottom: 14px;
+}
+.sidebar-header > div:nth-child(2) { flex: 1 1 140px; min-width: 0; }
+.sidebar-header-actions { display: flex; gap: 8px; margin-inline-start: auto; }
+
 .logo-container {
   background: rgba(0, 229, 255, 0.1);
   padding: 8px;
@@ -146,7 +164,6 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  margin-left: auto;
 }
 
 .lang-btn:hover {
@@ -202,6 +219,66 @@ body {
 .slider-val {
   color: var(--accent-blue);
   font-weight: 700;
+}
+
+/* Parameters editor (F09): hints, read-only values and the live results grid. */
+.params-editor .slider-label {
+  gap: 8px;
+  align-items: baseline;
+}
+
+.params-editor .slider-val {
+  white-space: nowrap;
+}
+
+.param-hint {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #8fa7ad;
+}
+
+.param-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.param-value {
+  font-size: 12px;
+  color: #fff;
+}
+
+.param-mono {
+  font-size: 11px;
+  color: #d6e2e5;
+  font-variant-numeric: tabular-nums;
+}
+
+.param-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 2px 0 0;
+  font-size: 11px;
+}
+
+.param-grid dt {
+  color: #8fa7ad;
+}
+
+.param-grid dd {
+  margin: 0;
+  color: #fff;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 input[type="range"] {
@@ -289,7 +366,8 @@ input[type="range"]::-webkit-slider-thumb:hover {
   z-index: 100;
   max-width: 500px;
   width: calc(100% - 48px);
-  background: rgba(255, 61, 113, 0.95);
+  /* Deeper red for its white text (F16). */
+  background: rgba(200, 30, 74, 0.97);
   backdrop-filter: blur(12px);
   color: #fff;
   border-radius: 12px;
@@ -413,7 +491,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 .monitor-content {
   display: grid;
-  grid-template-columns: 3fr 2fr;
+  /* `minmax(0, …)` (F16): a bare `fr` track grows to its widest child's min-content, and the
+     readings table pushed the docked column to 407px inside a 268px panel — the live cards
+     ran out of the panel and were cut off. The table scrolls in its own container instead. */
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
   gap: 30px;
   flex: 1;
   /* The deflector board (BEDO-UX-06B) adds a second row. Without this it flowed past the
@@ -740,9 +821,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
    Direction is inherited from <html>, so the whole dock mirrors in Arabic.
 --------------------------------------------------------------------------- */
 .guided-chip {
-  position: absolute;
-  top: 18px;
-  inset-inline-start: 20px;
+  /* In the shell's start rail (F16): placed by the grid, not by coordinates. */
+  align-self: flex-start;
+  max-width: 100%;
+  flex: none;
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -753,22 +835,30 @@ input[type="range"]::-webkit-slider-thumb:hover {
   backdrop-filter: blur(10px);
   pointer-events: none;
 }
-.guided-chip-code { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent-blue); }
+.guided-chip-code { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent-blue); white-space: nowrap; }
 .guided-chip-title { font-size: 14px; color: rgba(255, 255, 255, 0.85); }
 
 /* Dock: contextual control, then the instruction, bottom centre. */
 .guided-dock {
-  position: absolute;
-  /* Clears the footer, which grew when BEDO-UX-09 raised the text size and can wrap to
-     two rows in Arabic. The card and the footer used to overlap at 1366x768. */
-  bottom: 116px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(880px, calc(100vw - 96px));
+  /*
+    In flow (F16). It used to be absolute at `bottom: 116px` (124 on short screens) to
+    clear a footer whose height it could only guess; at 1366x768 the weights dock then
+    grew upward off the top of the viewport. Now the shell's bottom row holds the dock
+    and the footer in order, so they cannot overlap, and the dock scrolls inside itself
+    if a step's controls are taller than the room left.
+  */
+  width: min(880px, 100%);
+  max-height: min(62vh, 100%);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 10px;
+  /* The card lays itself out from the dock's width, not the window's. */
+  container-type: inline-size;
+  container-name: dock;
 }
 
 /* Only ever holds the control the current step needs. */
@@ -793,9 +883,11 @@ input[type="range"]::-webkit-slider-thumb:hover {
   control gets the same solid treatment as the step card instead.
 */
 .guided-controls .glass-card,
-.guided-controls > button {
+.guided-controls > button:not(.btn-primary) {
   min-width: 240px;
   max-width: 420px;
+  /* Not applied to primary actions (F16): this forced a near-black fill under the monitor
+     button's own dark label, and an enabled "Open Data Monitor" measured 1.0:1 — blank. */
   background: rgba(20, 21, 23, 0.86) !important;
   border: 1px solid rgba(255, 255, 255, 0.09) !important;
   border-radius: 12px;
@@ -876,21 +968,20 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .step-card-actions:empty { display: none; }
 .step-card-actions .ok-confirm-btn {
   background: #f58220;
-  color: #fff;
+  /* Dark on orange (F16): white measured 2.6:1. */
+  color: #141517;
   font-weight: 700;
   font-size: 16px;
   padding: 12px 26px;
   min-width: 112px;
   box-shadow: 0 0 12px rgba(245, 130, 32, 0.35);
 }
-.step-card-actions .answer-sheet-btn { background: var(--success-green); color: #fff; font-weight: 700; font-size: 15px; padding: 12px 22px; }
+.step-card-actions .answer-sheet-btn { background: var(--success-green); color: #141517; font-weight: 700; font-size: 15px; padding: 12px 22px; }
 
 /* Small global actions. Compact by requirement: not a panel. */
 .guided-footer {
-  position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* In flow, under the dock (F16); wraps to more rows rather than overlapping anything. */
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -978,7 +1069,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   .intro-panel { padding: 36px 40px; }
   .intro-title { font-size: 25px; }
   /* Still above the footer — never back under it. */
-  .guided-dock { bottom: 124px; }
+  /* F16: no hand-placed offset; the shell's bottom row reflows. */
   .guided-controls .glass-card { padding: 12px 14px; }
 }
 
@@ -1082,6 +1173,29 @@ input[type="range"]::-webkit-slider-thumb:hover {
   unicode-bidi: isolate;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
   will-change: transform;
+  /* F17: name, then what it does, then how to open its card — three short lines. */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: min(320px, calc(100vw - 16px));
+}
+.cursor-tooltip[hidden] { display: none; }
+.cursor-tooltip-title { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.cursor-tooltip-body {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.86);
+  white-space: normal;
+}
+.cursor-tooltip-hint {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffc233;
+  white-space: nowrap;
 }
 
 .scene-tooltip {
@@ -1122,20 +1236,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   `.ui-container`, which is exactly the stage the apparatus is drawn on, so the clearance
   holds whether the board is docked or not.
 */
-.guided-dock.is-aside {
-  left: 24px;
-  transform: none;
-  width: min(520px, 28%);
-  align-items: stretch;
-}
-
-.guided-footer.is-aside {
-  left: auto;
-  right: 24px;
-  transform: none;
-  width: min(420px, 26%);
-  justify-content: flex-end;
-}
+/* F16: the aside layout is the shell's `is-aside` arrangement (see .guided-shell). */
 
 /*
   BEDO-UX-12 — the live half of the software board.
@@ -1289,7 +1390,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
 
 /* One column in the dock; the graph and the reference board belong to the expanded view. */
 .monitor-docked .monitor-content {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   overflow-y: visible;
 }
@@ -1353,3 +1454,566 @@ input[type="range"]::-webkit-slider-thumb:hover {
   row stays, because `Back to Step` is in it and leaving must always be one click away.
 */
 .ui-container.is-board-view .guided-dock { display: none; }
+
+/* Free → Guided confirmation (F10). */
+.mode-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 8, 10, 0.55);
+  pointer-events: auto;
+}
+
+.mode-dialog {
+  width: min(440px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mode-dialog h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #f58220;
+}
+
+.mode-dialog p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #d6e2e5;
+}
+
+.mode-dialog-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Free-mode readings bar in the Data Monitor (F10). */
+.mon-free-readings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: #8fa7ad;
+}
+
+/*
+  Walkthrough video (F13). The stage takes the room left by the header and the control
+  row, so the controls are always on screen however tall the video is.
+*/
+.walkthrough-video {
+  /* Portalled to <body> (F13): fixed to the viewport, above every panel and dialog. */
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+  z-index: 2000;
+  overflow: hidden;
+  font-family: inherit;
+}
+.walkthrough-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+}
+.walkthrough-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  cursor: pointer;
+}
+.walkthrough-message {
+  position: absolute;
+  inset: auto 0 16px 0;
+  margin: 0 auto;
+  width: fit-content;
+  max-width: 90%;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #e0f2f5;
+  font-size: 13px;
+  text-align: center;
+}
+.walkthrough-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+}
+.walkthrough-controls .walkthrough-play {
+  min-width: 88px;
+  justify-content: center;
+}
+.walkthrough-timeline {
+  flex: 1 1 200px;
+  min-width: 120px;
+  height: 6px;
+  accent-color: #f58220;
+  cursor: pointer;
+}
+.walkthrough-time {
+  color: #cfd8dc;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  min-width: 84px;
+  text-align: center;
+}
+.walkthrough-video button:focus-visible,
+.walkthrough-video input:focus-visible {
+  outline: 2px solid #f58220;
+  outline-offset: 2px;
+}
+.walkthrough-video button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/*
+  Guided Steps view (F14). Completed / Current / Upcoming differ by icon, weight and a
+  word as well as colour. Rows are list items, not controls.
+*/
+.step-progress {
+  /* In a shell rail (F16): as tall as its rows, never taller than the rail. */
+  width: 100%;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: rgba(20, 21, 23, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  z-index: 5;
+}
+
+.step-progress-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.step-progress-title { font-size: 13px; font-weight: 700; color: #fff; }
+.step-progress-count { font-size: 11px; color: #8fa7ad; flex: 1; }
+.step-progress-close {
+  background: none;
+  border: none;
+  color: #8fa7ad;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.step-progress-close:hover { color: #fff; }
+.step-progress-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+.step-row {
+  display: grid;
+  grid-template-columns: 20px 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 2px 0;
+  border-radius: 8px;
+  border-inline-start: 3px solid transparent;
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.step-row-num { font-variant-numeric: tabular-nums; text-align: end; opacity: 0.85; }
+.step-row-state { font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; }
+.step-row.is-completed { color: rgba(255, 255, 255, 0.7); }
+.step-row.is-completed .step-row-icon { color: var(--success-green); }
+.step-row.is-completed .step-row-state { color: var(--success-green); }
+.step-row.is-current {
+  background: rgba(245, 130, 32, 0.15);
+  border-inline-start-color: #f58220;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13.5px;
+}
+.step-row.is-current .step-row-icon { color: #f58220; }
+.step-row.is-current .step-row-state { color: #f58220; font-weight: 700; }
+.step-row.is-upcoming { color: rgba(255, 255, 255, 0.48); }
+.step-row.is-upcoming .step-row-state { opacity: 0.8; }
+.step-row.is-finished {
+  background: rgba(76, 175, 80, 0.12);
+  border-inline-start-color: var(--success-green);
+  color: #fff;
+  font-weight: 700;
+}
+.step-row.is-finished .step-row-icon,
+.step-row.is-finished .step-row-state { color: var(--success-green); }
+
+.step-badge.is-complete {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success-green);
+  border-color: rgba(76, 175, 80, 0.45);
+}
+.step-card.is-complete { border-color: rgba(76, 175, 80, 0.35); }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+  Live vs recorded (F15). The live section is framed as instrumentation — a dashed cyan
+  edge and a LIVE badge — and the recorded section as a record, solid. Row states in the
+  table differ by a written status as well as by colour.
+*/
+.mon-live-section {
+  border: 1px dashed rgba(0, 229, 255, 0.35);
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 16px;
+  background: rgba(0, 229, 255, 0.03);
+}
+.mon-recorded-section {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.mon-section-recorded {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mon-recorded-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e0f2f5;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.data-table tr.mon-row.is-reference td { color: #8fa7ad; font-style: italic; }
+.data-table tr.mon-row.is-pending td { color: #5c7a82; }
+.data-table tr.mon-row.is-live td {
+  color: #7fdcea;
+  background: rgba(0, 229, 255, 0.05);
+  border-top: 1px dashed rgba(0, 229, 255, 0.35);
+  border-bottom: 1px dashed rgba(0, 229, 255, 0.35);
+}
+.data-table tr.mon-row.is-recorded td { color: #fff; }
+.data-table td.mon-row-status { font-size: 11px; white-space: nowrap; font-style: normal; }
+.data-table tr.mon-row.is-recorded td.mon-row-status { color: var(--success-green); font-weight: 700; }
+.mon-calc-blocker { margin: 8px 0 0; font-size: 11.5px; color: #f5b37a; }
+
+.reset-dialog-label { margin: 10px 0 4px; font-size: 12px; font-weight: 700; color: #e0f2f5; }
+.reset-dialog-list { margin: 0; padding-inline-start: 18px; font-size: 12.5px; color: #cfd8dc; line-height: 1.55; }
+.reset-dialog-list.is-kept { color: #8fd19e; }
+
+
+/* ---------------------------------------------------------------------------
+   The guided shell (F16)
+
+   One grid over the stage, inset to the safe edges:
+
+       [ start rail ] [ centre ] [ end rail ]
+       [ bottom: dock (centred layout) · footer ]
+
+   Tracks, not coordinates: the bottom row is as tall as its content, the rails take what
+   is left and scroll inside themselves, and the centre column — the apparatus — keeps the
+   middle. At the weight steps (`is-aside`) the dock moves into the start rail and the
+   Steps view to the end rail, so the weights sit beside the jet rather than over it.
+--------------------------------------------------------------------------- */
+.guided-shell {
+  position: absolute;
+  inset: 0;
+  padding:
+    max(14px, env(safe-area-inset-top))
+    max(16px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  column-gap: 16px;
+  row-gap: 10px;
+  pointer-events: none;
+}
+.guided-rail {
+  grid-row: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.guided-rail:empty { display: none; }
+.guided-rail.is-start { grid-column: 1; width: clamp(230px, 21vw, 310px); }
+.guided-shell.is-aside .guided-rail.is-start { width: clamp(300px, 30vw, 500px); }
+.guided-rail.is-end { grid-column: 3; width: clamp(220px, 19vw, 290px); }
+.guided-centre {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.guided-bottom {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+/* In the start rail the dock sits at the bottom and takes the rail's width. */
+.guided-rail .guided-dock {
+  margin-top: auto;
+  width: 100%;
+  max-height: 100%;
+  align-items: stretch;
+}
+.guided-rail .guided-controls { justify-content: stretch; }
+.guided-rail .guided-controls .glass-card,
+.guided-rail .guided-controls > button { min-width: 0; max-width: none; width: 100%; }
+/* Popups in the centre column: never over the rails. */
+.guided-centre .warning-popup {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-width: 560px;
+}
+
+/*
+  The step card by the dock's width (container query), not the window's. Below ~620 px
+  the three-column card squeezed its instruction into a word-per-line column (QA IMG19);
+  it now stacks: badge and action on one row, the instruction full-width beneath.
+*/
+.step-card-number { grid-area: num; }
+.step-card-body { grid-area: body; }
+.step-card-actions { grid-area: actions; }
+.step-card { grid-template-areas: 'num body actions'; }
+@container dock (max-width: 620px) {
+  .step-card {
+    grid-template-columns: auto 1fr;
+    grid-template-areas: 'num actions' 'body body';
+    gap: 12px 14px;
+    padding: 14px 16px;
+  }
+  .step-card-actions { justify-self: end; flex-wrap: wrap; }
+  .step-card-primary { font-size: 17px; }
+  .step-card-secondary { font-size: 14px; }
+}
+@container dock (max-width: 360px) {
+  .step-card { grid-template-columns: 1fr; grid-template-areas: 'num' 'body' 'actions'; }
+  .step-card-actions { justify-self: stretch; }
+  .step-card-actions > * { flex: 1 1 auto; }
+}
+
+
+/* ---------------------------------------------------------------------------
+   Control states (F16)
+
+   Every state has a cue that is not colour:
+     hover     lighter fill and a brighter edge
+     focus     a 3 px ring in its own colour, offset from the control
+     selected  a thick inner edge on the leading side, bold text, and aria-pressed
+               (buttons only: `.dfl-item.is-selected` in the board keeps its own style)
+     disabled  dashed edge, faded, desaturated, not-allowed cursor — with its reason
+               beside it where there is one
+     pressed   a 1 px press
+   Warning and success panels carry an icon and a word as well as their colour.
+--------------------------------------------------------------------------- */
+:where(button, [role='button'], input, select, a, [tabindex]):focus-visible {
+  outline: 3px solid var(--focus-ring) !important;
+  outline-offset: 2px;
+}
+button:not(:disabled):active { transform: translateY(1px); }
+.btn-secondary:not(:disabled):hover,
+.guided-footer-btn:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+.btn-primary:not(:disabled):hover { filter: brightness(1.1); }
+button:disabled,
+button[aria-disabled='true'] {
+  opacity: 0.5 !important;
+  cursor: not-allowed !important;
+  filter: saturate(0.25);
+  border-style: dashed !important;
+  /* Borderless buttons get the dashed edge from an inset outline instead. */
+  outline: 1px dashed rgba(255, 255, 255, 0.45);
+  outline-offset: -3px;
+  box-shadow: none !important;
+}
+button.is-selected,
+.guided-footer-btn.is-active {
+  font-weight: 700 !important;
+  color: #fff !important;
+  border-color: var(--accent-blue) !important;
+  background: rgba(245, 130, 32, 0.16) !important;
+  box-shadow: inset 4px 0 0 var(--accent-blue) !important;
+}
+[dir='rtl'] button.is-selected,
+[dir='rtl'] .guided-footer-btn.is-active,
+.rtl button.is-selected { box-shadow: inset -4px 0 0 var(--accent-blue) !important; }
+
+/* Destructive outline buttons (Clear all weights, −g): the pink #ff3d71 text measured
+   3.9:1 on the glass sidebar over a bright scene. A solid backing and a lighter red keep
+   it above 4.5:1 whatever is behind the panel. */
+.is-danger:not(.btn-primary) {
+  background: rgba(20, 21, 23, 0.92) !important;
+  border-color: var(--danger-red) !important;
+  color: #ff6b8e !important;
+}
+.is-danger:not(.btn-primary):not(:disabled):hover { background: rgba(200, 30, 74, 0.22) !important; color: #fff !important; }
+
+.popup-kind {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  white-space: nowrap;
+}
+.warning-popup.is-note {
+  background: rgba(20, 21, 23, 0.94);
+  border: 1px solid var(--accent-blue);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+.warning-popup.is-note .popup-kind { color: var(--accent-blue); background: rgba(245, 130, 32, 0.12); }
+.warning-popup button {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Component card (F17)
+
+   A part's card, beside the part: a ring marker on the part, a leader line to the card,
+   and the card itself on whichever side has room (`placeCard`). Solid backing, so it
+   reads over any part of the scene. Full on a click (with a close button, stays until
+   closed), compact on keyboard focus (name and function, never a pointer target).
+--------------------------------------------------------------------------- */
+.component-card-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+.component-card-leader {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.component-card-leader line { stroke: #ffc233; stroke-width: 2; stroke-dasharray: 4 3; }
+.component-card-marker {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 3px solid #ffc233;
+  background: rgba(20, 21, 23, 0.35);
+  box-shadow: 0 0 0 2px rgba(20, 21, 23, 0.7);
+}
+.component-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: min(340px, calc(100vw - 24px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(20, 21, 23, 0.97);
+  border: 1px solid rgba(255, 194, 51, 0.55);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.45;
+  unicode-bidi: isolate;
+}
+.component-card.is-full { pointer-events: auto; }
+.component-card.is-compact { max-width: min(280px, calc(100vw - 24px)); padding: 9px 12px; }
+.component-card-head { display: flex; align-items: flex-start; gap: 10px; }
+.component-card-name { font-size: 16px; font-weight: 700; flex: 1 1 auto; }
+.component-card-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: -4px;
+  margin-inline-start: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  cursor: pointer;
+}
+.component-card-close:hover { background: rgba(255, 255, 255, 0.14); }
+.component-card-role { margin: 6px 0 0; color: rgba(255, 255, 255, 0.9); }
+.component-card-details {
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+}
+.component-card-details li + li { margin-top: 3px; }
+.component-card-use {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+.component-card-use-label {
+  display: inline-block;
+  margin-inline-end: 8px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(255, 194, 51, 0.16);
+  color: #ffc233;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

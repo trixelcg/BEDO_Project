@@ -8,6 +8,7 @@ import {
   REASSEMBLED_PARTS,
   RENAMED_PARTS,
 } from '../../src/lib/modelAdapter';
+import { FAMILY_CREATED_NODES } from '../../src/lib/weightFamily';
 import { describeMissing, readGlb, type GlbReport } from '../helpers/glb';
 import { loadApparatus } from '../helpers/model';
 
@@ -49,6 +50,8 @@ beforeAll(() => {
     exposed.set(gltfName(to), to);
   }
   for (const [contract] of REASSEMBLED_PARTS) exposed.set(gltfName(contract), contract);
+  // F04: the weight family adds the denominations the model has no disc for.
+  for (const name of FAMILY_CREATED_NODES) exposed.set(gltfName(name), name);
 });
 
 /** Every name the runtime resolves through gltfName, with the source that declares it. */
@@ -77,10 +80,10 @@ describe('the production model resolves every name the runtime uses', () => {
     expect(exposed.has(wanted), describeMissing(label, authored, wanted, exposed)).toBe(true);
   });
 
-  it('resolves all 33 contract names, so the count itself cannot drift unnoticed', () => {
+  it('resolves all 34 contract names, so the count itself cannot drift unnoticed', () => {
     const names = contract();
-    // 14 MESH entries + 7 shelves + 7 installed + 5 weight discs.
-    expect(names).toHaveLength(33);
+    // 14 MESH entries + 7 shelves + 7 installed + 6 weight discs (two made by the family).
+    expect(names).toHaveLength(34);
     const missing = names.filter(({ authored }) => !exposed.has(gltfName(authored)));
     expect(missing.map((m) => `${m.label} -> ${m.authored}`)).toEqual([]);
   });

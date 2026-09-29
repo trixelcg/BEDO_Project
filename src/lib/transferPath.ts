@@ -43,13 +43,13 @@ export interface Obstacle {
  * How far above the obstacle the disc's underside should pass, in model units.
  *
  * One centimetre at the model's true scale, where the tank cover is 3 cm thick and the
- * discs are 5.5–16.5 mm. Big enough to read as "over the lid" rather than "grazing it",
+ * discs are 2.1–25.9 mm (`weightFamily.ts`). Big enough to read as "over the lid" rather than "grazing it",
  * small enough that the disc never leaves the frame the step is composed in.
  */
 export const OBSTACLE_CLEARANCE = 0.01;
 
 /** How many points along the flight are tested when sizing the arc. */
-const SAMPLES = 48;
+const SAMPLES = 256;
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -83,13 +83,39 @@ export function arcHeightOver(
   const minZ = obstacle.minZ - radius;
   const maxZ = obstacle.maxZ + radius;
 
-  let height = 0;
+  // Where the straight line is over the footprint: a slab test in X and Z. The deepest
+  // shortfall is usually right where the line first crosses the edge, so the crossing
+  // points themselves are measured, not only the grid either side of them — a grid alone
+  // under-lifts any disc whose line enters between two samples (F04: the 10 g slot's did,
+  // by 1.8 mm).
+  let enter = 0;
+  let leave = 1;
+  for (const [a, b, lo, hi] of [
+    [from[0], to[0], minX, maxX],
+    [from[2], to[2], minZ, maxZ],
+  ] as const) {
+    const d = b - a;
+    if (Math.abs(d) < 1e-12) {
+      if (a < lo || a > hi) return 0;
+      continue;
+    }
+    const t0 = (lo - a) / d;
+    const t1 = (hi - a) / d;
+    enter = Math.max(enter, Math.min(t0, t1));
+    leave = Math.min(leave, Math.max(t0, t1));
+  }
+  if (enter > leave) return 0;
+
+  const samples: number[] = [enter, leave];
   for (let i = 1; i < SAMPLES; i++) {
     const t = i / SAMPLES;
-    const x = lerp(from[0], to[0], t);
-    const z = lerp(from[2], to[2], t);
-    if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+    if (t > enter && t < leave) samples.push(t);
+  }
 
+  let height = 0;
+  for (const t of samples) {
+    // The ends of the flight are the anchors themselves; the arc is zero there by design.
+    if (t <= 0 || t >= 1) continue;
     const deficit = needed - lerp(from[1], to[1], t);
     if (deficit <= 0) continue;
     // How tall the whole arc must be for its value *at this t* to cover the deficit.

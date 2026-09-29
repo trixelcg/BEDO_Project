@@ -3,7 +3,6 @@ import type { SimulationView } from '../types/index';
 import type { ExperimentDef } from '../domain/experiments';
 import {
   X,
-  RefreshCw,
   BarChart2,
   Calculator,
   Camera,
@@ -14,6 +13,8 @@ import {
 } from 'lucide-react';
 import { GRAVITY_MS2, NOZZLE_AREA_M2 } from '../domain/physics';
 import { getDeflector } from '../domain/apparatus';
+import { forceLawFor } from '../domain/forceLaw';
+import { MAX_FREE_READINGS } from '../simulation/state';
 import { DeflectorBoard } from './DeflectorBoard';
 import { csvFilename, toCsv } from '../lib/exportSchema';
 
@@ -38,9 +39,11 @@ interface SoftwareMonitorProps {
   experiment: ExperimentDef;
   deflectorName: string;
   onCalculate: () => void;
+  /** Free mode: record the rig as it stands, and clear the readings (F10). */
+  onRecordReading: () => void;
+  onClearReadings: () => void;
   onAnswerQuiz: (choice: number) => void;
   onClose: () => void;
-  onReset: () => void;
   /** Docked beside the apparatus, or expanded over it. */
   onToggleExpand: () => void;
 }
@@ -50,19 +53,54 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   experiment,
   deflectorName,
   onCalculate,
+  onRecordReading,
+  onClearReadings,
   onAnswerQuiz,
   onClose,
-  onReset,
   onToggleExpand,
 }) => {
   const isAr = state.language === 'ar';
-  const { recordedRows, isCalculated, quizAnswer, live } = state;
+  const {
+    recordedRows,
+    isCalculated,
+    quizAnswer,
+    live,
+    rowStatuses,
+    recordedCount,
+    recordableCount,
+    actualForceBlocker,
+    freeReadingBlocker,
+  } = state;
+  const free = state.readingsSource === 'free';
 
-  // Only the rows the student actually balanced are readings.
-  const rows = useMemo(
-    () => recordedRows.filter((r, i) => i > 0 && (r.loadedMassG > 0 || r.valveOpening > 0)),
-    [recordedRows]
+  /*
+    What is recorded, and what is not (F15).
+
+    `rowStatuses` is the one answer to "is this row a reading?" — the same one the panel's
+    counter, the board and the CSV use. Only a `recorded` row is a measurement: it is
+    counted, plotted and given an F_ac. The valve-shut `reference` row is the table's zero.
+    A `live` row (being balanced) and a `pending` one (not taken) carry no numbers here at
+    all — what is happening *now* belongs to the Live panel above the table, not beside
+    the history in it.
+  */
+  const recordedOnly = useMemo(
+    () => recordedRows.filter((_, i) => rowStatuses[i] === 'recorded'),
+    [recordedRows, rowStatuses]
   );
+  /** The F_th curve: the reference zero and the recorded readings, along Q. */
+  const plotted = useMemo(
+    () =>
+      recordedRows
+        .filter((_, i) => rowStatuses[i] === 'recorded' || rowStatuses[i] === 'reference')
+        .sort((a, b) => a.flowRateLMin - b.flowRateLMin),
+    [recordedRows, rowStatuses]
+  );
+  const canRecord = freeReadingBlocker === null;
+  /**
+   * Whether F_ac is shown. Guided: once Calculate records it (step 11). Free: a reading
+   * records what was on the carrier, so its F_ac is known the moment it is taken (F10).
+   */
+  const acShown = isCalculated || free;
 
   /*
     The tray, not the table.
@@ -78,15 +116,18 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   /** 10 mm, from the same constant the momentum equations and the nozzle tooltip use. */
   const nozzleDiameterMm = 2 * Math.sqrt(NOZZLE_AREA_M2 / Math.PI) * 1000;
   const installed = getDeflector(state.selectedDeflectorId);
+  /** The fitted deflector's own law and k — never the loaded sheet's (QA IMG25, F09). */
+  const law = forceLawFor(state.selectedDeflectorId);
+  const fitted = live.deflectorFitted;
 
   // Scale the axes to the data rather than pinning them, which used to clip every reading.
   const niceCeil = (v: number) => {
     const step = 10 ** Math.floor(Math.log10(Math.max(v, 1e-6)));
     return Math.ceil(v / step) * step;
   };
-  const maxFlow = niceCeil(Math.max(10, ...recordedRows.map((r) => r.flowRateLMin)) * 1.1);
+  const maxFlow = niceCeil(Math.max(10, ...plotted.map((r) => r.flowRateLMin)) * 1.1);
   const maxForce = niceCeil(
-    Math.max(0.5, ...recordedRows.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))) * 1.15
+    Math.max(0.5, ...plotted.map((r) => Math.max(r.theoreticalForceN, r.measuredForceN))) * 1.15
   );
 
   const paddingX = 40;
@@ -112,7 +153,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
 
   // F_ac only exists where the student actually balanced the pointer — drawing the
   // untouched rows as zeroes would drag the measured curve back down to the axis.
-  const measured = recordedRows.filter((r, i) => i === 0 || r.loadedMassG > 0);
+  const measured = plotted;
 
   /**
    * Step 11 — the readings the student captured, as CSV.
@@ -124,7 +165,8 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   const handleExportData = () => {
     const csv = toCsv(recordedRows, {
       title: `${experiment.nameEn} — ${deflectorName}`,
-      isCalculated,
+      isCalculated: acShown,
+      statuses: rowStatuses,
     });
 
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
@@ -166,6 +208,49 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
   const question = experiment.quiz[0];
   const answered = quizAnswer !== null;
   const correct = answered && quizAnswer === question.answer;
+
+  /** What the Record button needs, in the learner's words (F15). */
+  const freeReadingHint = (): string => {
+    const t = (en: string, ar: string) => (isAr ? ar : en);
+    const off = live.loadedMassG - live.balancingMassG;
+    switch (freeReadingBlocker) {
+      case 'TABLE_FULL':
+        return t(
+          `Table full (${MAX_FREE_READINGS}). Clear it to record more.`,
+          `الجدول ممتلئ (${MAX_FREE_READINGS}). امسح القراءات لتسجيل المزيد.`
+        );
+      case 'NO_DEFLECTOR':
+        return t('Fit a deflector first: the jet has nothing to push on.', 'ركّب عاكساً أولاً: لا شيء يدفعه النفث.');
+      case 'NO_FLOW':
+        return t(
+          'No jet on the carrier: close the tank, run the pump and open the valve.',
+          'لا نفث على الحامل: أغلق الخزان وشغّل المضخة وافتح الصمام.'
+        );
+      case 'NO_LOAD':
+        return t(
+          'Load the carrier: a reading is the weight that balances the jet.',
+          'ضع أثقالاً على الحامل: القراءة هي الوزن الذي يوازن النفث.'
+        );
+      case 'NOT_BALANCED':
+        return off > 0
+          ? t(`Not balanced — ≈ ${off.toFixed(0)} g too heavy.`, `غير متوازن — أثقل بـ ≈ ${off.toFixed(0)} غ.`)
+          : t(`Not balanced — needs ≈ ${(-off).toFixed(0)} g more.`, `غير متوازن — يحتاج ≈ ${(-off).toFixed(0)} غ إضافية.`);
+      default:
+        return t(
+          'Balanced — Record takes this load as F_ac.',
+          'متوازن — التسجيل يأخذ هذا الحمل كقيمة F_ac.'
+        );
+    }
+  };
+
+  /** How each kind of table row introduces itself (F15). */
+  const statusLabel = (status: (typeof rowStatuses)[number]): string =>
+    ({
+      reference: isAr ? 'مرجع · الصمام مغلق' : 'Reference · valve shut',
+      recorded: isAr ? '✓ مسجّلة' : '✓ Recorded',
+      live: isAr ? '● قيد الموازنة — انظر القيم الحية' : '● Balancing now — see Live',
+      pending: isAr ? 'غير مسجّلة' : 'Not recorded',
+    })[status];
 
   return (
     <div
@@ -221,14 +306,17 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             <Download size={15} />
             {isAr ? 'تصدير البيانات' : 'Export Data'}
           </button>
-          <button className="btn-secondary" onClick={onReset}>
-            <RefreshCw size={15} />
-            {isAr ? 'إعادة الضبط' : 'Reset'}
-          </button>
+          {/*
+            No "Reset" here (F15). It was a second, unlabelled way to reset the whole
+            simulator — rig, lesson and readings — beside Export and Save, where it read as
+            "reset this table". Reset lives in one place, "Reset simulator", which says what
+            it clears before it clears it.
+          */}
           <button
             className="btn-primary"
             onClick={onClose}
-            style={{ background: '#ff3d71', color: '#fff' }}
+            // A filled danger control needs a deeper red for white text (F16): 3.4:1 → 5.6:1.
+            style={{ background: 'var(--danger-fill)', color: '#fff' }}
           >
             <X size={15} />
             {isAr ? 'إغلاق' : 'Close'}
@@ -254,10 +342,10 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
           style={{ padding: '20px', display: 'flex', flexDirection: 'column' }}
         >
           <h3
-            className="section-title"
+            className="section-title mon-section-live"
             style={{ color: 'var(--accent-blue)', borderBottomColor: 'rgba(0, 229, 255, 0.15)' }}
           >
-            {isAr ? 'جدول القراءات' : 'Recorded Readings'}
+            {isAr ? 'الآن — قيم حية، غير مسجّلة' : 'Now — live values, not recorded'}
           </h3>
 
           {/*
@@ -270,6 +358,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             from `state.live` — one `jetState` call in the selector layer — so nothing here
             re-derives physics, and the board cannot disagree with the calculation.
           */}
+          <section className="mon-live-section" aria-label={isAr ? 'قيم حية' : 'Live values'} data-bedo-live-section>
           <div className="mon-live">
             <div className="mon-live-head">
               <span>{isAr ? 'القياسات الحية' : 'Live measurements'}</span>
@@ -280,10 +369,14 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               <div className="mon-cell mon-cell-wide">
                 <span className="mon-lbl">{isAr ? 'العاكس المركّب' : 'Installed deflector'}</span>
                 <span className="mon-val" style={NUMERIC_READOUT}>
-                  {installed.id}° · {isAr ? installed.nameAr : installed.nameEn}
+                  {fitted
+                    ? `${installed.id}° · ${isAr ? installed.nameAr : installed.nameEn}`
+                    : isAr
+                      ? 'لا يوجد'
+                      : 'None fitted'}
                 </span>
                 <span className="mon-sub" style={NUMERIC_READOUT}>
-                  k = {installed.momentumFactor.toFixed(3)}
+                  {fitted ? (isAr ? law.factorAr : law.factorEn) : '—'}
                 </span>
               </div>
 
@@ -331,7 +424,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               <div className="mon-cell mon-cell-accent">
                 <span className="mon-lbl">F_th {isAr ? '(النظرية)' : '(theoretical)'}</span>
                 <span className="mon-val" style={NUMERIC_READOUT}>
-                  {live.theoreticalForceN.toFixed(4)} N
+                  {fitted ? `${live.theoreticalForceN.toFixed(4)} N` : '—'}
                 </span>
               </div>
             </div>
@@ -361,6 +454,53 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               {totalWeightG} g × g = {totalWeightN.toFixed(3)} N
             </span>
           </div>
+          </section>
+
+          <section
+            className="mon-recorded-section"
+            aria-label={isAr ? 'القراءات المسجّلة' : 'Recorded readings'}
+            data-bedo-recorded-section
+          >
+          <h3
+            className="section-title mon-section-recorded"
+            style={{ color: 'var(--accent-blue)', borderBottomColor: 'rgba(0, 229, 255, 0.15)' }}
+          >
+            {isAr ? 'القراءات المسجّلة' : 'Recorded readings'}
+            <span className="mon-recorded-count" data-bedo-recorded-count={recordedCount}>
+              {isAr
+                ? `${recordedCount} من ${recordableCount}`
+                : `${recordedCount} of ${recordableCount}`}
+            </span>
+          </h3>
+
+          {free && (
+            <div className="mon-free-readings" data-bedo-free-readings={recordedRows.length}>
+              <button
+                className="btn-secondary"
+                onClick={onRecordReading}
+                disabled={!canRecord}
+                style={{ fontSize: '11px' }}
+              >
+                {isAr ? 'تسجيل قراءة' : 'Record reading'}
+              </button>
+              <button
+                className="btn-secondary"
+                onClick={onClearReadings}
+                disabled={recordedRows.length === 0}
+                style={{ fontSize: '11px', color: 'var(--danger-red)' }}
+                title={
+                  isAr
+                    ? 'يمسح قراءات الوضع الحر فقط؛ لا يغيّر الجهاز.'
+                    : 'Clears the free readings only; the rig is left as it is.'
+                }
+              >
+                {isAr ? 'مسح القراءات' : 'Clear readings'}
+              </button>
+              <span data-bedo-record-blocker={freeReadingBlocker ?? 'none'}>
+                {freeReadingHint()}
+              </span>
+            </div>
+          )}
 
           <div className="data-table-container">
             <table className="data-table">
@@ -374,61 +514,92 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                   <th>{isAr ? 'الكتلة (g)' : 'Mass (g)'}</th>
                   <th className="highlight-cell">F_th (N)</th>
                   <th className="highlight-cell">F_ac (N)</th>
+                  <th>{isAr ? 'الحالة' : 'Status'}</th>
                 </tr>
               </thead>
               <tbody>
-                {recordedRows.map((row, idx) => (
-                  <tr key={idx}>
-                    <td>{idx + 1}</td>
-                    <td>{row.flowRateLMin.toFixed(3)}</td>
-                    <td>{row.flowRateM3S.toExponential(3)}</td>
-                    <td>{row.nozzleVelocityMS.toFixed(3)}</td>
-                    <td>{row.impactVelocityMS.toFixed(3)}</td>
-                    <td>{row.loadedMassG}</td>
-                    <td
-                      className="highlight-cell"
-                      style={{ color: 'var(--accent-blue)', fontWeight: 600 }}
-                    >
-                      {row.theoreticalForceN.toFixed(4)}
-                    </td>
-                    <td
-                      className="highlight-cell"
-                      style={{ color: 'var(--accent-gold)', fontWeight: 600 }}
-                    >
-                      {isCalculated ? row.measuredForceN.toFixed(4) : '—'}
-                    </td>
-                  </tr>
-                ))}
+                {recordedRows.map((row, idx) => {
+                  const status = rowStatuses[idx] ?? 'recorded';
+                  // Only a reading, or the valve-shut reference, has numbers to show.
+                  const shown = status === 'recorded' || status === 'reference';
+                  const cell = (value: string | number) => (shown ? value : '—');
+                  return (
+                    <tr key={idx} className={`mon-row is-${status}`} data-status={status}>
+                      <td>{idx + 1}</td>
+                      <td>{cell(row.flowRateLMin.toFixed(3))}</td>
+                      <td>{cell(row.flowRateM3S.toExponential(3))}</td>
+                      <td>{cell(row.nozzleVelocityMS.toFixed(3))}</td>
+                      <td>{cell(row.impactVelocityMS.toFixed(3))}</td>
+                      <td>{cell(row.loadedMassG)}</td>
+                      <td
+                        className="highlight-cell"
+                        style={{ color: 'var(--accent-blue)', fontWeight: 600 }}
+                      >
+                        {cell(row.theoreticalForceN.toFixed(4))}
+                      </td>
+                      <td
+                        className="highlight-cell"
+                        style={{ color: 'var(--accent-gold)', fontWeight: 600 }}
+                      >
+                        {status === 'recorded' && acShown ? row.measuredForceN.toFixed(4) : '—'}
+                      </td>
+                      <td className="mon-row-status">{statusLabel(status)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
-          {/* Step 11: F_ac is only recorded once Calculate is pressed. */}
-          <button
-            className="btn-primary"
-            onClick={onCalculate}
-            disabled={isCalculated}
-            style={{
-              marginTop: '14px',
-              background: isCalculated ? 'var(--success-green)' : '#f58220',
-              color: '#fff',
-              fontWeight: 700,
-              opacity: isCalculated ? 0.75 : 1,
-            }}
-          >
-            <Calculator size={16} />
-            {isCalculated
-              ? isAr
-                ? 'تم تسجيل القوة الفعلية'
-                : 'F_ac recorded'
-              : isAr
-                ? 'احسب (Calculate)'
-                : 'Calculate'}
-          </button>
+          {/* Step 11: F_ac is only recorded once Calculate is pressed. Free readings carry
+              their own F_ac, so free mode has no Calculate step (F10). */}
+          {!free && (
+            <button
+              className="btn-primary"
+              onClick={onCalculate}
+              disabled={isCalculated || actualForceBlocker !== null}
+              aria-describedby={actualForceBlocker && !isCalculated ? 'bedo-calc-blocker' : undefined}
+              style={{
+                marginTop: '14px',
+                background: isCalculated ? 'var(--success-green)' : '#f58220',
+                // Dark text on the orange and green fills (F16): white measured 2.6:1.
+                color: '#141517',
+                fontWeight: 700,
+                opacity: isCalculated || actualForceBlocker !== null ? 0.6 : 1,
+              }}
+            >
+              <Calculator size={16} />
+              {isCalculated
+                ? isAr
+                  ? 'تم تسجيل القوة الفعلية'
+                  : 'F_ac recorded'
+                : isAr
+                  ? 'احسب (Calculate)'
+                  : 'Calculate'}
+            </button>
+          )}
+          {/* Why Calculate is not available yet (F15): F_ac is the weight of each balanced
+              reading, so both must be recorded first. */}
+          {!free && !isCalculated && actualForceBlocker && (
+            <p className="mon-calc-blocker" id="bedo-calc-blocker" data-bedo-calc-blocker={actualForceBlocker}>
+              {actualForceBlocker === 'READING_IN_PROGRESS'
+                ? isAr
+                  ? 'أكمل موازنة القراءة الحالية أولاً.'
+                  : 'Finish balancing the current reading first.'
+                : isAr
+                  ? `سجّل القراءتين أولاً — ${recordedCount} من ${recordableCount} مسجّلة.`
+                  : `Record both readings first — ${recordedCount} of ${recordableCount} recorded.`}
+            </p>
+          )}
+          </section>
 
           <div style={{ marginTop: '14px', fontSize: '11px', color: '#8fa7ad', lineHeight: 1.6 }}>
-            <strong>{isAr ? 'قانون التجربة:' : 'Force law:'}</strong>{' '}
-            {isAr ? experiment.lawAr : experiment.lawEn}
+            <strong>{isAr ? 'قانون القوة:' : 'Force law:'}</strong>{' '}
+            {fitted
+              ? `${law.equation} · ${isAr ? law.factorAr : law.factorEn}`
+              : isAr
+                ? 'لا عاكس على القضيب.'
+                : 'No deflector on the rod.'}
             <br />
             {isAr ? experiment.objectiveAr : experiment.objectiveEn}
           </div>
@@ -504,13 +675,13 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
               </text>
 
               <path
-                d={path(recordedRows, (r) => r.theoreticalForceN)}
+                d={path(plotted, (r) => r.theoreticalForceN)}
                 fill="none"
                 stroke="var(--accent-blue)"
                 strokeWidth={2}
                 strokeDasharray="4 3"
               />
-              {isCalculated && (
+              {acShown && (
                 <path
                   d={path(measured, (r) => r.measuredForceN)}
                   fill="none"
@@ -519,7 +690,7 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                 />
               )}
 
-              {recordedRows.map((r, i) => {
+              {plotted.map((r, i) => {
                 const c = coords(r.flowRateLMin, r.theoreticalForceN);
                 return (
                   <circle
@@ -533,8 +704,8 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
                   />
                 );
               })}
-              {isCalculated &&
-                rows.map((r, i) => {
+              {acShown &&
+                recordedOnly.map((r, i) => {
                   const c = coords(r.flowRateLMin, r.measuredForceN);
                   return <circle key={`ac-${i}`} cx={c.x} cy={c.y} r={4} fill="var(--accent-gold)" />;
                 })}
@@ -619,7 +790,10 @@ export const SoftwareMonitor: React.FC<SoftwareMonitorProps> = ({
             one marked, and the four family diagrams. Informational — selection stays where
             it already is, so there is no second deflector state.
           */}
-          <DeflectorBoard installedDeflectorId={state.selectedDeflectorId} language={state.language} />
+          <DeflectorBoard
+            installedDeflectorId={fitted ? state.selectedDeflectorId : null}
+            language={state.language}
+          />
       </div>
     </div>
   );

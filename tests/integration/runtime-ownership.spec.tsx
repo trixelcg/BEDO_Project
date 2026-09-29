@@ -9,6 +9,8 @@ import {
   renderApp,
   stubConfigFetch,
   walkLesson,
+  resetSimulator,
+  setValve,
 } from '../helpers/app-harness';
 
 vi.mock('../../src/components/Scene3D', async () => await import('../helpers/scene3d-mock'));
@@ -92,15 +94,22 @@ describe('one source of truth', () => {
     click('+50g');
     expect(loadedWeightG()).toBe(50);
 
-    click('Reset simulator');
+    resetSimulator();
 
     expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 11');
     expect(coverState()).toBe('Closed');
     // The table is derived, so it resets with the rig rather than needing its own clear.
-    click('Free Mode');
+    // Read in Guided: Free Mode's table is its own readings (F10).
     click('Open Data Monitor');
     const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows.map((r) => r.querySelectorAll('td')[5].textContent)).toEqual(['0', '0', '0', '0']);
+    expect(rows.map((r) => (r as HTMLElement).dataset.status)).toEqual([
+      'reference',
+      'pending',
+      'pending',
+      'pending',
+    ]);
+    expect(rows.map((r) => r.querySelectorAll('td')[5].textContent)).toEqual(['0', '—', '—', '—']);
+    expect(document.querySelector('[data-bedo-recorded-count]')?.textContent).toBe('0 of 2');
   });
 
   it('switching experiment reloads the rig and the readings', () => {
@@ -129,8 +138,14 @@ describe('one source of truth', () => {
     fireEvent.change(slider, { target: { value: '60' } });
 
     click('Steps');
+    // The live panel, not the table: in Free Mode the table is the learner's own readings
+    // (F10), and a table row is a record, not the rig now (F15).
+    click(/Turn On Pump/);
+    setValve(0.4);
     click('Open Data Monitor');
-    const rows = [...document.querySelectorAll('.data-table tbody tr')];
-    expect(rows[1].querySelectorAll('td')[1].textContent).toBe('7.857'); // 15.714 / 2
+    const q = [...document.querySelectorAll('.mon-cell')].find(
+      (el) => el.querySelector('.mon-lbl')?.textContent === 'Q'
+    );
+    expect(q?.querySelector('.mon-val')?.textContent?.trim()).toBe('7.857 L/min'); // 15.714 / 2
   });
 });

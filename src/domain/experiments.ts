@@ -179,8 +179,9 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     id: 9,
     titleEn: 'Open the software monitor',
     titleAr: 'عرض شاشة المراقبة',
-    bodyEn: 'Switch to the software monitor.',
-    bodyAr: 'قم بالضغط على شاشة السوفت وير.',
+    // Names the control the dock shows at this step (F14).
+    bodyEn: 'Press “Open Data Monitor” to switch to the software monitor.',
+    bodyAr: 'اضغط على «فتح شاشة البيانات» للانتقال إلى شاشة المراقبة.',
     target: 'overview',
   },
   {
@@ -188,8 +189,9 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
     id: 10,
     titleEn: 'Record the actual force',
     titleAr: 'تسجيل القوة الفعلية',
-    bodyEn: 'Click the “Calculate” button on the table to record the value of F_ac.',
-    bodyAr: 'قم بالضغط على "Calculate" في الجدول لتسجيل قيمة F_ac.',
+    // The button is "Calculate", under the results table in the Data Monitor (F14).
+    bodyEn: 'In the Data Monitor, press “Calculate” under the results table to record F_ac.',
+    bodyAr: 'في شاشة البيانات، اضغط على «احسب (Calculate)» أسفل جدول النتائج لتسجيل قيمة F_ac.',
     target: null,
     noticeEn:
       'Notice the table readings and the graph between the actual force F_ac and the theoretical force F_th. You can use “Save Screen” and “Export Data” to keep the readings.',
@@ -199,12 +201,13 @@ export const buildSteps = (deflectorName: string, deflectorNameAr: string): Expe
   {
     stepId: 'open-answer-sheet',
     id: 11,
-    titleEn: 'You finished!',
-    titleAr: 'لقد انتهيت!',
+    // The step is the action. "You finished!" is the completed state that follows (F14).
+    titleEn: 'Open the answer sheet',
+    titleAr: 'فتح ورقة الإجابة',
     // The closing instruction as BEDO's own experiment sheets write it. The app calls it
     // the answer sheet rather than the "Document" tab, because that is the control it has.
-    bodyEn: 'Open the answer sheet to record and check your results.',
-    bodyAr: 'افتح ورقة الإجابة لتسجيل نتائجك والتحقق منها.',
+    bodyEn: 'Press “Open the answer sheet” to record and check your results.',
+    bodyAr: 'اضغط على «عرض ورقة الإجابة» لتسجيل نتائجك والتحقق منها.',
     target: null,
   },
 ];

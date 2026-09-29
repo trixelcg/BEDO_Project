@@ -59,7 +59,12 @@ export const ANCHOR_VIEW: Record<AnchorKey, AnchorView> = {
   // which is where they actually face.
   volumetricValve: { offset: [-0.50, 0.15, 0.30], arrowOffset: [-0.09, 0.05, 0] },
   flowValve: { offset: [-0.52, 0.22, 0.44], arrowOffset: [-0.09, 0.04, 0] },
-  weights: { offset: [-0.44, 0.34, 0.34] },
+  // 10 % further back than it was (-0.44, 0.34, 0.34), same direction (F04). At the old
+  // distance the frame held neither end of what steps 6 and 8 are about: the pan and post
+  // ran 47 px off the top at 1920 x 889, and the operator's end of the weight tray off the
+  // bottom — the authored 500 g disc sat there half cut off. Measured at this distance the
+  // whole tray row and the whole pan are in frame, and the pointer clears the step's notice.
+  weights: { offset: [-0.484, 0.374, 0.374] },
   pointer: { offset: [-0.42, 0.24, 0.30] },
   pan: { offset: [-0.42, 0.24, 0.30] },
   overview: { offset: [-1.45, 0.70, 0.45] },

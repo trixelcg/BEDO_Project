@@ -19,7 +19,8 @@ import type { Language } from '../types/index';
 
 interface DeflectorBoardProps {
   /** Which deflector is on the rod. Read-only here — the board never writes rig state. */
-  installedDeflectorId: number;
+  /** Null while the rod is bare (F09): nothing is marked as installed. */
+  installedDeflectorId: number | null;
   language: Language;
 }
 

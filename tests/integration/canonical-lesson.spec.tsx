@@ -11,6 +11,7 @@ import {
   setValve,
   stubConfigFetch,
   walkLesson,
+  resetSimulator,
 } from '../helpers/app-harness';
 import { fireEvent } from '@testing-library/react';
 import { CURRENT_LESSON } from '../../src/lesson/currentLesson';
@@ -125,7 +126,9 @@ describe('the lesson ends at eleven', () => {
 
   it('closes by opening the answer sheet, and says so', () => {
     walkLesson(1, 10);
-    expect(screen.getByRole('heading', { name: 'You finished!' })).toBeDefined();
+    // Step 11 is named for its action (F14); "You finished!" is the completed state.
+    expect(screen.getByRole('heading', { name: 'Open the answer sheet' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'You finished!' })).toBeNull();
 
     click('Open the answer sheet');
 
@@ -141,7 +144,12 @@ describe('the lesson ends at eleven', () => {
     click('Open the answer sheet');
 
     expect(screen.getByTestId('lesson-complete')).toBeDefined();
-    expect(currentStep()).toBe(11); // still eleven — completion is a state, not a step
+    // A dedicated completed state (F14): no step number, nothing to confirm, and the
+    // BEDO sheet's "You finished!" as its heading.
+    expect(document.querySelector('.step-badge')?.textContent).toMatch(/Complete/);
+    expect(document.querySelector('.ok-confirm-btn')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'You finished!' })).toBeDefined();
+    expect(CURRENT_LESSON.steps.map((s) => s.displayNumber)).not.toContain(12);
   });
 
   it('lets the learner close the sheet and get back', () => {
@@ -173,15 +181,13 @@ describe('the lesson ends at eleven', () => {
     dismissPopup();
     click('+100g'); //                  6 balance 1 — target 167 g
     click('+50g');
-    click('+20g');
-    clickOk();
+    click('+20g'); //                     170 g balances: the step finishes by itself (F14)
     dismissPopup();
     setValve(0.5); //                   7 flow again
     clickOk();
     dismissPopup();
     click('+500g'); //                  8 balance 2 — target 516 g
-    click('+20g');
-    clickOk();
+    click('+20g'); //                     520 g balances: the step finishes by itself (F14)
     dismissPopup();
     click('Open Data Monitor'); //      9 monitor
     click(/^Calculate$/); //           10 record
@@ -199,7 +205,7 @@ describe('the lesson ends at eleven', () => {
     click('Open the answer sheet');
     fireEvent.click(within(screen.getByTestId('answer-sheet')).getByRole('button', { name: 'Close' }));
 
-    click('Reset simulator');
+    resetSimulator();
 
     expect(document.querySelector('.step-badge')?.textContent).toBe('Step 1 / 11');
     expect(screen.queryByTestId('lesson-complete')).toBeNull();

@@ -117,12 +117,13 @@ describe('weights', () => {
     }
   });
 
-  it('gives every clickable weight a unique tray mesh', () => {
+  it('gives every denomination a tray disc of its own (F04)', () => {
     const meshes = WEIGHTS.map((w) => w.mesh).filter((m): m is string => !!m);
-    expect(meshes).toHaveLength(5);
+    expect(meshes).toHaveLength(WEIGHTS.length);
     expect(new Set(meshes).size).toBe(meshes.length);
-    // 20 g is panel-only; the tray has no disc for it.
-    expect(WEIGHTS.find((w) => w.grams === 20)?.mesh).toBeUndefined();
+    // The custom disc carries the custom control's mass; no fixed denomination borrows it,
+    // which is how the 10 g once came to be drawn at the 500 g disc's thickness.
+    expect(meshes).not.toContain('Weight_Custom');
   });
 });
 

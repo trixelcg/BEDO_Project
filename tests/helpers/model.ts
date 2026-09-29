@@ -6,6 +6,10 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { assetPath } from './glb';
 import { adaptApparatusScene } from '../../src/lib/modelAdapter';
+import { applyWeightFamily } from '../../src/lib/weightFamily';
+
+/** The custom-weight control's starting mass (`App.tsx`), which the custom disc is made for. */
+export const DEFAULT_CUSTOM_WEIGHT_G = 25;
 
 /**
  * The apparatus GLB declares `KHR_texture_basisu` in `extensionsRequired`, so GLTFLoader
@@ -148,10 +152,16 @@ export const loadApparatus = async (): Promise<THREE.Group> => {
       '',
       (gltf) => {
         console.error = error;
-        // Exactly what `DeviceModel` does before it looks anything up.
+        // Exactly what `DeviceModel` does before it looks anything up: the export put back
+        // on contract, then the weight discs made one family (F04). No face textures here —
+        // only geometry is measured.
         const { missing } = adaptApparatusScene(gltf.scene);
         if (missing.length) {
           reject(new Error(`model adapter: missing ${missing.join(', ')}`));
+          return;
+        }
+        if (!applyWeightFamily(gltf.scene, { customGrams: DEFAULT_CUSTOM_WEIGHT_G })) {
+          reject(new Error('weight family: the authored tray row is not in the model'));
           return;
         }
         resolve(gltf.scene);

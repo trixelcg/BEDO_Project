@@ -1,5 +1,5 @@
 import React from 'react';
-import { Info } from 'lucide-react';
+import { CheckCircle2, Info } from 'lucide-react';
 import type { AnchorKey } from '../domain/apparatus';
 import type { Language, LessonView } from '../types/index';
 
@@ -57,6 +57,38 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
   const step = lesson.step;
   if (!step) return null;
 
+  /*
+    The completed state (F14). Finishing the last step is not another step: the card
+    says the procedure is done, with no step number and nothing to confirm, and keeps
+    the answer sheet — the one thing the learner does next — in reach.
+  */
+  if (lesson.isComplete) {
+    return (
+      <div className="step-card is-complete interactive" data-bedo-step-card data-testid="lesson-complete">
+        <div className="step-card-number">
+          <span className="step-badge is-complete">
+            <CheckCircle2 size={14} aria-hidden="true" /> {isAr ? 'اكتملت' : 'Complete'}
+          </span>
+        </div>
+        <div className="step-card-body">
+          <h3 className="step-card-title">{isAr ? 'لقد انتهيت!' : 'You finished!'}</h3>
+          <p className="step-card-primary">
+            {isAr
+              ? `اكتملت الخطوات الـ ${lesson.totalSteps}. قراءاتك وقيمة F_ac في شاشة البيانات، وورقة الإجابة هي مكان حلّ النتائج.`
+              : `All ${lesson.totalSteps} steps are done. Your readings and F_ac are in the Data Monitor; the answer sheet is where you work the results.`}
+          </p>
+        </div>
+        <div className="step-card-actions">
+          {showAnswerSheet && (
+            <button className="btn-primary interactive answer-sheet-btn" onClick={onOpenAnswerSheet}>
+              {isAr ? 'عرض ورقة الإجابة' : 'Open the answer sheet'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const target = lesson.target ? TARGET_LABEL[lesson.target] : null;
   const notice = isAr ? step.noticeAr : step.noticeEn;
 
@@ -93,11 +125,6 @@ export const StepInstructionCard: React.FC<StepInstructionCardProps> = ({
           <p className="step-card-secondary">
             <Info size={13} aria-hidden="true" />
             <span>{secondary}</span>
-          </p>
-        )}
-        {lesson.isComplete && (
-          <p className="step-card-complete" data-testid="lesson-complete">
-            {isAr ? '✅ اكتملت التجربة.' : '✅ Experiment complete.'}
           </p>
         )}
       </div>

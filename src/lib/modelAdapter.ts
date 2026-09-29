@@ -241,18 +241,23 @@ export const TANK_GLASS_ALPHA = 0.1;
 export const TANK_GLASS_RIM_ALPHA = 0.32;
 
 /**
- * Let the tank's edges read (BEDO-LOOK-01).
+ * The tank wall as thin glass (BEDO-LOOK-01, corrected 2026-09-30).
  *
- * The blended glass keeps its authored alpha of 0.10, and alpha blending scales the
- * *whole* shaded result by it — reflection included — so the vessel's rim, where a real
- * glass wall reflects almost everything, arrived at a tenth of its strength and the tank
- * read as a faint tint with no edge. This raises alpha with the Fresnel term alone: face-on
- * the wall stays at 0.10 and everything inside is seen exactly as before; at grazing
- * incidence it rises to 0.32, which is where the environment reflection now shows as a
- * rim. Only the alpha is touched, in the fragment, so the water and hose behind it are
- * composited exactly as they were.
+ * The blended glass keeps its authored alpha of 0.10 face-on, rising with the Fresnel term
+ * to 0.32 at the silhouette, where the eye crosses the most wall. What changed is what the
+ * alpha is applied to. Straight alpha blending scaled the *whole* shaded result by it,
+ * reflection included, so the room reflected in the wall arrived at a tenth of its strength
+ * and the vessel read as a faint tint with no reflections at all (QA, 2026-09-30). A real
+ * glass wall *adds* its reflection to what is behind it, and dims the background only by
+ * what it absorbs.
+ *
+ * So the colour is premultiplied: the reflection (three's specular term, Fresnel already
+ * in it) at full strength, plus the wall's faint lit body scaled by the alpha; the alpha
+ * only dims what is behind. Face-on the tank's contents are seen exactly as before; the
+ * room now shows in the glass wherever glass would show it.
  */
 export function applyGlassRim(material: THREE.MeshStandardMaterial): void {
+  material.premultipliedAlpha = true;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uBedoGlassAlpha = { value: new THREE.Vector2(TANK_GLASS_ALPHA, TANK_GLASS_RIM_ALPHA) };
     shader.fragmentShader = shader.fragmentShader
@@ -262,10 +267,14 @@ export function applyGlassRim(material: THREE.MeshStandardMaterial): void {
         `{
           float bedoNdv = abs(dot(normalize(normal), normalize(vViewPosition)));
           float bedoRim = pow(1.0 - bedoNdv, 3.0);
-          diffuseColor.a = mix(uBedoGlassAlpha.x, uBedoGlassAlpha.y, bedoRim);
-        }
-        #include <opaque_fragment>`
-      );
+          float bedoA = mix(uBedoGlassAlpha.x, uBedoGlassAlpha.y, bedoRim);
+          // A faint cool body — the green-blue of a thick glass edge — lit like the room.
+          vec3 bedoBody = totalDiffuse * vec3(0.9, 0.96, 1.0) * bedoA;
+          gl_FragColor = vec4(totalSpecular + bedoBody, bedoA);
+        }`
+      )
+      // The colour above is already premultiplied.
+      .replace('#include <premultiplied_alpha_fragment>', '');
   };
   material.customProgramCacheKey = () => 'bedoGlassRim';
 }

@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as THREE from 'three';
 import { loadApparatus } from '../helpers/model';
-import { MISMATERIALLED_HOSE, MESH } from '../../src/domain/apparatus';
+import { MISMATERIALLED_HOSE, MESH, SUPPLY_HOSE } from '../../src/domain/apparatus';
 import { gltfName } from '../../src/lib/gltfNames';
+import { CONDUIT_REFERENCE_SPEED, measureConduit } from '../../src/lib/waterMaterial';
 
 /**
  * Water in the supply hose (BEDO-WATER-12).
@@ -36,6 +37,8 @@ const deviceModel = readFileSync(
   path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'),
   'utf8'
 );
+/** Since 2026-09-28 the hose and the jet share one water material. */
+const waterMaterial = readFileSync(path.join(REPO_ROOT, 'src/lib/waterMaterial.ts'), 'utf8');
 
 /** The hose material block, isolated so assertions cannot match the jet's shader by accident. */
 const hoseBlock = deviceModel.slice(
@@ -49,30 +52,32 @@ beforeAll(async () => {
 }, 120000);
 
 describe('E/F — hose water follows the authoritative flow', () => {
-  it('the hose shader is driven by a flow uniform, not by a free-running clock', () => {
-    expect(hoseBlock).toMatch(/uniform float uHoseFlow/);
-    expect(hoseBlock).toMatch(/shader\.uniforms\.uHoseFlow = hoseFlow\.current/);
+  it('the hose wears the shared water material, as a conduit', () => {
+    // One substance for the whole circuit: the jet is the same material as a stream.
+    expect(hoseBlock).toMatch(/createWaterMaterial\(waterTex, hoseUniforms, 'conduit'\)/);
   });
 
-  it('that uniform is the valve opening, and is zeroed when nothing flows', () => {
-    // Same authority the jet reads. A dry rig must show a dry hose — the brief forbids
-    // inventing startup flow, and equally forbids a hose that runs while the pump is off.
-    expect(deviceModel).toMatch(/hoseFlow\.current\.value = state\.valveOpening/);
-    expect(deviceModel).toMatch(/hoseFlow\.current\.value = 0/);
+  it('its water moves at Q / A through the bore, and only while the pump delivers', () => {
+    // The clock advances at the water's speed in the bore, and not at all without flow.
+    expect(deviceModel).toMatch(/hose\.speed = state\.live\.flowRateM3S \/ Math\.max\(bore, 1e-9\)/);
+    // Its pattern is carried at that speed, held to a pace the eye can follow.
+    expect(deviceModel).toMatch(/hoseUniforms\.uClock\.value \+= \(flowing \? conduitPatternSpeed\(hose\.speed\) : 0\)/);
+    expect(deviceModel).toMatch(/hoseUniforms\.uFlow\.value = flowing \? state\.valveOpening/);
   });
 
-  it('every water cue in the hose is multiplied by flow, so Q=0 leaves nothing moving', () => {
-    // The fill, the travelling shimmer and the opacity lift all carry the factor. If any one
-    // of them did not, an idle hose would still look wet.
-    expect(hoseBlock).toMatch(/float flow = clamp\(uHoseFlow \* 1\.5, 0\.0, 1\.0\)/);
-    expect(hoseBlock).toMatch(/mix\(gl_FragColor\.rgb \* 0\.85 \+ vec3\(0\.06\), filled, flow\)/);
-    expect(hoseBlock).toMatch(/travel \* 0\.10 \* flow/);
-    expect(hoseBlock).toMatch(/flow \* 0\.10/);
+  it('it fills from the pump end when the flow starts and empties from it when it stops', () => {
+    expect(deviceModel).toMatch(/hose\.head = Math\.min\(hose\.head \+ \(hose\.speed \* rawDelta\)/);
+    expect(deviceModel).toMatch(/if \(hose\.tail >= 0\) hose\.tail \+=/);
+    // In the shader: water only between the tail and the head; the tube itself always.
+    expect(waterMaterial).toMatch(/float present = step\(vFlowUv\.y, uHead\) \* step\(uTail, vFlowUv\.y\);/);
+    // How much water the light crosses: the bore when it is full, the plastic wall when not.
+    // A supply line under mains pressure stands full when nothing flows (uFill).
+    expect(waterMaterial).toMatch(/waterThickness = mix\(0\.0015, waterThickness, present \* max\(clamp\(uFlow \* 3\.0, 0\.0, 1\.0\), uFill\)\);/);
   });
 
-  it('it shares the jet clock and ripple texture, so the circuit is one substance', () => {
-    expect(hoseBlock).toMatch(/shader\.uniforms\.uTime = waterTime\.current/);
-    expect(hoseBlock).toMatch(/shader\.uniforms\.uWaterTex = \{ value: waterTex \}/);
+  it('shares the jet’s ripple texture, so the circuit is one substance', () => {
+    expect(hoseBlock).toMatch(/waterTex/);
+    expect(deviceModel).toMatch(/createJetFlowMaterial\(waterTex, jetFlowUniforms\)/);
   });
 });
 
@@ -90,11 +95,46 @@ describe('G/H — the water is inside the hose by construction', () => {
     expect(assign).not.toMatch(/\.position\.set|\.scale\.set|\.rotation\./);
   });
 
-  it('the flow coordinate is measured off the mesh, not assumed', () => {
-    // A hardcoded span would silently desync if the model moved.
-    expect(deviceModel).toMatch(/new THREE\.Box3\(\)\.setFromObject\(child\)/);
-    expect(deviceModel).toMatch(/hoseSpanUniform\.current\.value\.set\(box\.min\.y, box\.max\.y\)/);
-    expect(hoseBlock).toMatch(/uniform vec2 uHoseSpan/);
+  it('the flow coordinate is measured off the mesh, along the tube, not assumed', () => {
+    expect(hoseBlock).toMatch(/measureConduit\(child,/);
+    // On the shipped hose: distance from the pump end, round its bend.
+    const hose = (app.getObjectByName(gltfName(MISMATERIALLED_HOSE)) as THREE.Mesh).clone();
+    hose.geometry = hose.geometry.clone();
+    const conduit = measureConduit(hose)!;
+    expect(conduit).not.toBeNull();
+    const box = new THREE.Box3().setFromObject(hose);
+    const size = box.getSize(new THREE.Vector3());
+    // Longer than any straight span of its box — it follows the bend.
+    expect(conduit.length).toBeGreaterThan(Math.max(size.x, size.y, size.z));
+    // A hose bore, not a pipe or a thread.
+    expect(conduit.radius).toBeGreaterThan(0.004);
+    expect(conduit.radius).toBeLessThan(0.03);
+    const uv = hose.geometry.getAttribute('aFlowUv');
+    const position = hose.geometry.getAttribute('position');
+    hose.updateWorldMatrix(true, false);
+    const worldY = (i: number) =>
+      new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(hose.matrixWorld).y;
+    let lowest = 0;
+    for (let i = 1; i < position.count; i++) if (worldY(i) < worldY(lowest)) lowest = i;
+    // Zero at the pump end — counted from a cut square across the tube there, so the
+    // lowest point of that end sits within a centimetre of it — rising to the length at
+    // the other.
+    let start = Infinity;
+    for (let i = 0; i < uv.count; i++) start = Math.min(start, uv.getY(i));
+    expect(start).toBeCloseTo(0, 6);
+    expect(uv.getY(lowest)).toBeLessThan(0.02);
+    let far = 0;
+    let aroundMin = 1;
+    let aroundMax = 0;
+    for (let i = 0; i < uv.count; i++) {
+      far = Math.max(far, uv.getY(i));
+      aroundMin = Math.min(aroundMin, uv.getX(i));
+      aroundMax = Math.max(aroundMax, uv.getX(i));
+    }
+    expect(far).toBeCloseTo(conduit.length / CONDUIT_REFERENCE_SPEED, 6);
+    // And all the way round.
+    expect(aroundMin).toBeLessThan(0.1);
+    expect(aroundMax).toBeGreaterThan(0.9);
   });
 
   it('the hose is a real tube in the shipped model, and not the tank', () => {
@@ -137,7 +177,42 @@ describe('the hose is no longer drawn as tank glass', () => {
   it('the tube draws its own silhouette, which is what the flat 0.10 blend could not', () => {
     // The ghost was a missing rim, not the transparency. Without this term the fix regresses
     // to a smear the moment opacity is lowered again.
-    expect(hoseBlock).toMatch(/float rim = pow\(1\.0 - cosView, 3\.0\)/);
-    expect(hoseBlock).toMatch(/rim \* 0\.55/);
+    expect(waterMaterial).toMatch(/float wall = pow\(1\.0 - cosView, 3\.0\);/);
+    expect(waterMaterial).toMatch(/vec3\(0\.70, 0\.77, 0\.86\) \* wall \* 0\.25/);
+  });
+});
+
+describe('the supply hose from the wall tap carries the same water', () => {
+  it('wears the water material over a smoked wall, stands full, and runs with the pump', () => {
+    expect(deviceModel).toMatch(/createWaterMaterial\(waterTex, supplyUniforms, 'conduit', CONDUIT_WALLS\.smoked\)/);
+    // A line under mains pressure: full of still water when nothing flows.
+    expect(deviceModel).toMatch(/u\.uFill\.value = 1;/);
+    // Q / A through its own bore, only while the pump delivers.
+    expect(deviceModel).toMatch(/const speed = flowing \? state\.live\.flowRateM3S \/ Math\.max\(bore, 1e-9\) : 0;/);
+  });
+
+  it('its water runs from the tap towards the bench', () => {
+    const hose = (app.getObjectByName(gltfName(SUPPLY_HOSE)) as THREE.Mesh).clone();
+    const tap = app.getObjectByName('Cold_Tab_003');
+    expect(hose, 'the supply hose must exist for this to mean anything').toBeTruthy();
+    expect(tap).toBeTruthy();
+    hose.geometry = hose.geometry.clone();
+    const conduit = measureConduit(hose)!;
+    expect(conduit).not.toBeNull();
+    const uv = hose.geometry.getAttribute('aFlowUv');
+    const position = hose.geometry.getAttribute('position');
+    hose.updateWorldMatrix(true, false);
+    const tapAt = new THREE.Box3().setFromObject(tap!).getCenter(new THREE.Vector3());
+    let nearest = 0;
+    let farthest = 0;
+    const d = (i: number) =>
+      new THREE.Vector3().fromBufferAttribute(position, i).applyMatrix4(hose.matrixWorld).distanceTo(tapAt);
+    for (let i = 1; i < position.count; i++) {
+      if (d(i) < d(nearest)) nearest = i;
+      if (d(i) > d(farthest)) farthest = i;
+    }
+    // Zero at the tap, the whole length at the bench.
+    expect(uv.getY(nearest)).toBeLessThan(conduit.length * 0.05);
+    expect(uv.getY(farthest)).toBeGreaterThan(conduit.length * 0.9);
   });
 });

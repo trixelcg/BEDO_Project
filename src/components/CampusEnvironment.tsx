@@ -20,6 +20,11 @@
 // (`pick`, anchors, hotspots, material passes, the camera-containment walls) can see it.
 // It casts no shadows, so the sun still enters the laboratory exactly as approved, and it
 // takes no pointer events.
+//
+// ## Seams
+//
+// Some of its walls and lab fronts stop a few centimetres short of the ceiling and floor
+// slabs; `closeCampusSeams` extends those edges into the slabs at load (QA, 2026-09-29).
 
 import React, { useEffect, useMemo } from 'react';
 import { useGLTF } from '@react-three/drei';
@@ -27,6 +32,7 @@ import * as THREE from 'three';
 import { assetUrl } from '../lib/assetUrl';
 import { extendWithKTX2 } from '../lib/ktx2';
 import { AUTHORED_APPARATUS_OFFSET } from '../lib/modelAdapter';
+import { closeCampusSeams } from '../lib/campusSeams';
 
 /**
  * Written as a literal `assetUrl('…')` at each call on purpose: the closed-asset test finds
@@ -61,6 +67,9 @@ export const CampusEnvironment: React.FC<{
       mesh.receiveShadow = false;
       mesh.raycast = noRaycast;
     });
+    // The walls and lab fronts that stop short of the ceiling or floor slabs are extended
+    // into them, so the backdrop no longer shows through the slots (`lib/campusSeams.ts`).
+    closeCampusSeams(scene);
   }, [scene]);
 
   useEffect(() => {

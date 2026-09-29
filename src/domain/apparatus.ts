@@ -57,6 +57,13 @@ export const MESH = {
 export const MISMATERIALLED_HOSE = 'Line010';
 
 /**
+ * The hose from the wall's upper cold tap to the bench (BEDO-MODEL-02). It feeds the bench
+ * the water the pump then delivers, so the water in it moves with the same flow; drawn as
+ * grey reinforced PVC with that water visible inside.
+ */
+export const SUPPLY_HOSE = 'Water supply hose - upper tap to tank';
+
+/**
  * Water jet silhouettes shipped in /public/WaterShapes — one simulated plume per deflector,
  * plus the startup trickle.
  *
@@ -208,9 +215,15 @@ export interface WeightDef {
 // Balancing masses always land on a multiple of 10 g, so the set has to be able to
 // make one. With only 50 g and up, the low-flow readings were unreachable and the
 // step could never be completed honestly.
+//
+// Every denomination has a disc of its own on the tray (F04). The model ships discs for
+// 50 g and up; `Weight_10` and `Weight_20` are made at load by `lib/weightFamily.ts`,
+// which also re-makes the authored ones so all of them are one family sized by mass.
+// (`Weight_Custom` used to stand in for 10 g — at the 500 g disc's thickness. It is now
+// only the custom weight: the model's own plain disc, for the custom-weight control.)
 export const WEIGHTS: WeightDef[] = [
-  { grams: 10, mesh: 'Weight_Custom' },
-  { grams: 20 },
+  { grams: 10, mesh: 'Weight_10' },
+  { grams: 20, mesh: 'Weight_20' },
   { grams: 50, mesh: 'Weight_50' },
   { grams: 100, mesh: 'Weight_100' },
   { grams: 200, mesh: 'Weight_200' },

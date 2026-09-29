@@ -130,8 +130,10 @@ describe('the physical bore is untouched by presentation', () => {
     // BEDO-017's *visual* claim is the one that was wrong. It sized the whole authored body
     // to the bore, which rendered as an invisible thread — see `docs/44`. The bore stays;
     // what changed is that it no longer decides how wide the water looks.
+    // Since F08 the drawn jet leaves the nozzle at exactly this bore and widens only by
+    // continuity as it slows (`src/lib/jetFlow.ts`) — the physical bore, not a fitted width.
     const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
-    expect(source).toMatch(/WATER_MODEL_SCALE/);
+    expect(source).toMatch(/boreRadius: NOZZLE_DIAMETER_M \/ 2/);
     expect(source).not.toMatch(/jetScale\(/);
   });
 });
@@ -213,11 +215,16 @@ describe('the authored low-flow / after-impact state mapping', () => {
     expect(jet.flowRateLMin).toBeCloseTo(15.71, 1);
   });
 
-  it('does not retain a valve-opening magic threshold or render both caches', () => {
+  it('does not retain a valve-opening magic threshold, and no longer draws the caches (F08)', () => {
+    // The mapping above is kept as a record of the authored assets, but the scene no longer
+    // selects a cache at all: the water is computed from the domain's own velocity and flow
+    // (`src/lib/jetFlow.ts`, `docs/57`), so the first reading's jet reaches the deflector
+    // it is applying its force to.
     const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
     expect(source).not.toMatch(/STARTUP_VALVE_OPENING/);
     expect(source).toMatch(/state\.live\.impactVelocityMS/);
-    expect(source).toMatch(/gltf\.scene\.visible = key === activeWater/);
+    expect(source).not.toMatch(/waterShapeForFlow|activeWater/);
+    expect(source).toMatch(/v0: state\.live\.nozzleVelocityMS/);
   });
 });
 
@@ -267,11 +274,11 @@ describe('the water is drawn where and how BEDO authored it', () => {
     }
   });
 
-  it('nothing measures, rotates or re-centres the shapes any more', () => {
+  it('nothing measures, rotates or re-centres the shapes — and since F08 nothing draws them', () => {
     const source = readFileSync(path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'), 'utf8');
     expect(source).not.toMatch(/waterFit/);
     expect(source).not.toMatch(/bodyScale|plumeScale/);
-    expect(source).toMatch(/WATER_MODEL_SCALE/);
+    expect(source).not.toMatch(/WATER_MODEL_SCALE|WATER_SHAPES/);
   });
 });
 

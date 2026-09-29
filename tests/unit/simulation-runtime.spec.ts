@@ -27,6 +27,18 @@ import { TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
 
 const runtime = () => createSimulationRuntime();
 
+/**
+ * A running rig with the sheet's deflector fitted. A reading is a measurement (F15): it is
+ * only committed while the jet is actually on the carrier.
+ */
+const RIG: SimulationCommand[] = [
+  { type: 'OPEN_COVER' },
+  { type: 'SELECT_DEFLECTOR', deflectorId: 90 },
+  { type: 'CLOSE_COVER' },
+  { type: 'POWER_ON' },
+  { type: 'SET_VALVE', opening: 0.4 },
+];
+
 /** Drives a sequence and returns the runtime, for scenario tests. */
 const drive = (commands: SimulationCommand[]) => {
   const r = runtime();
@@ -47,9 +59,16 @@ describe('initial state', () => {
       },
       experimentId: 'flat',
       pumpFlowLMin: TOTAL_FLOW_L_MIN,
+      // F09: the custom disc's mass is simulation state, and the rod starts bare.
+      customWeightG: 25,
+      deflectorFitted: false,
       activeReadingIndex: null,
       committedReadingCount: 0,
       committedWeightsG: [],
+      committedPumpFlowLMin: [],
+      committedDeflectorIds: [],
+      // F10: free mode's own readings.
+      freeReadings: [],
       isActualForceRecorded: false,
     });
   });
@@ -136,8 +155,27 @@ describe('simulation commands', () => {
     expect(r.getState().pumpFlowLMin).toBe(80);
   });
 
-  it('records the actual force once', () => {
+  it('records the actual force once — and only once both readings are recorded (F15)', () => {
     const r = runtime();
+    // Nothing measured yet: nothing to record.
+    const early = r.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
+    expect(early.ok && early.changed).toBe(false);
+    expect(r.getState().isActualForceRecorded).toBe(false);
+
+    for (const c of [
+      ...RIG,
+      { type: 'BEGIN_READING', index: 1 },
+      { type: 'ADD_WEIGHT', massG: 80 },
+      { type: 'END_READING' },
+      { type: 'REMOVE_ALL_WEIGHTS' },
+      { type: 'BEGIN_READING', index: 2 },
+      { type: 'ADD_WEIGHT', massG: 260 },
+    ] as SimulationCommand[]) r.dispatch(c);
+    // Reading 2 still in progress.
+    const midway = r.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
+    expect(midway.ok && midway.changed).toBe(false);
+
+    r.dispatch({ type: 'END_READING' });
     expect(r.dispatch({ type: 'RECORD_ACTUAL_FORCE' }).ok).toBe(true);
     expect(r.getState().isActualForceRecorded).toBe(true);
     const second = r.dispatch({ type: 'RECORD_ACTUAL_FORCE' });
@@ -161,7 +199,7 @@ describe('readings', () => {
 
   it('freezes the row when the reading ends, and the tray goes back to zero', () => {
     const r = drive([
-      { type: 'POWER_ON' },
+      ...RIG,
       { type: 'BEGIN_READING', index: 1 },
       { type: 'ADD_WEIGHT', massG: 50 },
       { type: 'ADD_WEIGHT', massG: 20 },
@@ -178,7 +216,7 @@ describe('readings', () => {
 
   it('keeps earlier readings while a later one is being taken', () => {
     const r = drive([
-      { type: 'POWER_ON' },
+      ...RIG,
       { type: 'BEGIN_READING', index: 1 },
       { type: 'ADD_WEIGHT', massG: 80 },
       { type: 'END_READING' },
@@ -190,6 +228,10 @@ describe('readings', () => {
     const readings = selectReadings(r.getState());
     expect(readings[1].loadedMassG).toBe(80);
     expect(readings[2].loadedMassG).toBe(260);
+    // Reading 2 is being balanced, not recorded: the count says one (F15). It used to
+    // say two, counting the live tray as a recorded reading.
+    expect(selectReadingsTaken(r.getState())).toBe(1);
+    r.dispatch({ type: 'END_READING' });
     expect(selectReadingsTaken(r.getState())).toBe(2);
   });
 
@@ -308,8 +350,9 @@ describe('immutability', () => {
 
   it('freezes committed readings too', () => {
     const r = drive([
+      ...RIG,
       { type: 'BEGIN_READING', index: 1 },
-      { type: 'ADD_WEIGHT', massG: 50 },
+      { type: 'ADD_WEIGHT', massG: 80 },
       { type: 'END_READING' },
     ]);
     const state = r.getState();
@@ -389,7 +432,17 @@ describe('determinism', () => {
 
 describe('selectors', () => {
   it('report the jet force only while the pump runs with the tank shut', () => {
-    const r = drive([{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }]);
+    // A bare rod takes no force: the jet runs straight to the cover (F09).
+    const bare = drive([{ type: 'POWER_ON' }, { type: 'SET_VALVE', opening: 0.4 }]);
+    expect(selectJetForceN(bare.getState())).toBe(0);
+
+    const r = drive([
+      { type: 'OPEN_COVER' },
+      { type: 'SELECT_DEFLECTOR', deflectorId: 90 },
+      { type: 'CLOSE_COVER' },
+      { type: 'POWER_ON' },
+      { type: 'SET_VALVE', opening: 0.4 },
+    ]);
     expect(selectJetForceN(r.getState())).toBeCloseTo(0.8199, 4);
 
     r.dispatch({ type: 'POWER_OFF' });
@@ -442,7 +495,7 @@ describe('apparatus sequences', () => {
     {
       name: 'both readings, start to finish',
       commands: [
-        { type: 'POWER_ON' },
+        ...RIG,
         { type: 'SET_VALVE', opening: 0.4 },
         { type: 'BEGIN_READING', index: 1 },
         { type: 'ADD_WEIGHT', massG: 50 },
@@ -486,13 +539,14 @@ describe('apparatus sequences', () => {
       },
     },
     {
-      name: 'the valve shuts with the pump',
+      // F10: the valve stays where it was; the pump being off is what stops the water.
+      name: 'the valve stays set when the pump stops',
       commands: [
         { type: 'POWER_ON' },
         { type: 'SET_VALVE', opening: 0.6 },
         { type: 'POWER_OFF' },
       ],
-      expect: (s) => expect(s.apparatus.valveOpening).toBe(0),
+      expect: (s) => expect(s.apparatus.valveOpening).toBe(0.6),
     },
     {
       name: 'clearing the tray recovers from an over-loaded reading',

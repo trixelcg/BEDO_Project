@@ -19,6 +19,9 @@ measurements
 
 # Source assets the app does not load — see assets-source/README.md
 assets-source
+# Local backups of replaced models. public/ is copied into dist/ and published, so a
+# backup left there would ship to the image and the asset bucket.
+public/*_old.glb
 
 # Project evidence and documentation, including a 28 MB reference video
 docs

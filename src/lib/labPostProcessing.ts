@@ -15,8 +15,9 @@
 // shading in recesses — collars, bracket feet, the discs on the tray — rather than as a
 // dirty halo on the walls. The pass renders its own normal/depth buffer with an override
 // material, which would make every mesh an occluder, so `LabGTAOPass` hides the see-through
-// objects for that one pre-pass: the tank glass, the water and hose shaders, the room
-// glass, the transmissive labels and the outline hulls. A weight disc ships alpha-blended
+// objects for that one pre-pass: the tank glass, the water, its sheets and pool (flagged
+// `userData.seeThrough`) and hose shaders, the room
+// glass, the transmissive labels and the outline hulls and stencil marks. A weight disc ships alpha-blended
 // at opacity 1 and is kept, because it does rest on the tray.
 
 import * as THREE from 'three';
@@ -50,6 +51,9 @@ export const AO_DENOISE = {
 export const AO_INTENSITY = 0.75;
 
 function seeThrough(material: THREE.Material): boolean {
+  // Declared by the material itself — the water: its sheet layer and pool are blended at
+  // opacity 1 with no transmission, which the tests below cannot tell from a solid.
+  if (material.userData?.seeThrough === true) return true;
   const physical = material as THREE.MeshPhysicalMaterial;
   if ((physical.transmission ?? 0) > 0) return true;
   if ((material as THREE.ShaderMaterial).isShaderMaterial) return true;
@@ -104,6 +108,9 @@ export function createLabComposer(
   const target = new THREE.WebGLRenderTarget(width, height, {
     type: THREE.HalfFloatType,
     samples: 4,
+    // The selection outline masks itself off the highlighted part with the stencil
+    // (`selectionOutline.ts`, F07); without a stencil buffer it would draw over the part.
+    stencilBuffer: true,
   });
   const composer = new EffectComposer(renderer, target);
   composer.addPass(new RenderPass(scene, camera));

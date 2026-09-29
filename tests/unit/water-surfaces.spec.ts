@@ -3,20 +3,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as THREE from 'three';
 import { loadApparatus } from '../helpers/model';
-import { MESH, WATER_SHAPES, type WaterShapeKey } from '../../src/domain/apparatus';
+import { MESH, WATER_SHAPES } from '../../src/domain/apparatus';
 import { gltfName } from '../../src/lib/gltfNames';
-import {
-  JET_ASSET,
-  waterShapeForFlow,
-  PLUME_CUT_FULL_Y,
-  PLUME_CUT_CLEAR_Y,
-} from '../../src/lib/waterJet';
 import {
   DRAIN_CAPACITY_FRACTION,
   advanceLevel,
   targetLevel,
 } from '../../src/lib/tankWater';
-import { flowRateLMin, TOTAL_FLOW_L_MIN } from '../../src/domain/physics';
+import { flowRateLMin } from '../../src/domain/physics';
 
 /**
  * One vessel, one water surface (BEDO-WATER-07).
@@ -50,6 +44,10 @@ const deviceModel = readFileSync(
   path.join(REPO_ROOT, 'src/components/DeviceModel.tsx'),
   'utf8'
 );
+/** Since F08 the water is drawn from `src/lib/jetFlowMesh.ts` (`docs/57`). */
+const jetFlowMesh = readFileSync(path.join(REPO_ROOT, 'src/lib/jetFlowMesh.ts'), 'utf8');
+/** The shared water material the jet and the hose wear (`src/lib/waterMaterial.ts`). */
+const waterMaterial = readFileSync(path.join(REPO_ROOT, 'src/lib/waterMaterial.ts'), 'utf8');
 
 let app: THREE.Group;
 beforeAll(async () => {
@@ -63,21 +61,20 @@ describe('A — startup water visibility matches authoritative flow', () => {
     expect(flowRateLMin(0)).toBe(0);
   });
 
-  it('no flow selects no water at all, rather than a fallback shape', () => {
-    // The frame loop hides both water groups outright when nothing is flowing; the
-    // selector's own answer at zero is the column, so neither route can leak a plume.
-    expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
+  it('no flow draws no water at all, rather than a fallback shape', () => {
+    // F08: the water is one path computed from the flow. With no flow there is no path —
+    // `buildJetPath` returns no points for a zero velocity — and the frame loop hides it.
+    expect(deviceModel).toMatch(/const flowing = state\.isPowerOn && state\.valveOpening > 0\.05 && !state\.isCoverOpen;/);
   });
 
-  it('both water groups are hidden on the branch taken when nothing flows', () => {
-    // `flowing` gates the whole water block. The else-branch must hide both groups —
-    // this is what makes "pump off -> no mesh" true rather than merely likely.
+  it('the water and the pool are hidden on the branch taken when nothing flows', () => {
+    // `flowing` (or water still falling after the flow stopped) gates the whole water block.
+    // The else-branch must hide both — this is what makes "pump off -> no mesh" true.
     const elseBranch = deviceModel.slice(
       deviceModel.indexOf('const flowing = state.isPowerOn')
     );
-    const hideJet = /jetGroupRef\.current\.visible = false/.test(elseBranch);
-    const hidePlume = /plumeGroupRef\.current\.visible = false/.test(elseBranch);
-    expect(hideJet && hidePlume).toBe(true);
+    expect(/jetFlowMesh\.visible = false/.test(elseBranch)).toBe(true);
+    expect(/if \(poolMesh\) poolMesh\.visible = false/.test(elseBranch)).toBe(true);
   });
 
   it('no flow means no fill, and there is no tank body to draw in any case', () => {
@@ -116,11 +113,10 @@ describe('B — the flat authored quad is never drawn', () => {
     expect(deviceModel).toMatch(/const liquidName = gltfName\(MESH\.liquid\)/);
   });
 
-  it('no water shape the app actually draws is flat', () => {
-    // The authored caches are the only other thing wearing the water material. All eight
-    // must have real extent on every axis, or one of them *is* a billboard.
-    // (Loaded lazily so the flat-quad assertions above still run if a cache is missing.)
+  it('the authored caches are still shipped, and no longer drawn (F08)', () => {
+    // Kept as source material; the water is computed from state instead (`docs/57`).
     expect(Object.keys(WATER_SHAPES).length).toBe(8);
+    expect(deviceModel).not.toMatch(/WATER_SHAPES/);
   });
 });
 
@@ -142,30 +138,14 @@ describe('E — draining does not create duplicate surfaces', () => {
   });
 });
 
-describe('F — the plume is owned by the flow, not by the tank surface', () => {
-  it('shape selection reads only the inflow and the deflector', () => {
-    // `waterShapeForFlow` takes no tank level and no valve state, so filling or draining
-    // the tank cannot add, remove or swap the incoming plume.
-    expect(waterShapeForFlow.length).toBe(2);
-    const above = DRAIN_CAPACITY_FRACTION + 0.05;
-    expect(waterShapeForFlow(above, 'd135')).toBe('d135');
-    expect(waterShapeForFlow(above, 'd45')).toBe('d45');
-  });
-
-  it('the plume stays selected across a whole fill-and-drain cycle', () => {
-    // The tank fills and empties underneath it; the shape must not flicker.
-    const fraction = flowRateLMin(0.5) / TOTAL_FLOW_L_MIN;
-    let level = 0;
-    const shapes = new Set<WaterShapeKey>();
-    for (let i = 0; i < 400; i++) {
-      level = advanceLevel(level, targetLevel(fraction, false), 0.016);
-      shapes.add(waterShapeForFlow(fraction, 'd90'));
-    }
-    for (let i = 0; i < 400; i++) {
-      level = advanceLevel(level, targetLevel(fraction, true), 0.016);
-      shapes.add(waterShapeForFlow(fraction, 'd90'));
-    }
-    expect([...shapes]).toEqual(['d90']);
+describe('F — the water is owned by the flow, not by the tank surface', () => {
+  it('the path reads the flow, the fitted deflector and the carrier — never the tank level', () => {
+    // Filling or draining the tank cannot add, remove or bend the incoming water.
+    const block = deviceModel.slice(deviceModel.indexOf('buildJetPaths({'));
+    const call = block.slice(0, block.indexOf('})\n        : lastPathRef'));
+    expect(call).toMatch(/state\.live\.nozzleVelocityMS/);
+    expect(call).toMatch(/state\.live\.flowRateM3S/);
+    expect(call).not.toMatch(/tankLevel/);
   });
 });
 
@@ -183,19 +163,22 @@ describe('A — the procedural tank cylinder is gone (BEDO-WATER-14)', () => {
   });
 
   it('nothing procedural is substituted for it', () => {
-    // Explicitly not a replacement volume, shell or surface — the brief asked for removal,
-    // not for a different body. The authored plume is the water in the tank.
+    // Explicitly not a replacement volume, shell or surface. Since F08 the only water drawn
+    // is the path from the nozzle and the film it lands in on the floor (2 mm, `POOL_DEPTH_M`)
+    // — built in `jetFlowMesh.ts`, never a body standing in the glass.
     for (const shape of ['Cylinder', 'Sphere', 'Cone', 'Plane', 'Circle', 'Ring']) {
       expect(deviceModel, `${shape}Geometry must not appear`).not.toMatch(
         new RegExp(`new THREE\\.${shape}Geometry`)
       );
     }
+    expect(jetFlowMesh).not.toMatch(/CylinderGeometry/);
   });
 
-  it('two water materials remain: the jet and the hose', () => {
-    // The tank body's material went with the body. A third would mean something started
-    // drawing standing water again.
-    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(2);
+  it('water materials: the shared water (jet and hose) and the floor film', () => {
+    // A third would mean something started drawing standing water again.
+    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)).toBeNull();
+    expect(waterMaterial.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(1);
+    expect(jetFlowMesh.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(1);
   });
 });
 
@@ -240,34 +223,22 @@ describe('C/D — the submerged-plume machinery went with the body', () => {
     expect(deviceModel).not.toMatch(/depthBelow/);
   });
 
-  it('the plume keeps its full free-surface treatment everywhere', () => {
-    // Foam, glint and the silhouette lift are unconditional again: the authored plume is
-    // falling through air for its whole length now that no standing water is drawn.
-    expect(deviceModel).toMatch(/gl_FragColor\.rgb = mix\(gl_FragColor\.rgb, vec3\(0\.78, 0\.85, 0\.93\), foam \* 0\.45\)/);
-    expect(deviceModel).toMatch(/gl_FragColor\.rgb \+= vec3\(0\.62, 0\.74, 0\.92\) \* \(glint \* 0\.22 \+ edge \* 0\.18\)/);
+  it('the water keeps its free-surface treatment everywhere', () => {
+    // Foam and glint are unconditional: the water falls through air for its whole length.
+    // Reflection is added on top and never scaled away; air whitens the body.
+    expect(waterMaterial).toMatch(/premultipliedAlpha: true/);
+    expect(waterMaterial).toMatch(/gl_FragColor = vec4\(reflection \+ colour \* a \+ flowLight \* isFilm, a\);/);
+    // A body of water (the jet, the film over the deflector) is refracted and whitened by air.
+    // Refracted and reflected (lit), given its own lit body, then whitened by air (lit
+    // foam, not a self-lit white).
+    expect(waterMaterial).toMatch(/vec3 water = mix\(lit \* \(1\.0 \+ 0\.45 \* waterCrest\), bodyB,/);
+    expect(waterMaterial).toMatch(/water = mix\(water, vec3\(0\.9, 0\.94, 0\.97\) \* waterLight, clamp\(aeration \* 1\.3, 0\.0, 1\.0\)\);/);
+    expect(waterMaterial).toMatch(/mix\(bodyColour, vec3\(0\.9, 0\.94, 0\.97\) \* waterLight, clamp\(aeration \* 1\.4, 0\.0, 1\.0\)\)/);
+    expect(waterMaterial).not.toMatch(/uWaterline|submerged/);
   });
 });
 
-describe('F — water selection is unchanged by the removal', () => {
-  it('no flow draws nothing, low flow is the column, high flow is the plume', () => {
-    expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
-    const low = flowRateLMin(0.4) / TOTAL_FLOW_L_MIN;
-    const high = flowRateLMin(0.5) / TOTAL_FLOW_L_MIN;
-    expect(waterShapeForFlow(low, 'd90')).toBe(JET_ASSET);
-    expect(waterShapeForFlow(high, 'd90')).toBe('d90');
-  });
-
-  it('the selector still reads only the flow, never the tank level', () => {
-    expect(waterShapeForFlow.length).toBe(2);
-  });
-});
-
-describe('the after-impact plume no longer hangs a curtain in the tank (BEDO-WATER-15)', () => {
-  // Measured live at Q = 43.5 L/min on the flat-plate plume, in world units.
-  const PLUME = { yMin: 0.11174, yMax: 0.50764 };
-  const NOZZLE_MOUTH_Y = 0.47118;
-  const TANK_FLOOR_Y = 0.10454;
-
+describe('the water no longer hangs a curtain in the tank, nor fades out in mid-air (F08)', () => {
   it('A — no procedural tank cylinder has come back', () => {
     expect(deviceModel).not.toMatch(/createTankWaterGeometry/);
     expect(deviceModel).not.toMatch(/tankWaterRef/);
@@ -275,62 +246,40 @@ describe('the after-impact plume no longer hangs a curtain in the tank (BEDO-WAT
     expect(lib).not.toMatch(/new THREE\.CylinderGeometry/);
   });
 
-  it('D — the deep part of the plume is suppressed, and by world height', () => {
-    // The cache does not stop at the splash: it runs from y 0.1117 up to 0.5076 while the
-    // nozzle mouth is at 0.4712, so about nine tenths of its height hangs inside the vessel
-    // and reads as a blue cylinder. That lower part is what the mask removes.
-    expect(deviceModel).toMatch(/uniform vec2 uPlumeCut/);
-    expect(deviceModel).toMatch(/gl_FragColor\.a \*= smoothstep\(uPlumeCut\.x, uPlumeCut\.y, vWPos\.y\)/);
-    // Clears well above the floor, so nothing of the sheet survives down there.
-    expect(PLUME_CUT_CLEAR_Y).toBeGreaterThan(TANK_FLOOR_Y);
-    expect(PLUME_CUT_CLEAR_Y).toBeLessThan(PLUME_CUT_FULL_Y);
+  it('D — no height band cuts the water: it runs to the floor and ends there', () => {
+    // BEDO-WATER-15 hid the authored caches' lower sheet with a world-height fade, which
+    // ended the water in mid-air. The computed path ends in the floor film instead
+    // (`tests/unit/f08-acceptance.spec.ts` AC5), so there is nothing to fade.
+    expect(deviceModel).not.toMatch(/uPlumeCut|PLUME_CUT/);
+    expect(jetFlowMesh).not.toMatch(/uPlumeCut/);
+    expect(waterMaterial).not.toMatch(/uPlumeCut/);
   });
 
-  it('E — the impact and the entry stay fully drawn', () => {
-    // Everything from just under the nozzle mouth upward is untouched, which is the jet, the
-    // impact and the immediate turbulent spread.
-    expect(PLUME_CUT_FULL_Y).toBeLessThan(NOZZLE_MOUTH_Y);
-    expect(PLUME_CUT_FULL_Y).toBeLessThan(PLUME.yMax);
-    // The kept region is a real slice of the plume, not a sliver.
-    expect(PLUME.yMax - PLUME_CUT_FULL_Y).toBeGreaterThan(0.04);
+  it('water running down the glass is a clear film, not a tinted body', () => {
+    // What BEDO-WATER-14 removed must not come back as a wall film: run-off is drawn as
+    // rivulets and highlights over nearly clear water.
+    // A film a fraction of a millimetre thick absorbs next to nothing (Beer–Lambert on its
+    // own thickness); what shows is rivulets and a dimmed reflection.
+    // Absorption through the layer's own thickness, along the line of sight, and run-off
+    // carrying no body between its rivulets.
+    expect(waterMaterial).toMatch(/\(t \/ max\(cosView, 0\.18\)\)/);
+    expect(waterMaterial).toMatch(/\* \(1\.0 - isRunoff\)/);
+    expect(waterMaterial).toMatch(/\+ isRunoff \* \(0\.02 \+ rivulet \* 0\.28/);
+    // A sheet is never more than a couple of millimetres thick.
+    expect(waterMaterial).toMatch(/clamp\(vFlowData\.x, 0\.0, 0\.002\)/);
   });
 
-  it('the fade is a band, not a plane, so the sheet thins instead of ending on a line', () => {
-    const band = PLUME_CUT_FULL_Y - PLUME_CUT_CLEAR_Y;
-    expect(band).toBeGreaterThan(0.05);
-  });
-
-  it('F — the pre-impact column is never cut', () => {
-    // Water_low is short and sits at the nozzle; cutting it would shorten the low-flow state.
-    // The band is parked out of range whenever the column is the active shape.
-    expect(deviceModel).toMatch(/plumeCutUniform\.current\.value\.set\(-1e9, -1e9 \+ 1\)/);
-    expect(deviceModel).toMatch(/plumeCutUniform\.current\.value\.set\(PLUME_CUT_CLEAR_Y, PLUME_CUT_FULL_Y\)/);
-    // And it is keyed on the same `impacting` flag the shape selection already uses.
-    const block = deviceModel.slice(deviceModel.indexOf('const activeWater = waterShapeForFlow'));
-    expect(block.slice(0, 900)).toMatch(/if \(impacting\) \{/);
-  });
-
-  it('B/F — shape selection is unchanged by the mask', () => {
-    expect(waterShapeForFlow(0, 'd90')).toBe(JET_ASSET);
-    expect(waterShapeForFlow(flowRateLMin(0.4) / TOTAL_FLOW_L_MIN, 'd90')).toBe(JET_ASSET);
-    expect(waterShapeForFlow(flowRateLMin(0.5) / TOTAL_FLOW_L_MIN, 'd90')).toBe('d90');
-  });
-
-  it('C — the hose is untouched by this change', () => {
-    // Its own material, its own uniforms, and no plume cut anywhere near it.
+  it('C — the hose wears the same water, as a conduit, with no fade band', () => {
     const hose = deviceModel.slice(
       deviceModel.indexOf('const hoseMaterial = useMemo('),
       deviceModel.indexOf('}, [scene, hoseMaterial]);')
     );
-    expect(hose).toMatch(/uniform float uHoseFlow/);
+    expect(hose).toMatch(/createWaterMaterial\(waterTex, hoseUniforms, 'conduit'\)/);
     expect(hose).not.toMatch(/uPlumeCut/);
   });
 
-  it('adds no mesh, geometry, material or render pass', () => {
-    // The whole fix is one uniform and one line of GLSL.
-    expect(deviceModel.match(/new THREE\.MeshPhysicalMaterial\(/g)?.length).toBe(2);
-    for (const shape of ['Cylinder', 'Sphere', 'Cone', 'Plane', 'Circle', 'Ring']) {
-      expect(deviceModel).not.toMatch(new RegExp(`new THREE\\.${shape}Geometry`));
-    }
+  it('the fill still follows the flow the water is drawn from', () => {
+    expect(targetLevel(flowRateLMin(0.5) / 120, false)).toBeGreaterThan(0);
+    expect(DRAIN_CAPACITY_FRACTION).toBeGreaterThan(0);
   });
 });

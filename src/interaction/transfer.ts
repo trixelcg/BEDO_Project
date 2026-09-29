@@ -59,6 +59,23 @@ export const TRANSFER_SECONDS = 2;
  */
 export const RETURN_SECONDS = 0.35;
 
+/**
+ * How long the fitted deflector takes to come off the rod and go back to the tray.
+ *
+ * **Implementation timing, not BEDO source truth.** The storyboard only describes the
+ * deflector going *on* (sl. 7, 8, 14), because each sheet fits one. Changing deflectors
+ * in Free mode therefore has two moves where BEDO wrote one, and the second — the new
+ * deflector's two seconds — is BEDO's. This one is kept shorter so the swap as a whole
+ * stays close to the time the learner was told an install takes (F03).
+ */
+export const DEFLECTOR_REMOVAL_SECONDS = 1.4;
+
+/**
+ * Gap between discs taken off together, so a cleared stack comes off top first, one at a
+ * time, the way a hand would lift them (F03). Implementation timing.
+ */
+export const STACK_CLEAR_STAGGER_SECONDS = 0.35;
+
 export type TransferKind =
   /** Tray → rod, on an accepted `SELECT_DEFLECTOR`. Storyboard sl. 7/8/14. */
   | 'deflector-install'
@@ -66,6 +83,8 @@ export type TransferKind =
   | 'weight-install'
   /** Holder → tray, on an accepted `REMOVE_WEIGHT`. Storyboard sl. 32, state D. */
   | 'weight-removal'
+  /** Rod → tray, for the deflector a new one replaces. Implementation behaviour (F03). */
+  | 'deflector-removal'
   /** Back where it came from, after a miss or a refusal. Implementation behaviour. */
   | 'return-to-source';
 
@@ -73,6 +92,7 @@ const DURATIONS: Readonly<Record<TransferKind, number>> = {
   'deflector-install': TRANSFER_SECONDS,
   'weight-install': TRANSFER_SECONDS,
   'weight-removal': TRANSFER_SECONDS,
+  'deflector-removal': DEFLECTOR_REMOVAL_SECONDS,
   'return-to-source': RETURN_SECONDS,
 };
 
@@ -109,6 +129,7 @@ export const easeInOutCubic = (x: number): number =>
 
 interface Flight {
   kind: TransferKind;
+  /** Negative while the flight is still waiting to begin (see `start`'s `delay`). */
   elapsed: number;
   duration: number;
 }
@@ -122,12 +143,26 @@ interface Flight {
  * once by the state-transition observer that catches the 2D panel doing the same thing.
  */
 export interface TransferSet {
-  /** Starts a move, or does nothing if one with this id is already running. */
-  start(id: string, kind: TransferKind): void;
+  /**
+   * Starts a move, or does nothing if one with this id is already running.
+   *
+   * `delay` holds the move at its start for that many seconds first — the new deflector
+   * waits on the tray while the old one comes off the rod, and a cleared stack comes off
+   * one disc at a time. A waiting flight reports progress 0.
+   */
+  start(id: string, kind: TransferKind, delay?: number): void;
   /** Advances every flight. Returns the ids that finished on this tick, in start order. */
   advance(seconds: number): readonly string[];
   /** Eased progress in [0, 1], or null if there is no such flight. */
   progressOf(id: string): number | null;
+  /**
+   * Plain fraction of the duration elapsed, in [0, 1], or null if there is no such flight.
+   *
+   * For flights whose shape does its own easing, phase by phase (`lib/handlingPath.ts`).
+   */
+  fractionOf(id: string): number | null;
+  /** Seconds until this flight lands, counting any wait still ahead of it; null if none. */
+  remainingOf(id: string): number | null;
   kindOf(id: string): TransferKind | null;
   has(id: string): boolean;
   /** Drops a flight without finishing it. The caller decides what the scene does next. */
@@ -140,9 +175,9 @@ export function createTransferSet(): TransferSet {
   const flights = new Map<string, Flight>();
 
   return {
-    start(id, kind) {
+    start(id, kind, delay = 0) {
       if (flights.has(id)) return;
-      flights.set(id, { kind, elapsed: 0, duration: durationOf(kind) });
+      flights.set(id, { kind, elapsed: -Math.max(0, delay), duration: durationOf(kind) });
     },
 
     advance(seconds) {
@@ -161,6 +196,18 @@ export function createTransferSet(): TransferSet {
       if (!flight) return null;
       if (flight.duration <= 0) return 1;
       return easeInOutCubic(Math.min(1, Math.max(0, flight.elapsed / flight.duration)));
+    },
+
+    fractionOf(id) {
+      const flight = flights.get(id);
+      if (!flight) return null;
+      if (flight.duration <= 0) return 1;
+      return Math.min(1, Math.max(0, flight.elapsed / flight.duration));
+    },
+
+    remainingOf(id) {
+      const flight = flights.get(id);
+      return flight ? Math.max(0, flight.duration - flight.elapsed) : null;
     },
 
     kindOf: (id) => flights.get(id)?.kind ?? null,

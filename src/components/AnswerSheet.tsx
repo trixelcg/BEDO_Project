@@ -52,7 +52,7 @@ export const AnswerSheet: React.FC<AnswerSheetProps> = ({
         >
           {isArabic ? 'فتح في نافذة جديدة' : 'Open in new tab'}
         </a>
-        <button className="btn-primary" onClick={onClose} style={{ background: '#ff3d71', color: '#fff' }}>
+        <button className="btn-primary" onClick={onClose} style={{ background: 'var(--danger-fill)', color: '#fff' }}>
           <X size={15} />
           {isArabic ? 'إغلاق' : 'Close'}
         </button>

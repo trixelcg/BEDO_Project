@@ -47,6 +47,16 @@ export const dismissPopup = () => {
   fireEvent.click(within(popup as HTMLElement).getByRole('button'));
 };
 
+/**
+ * Presses "Reset simulator" and, when there is something to lose, confirms (F15): the
+ * dialog lists what goes and what stays, and "Yes, reset" proceeds.
+ */
+export const resetSimulator = () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Reset simulator' }));
+  const dialog = document.querySelector('[data-bedo-reset-dialog]');
+  if (dialog) fireEvent.click(within(dialog as HTMLElement).getByRole('button', { name: 'Yes, reset' }));
+};
+
 /** Clicks a button by its accessible name. */
 export const click = (name: string | RegExp) =>
   fireEvent.click(screen.getByRole('button', { name }));
@@ -107,7 +117,8 @@ export const loadedWeightG = (): number => {
  * Walks the guided lesson from `from` up to and including `to`, asserting the step number
  * before each action.
  *
- * The canonical eleven-step sequence (BEDO-019). The volumetric valve is no longer a step,
+ * The canonical eleven-step sequence (BEDO-019). Since F14 the steps whose goal is a state
+ * of the rig (1, 3, 4, 6, 8, 9, 10) finish on that state; only 2, 5 and 7 take an OK. The volumetric valve is no longer a step,
  * so the walk goes straight from powering the pump to opening the flow valve; steps 5-11
  * are what used to be 6-12.
  */
@@ -121,21 +132,24 @@ export const walkLesson = (from: number, to: number) => {
       setValve(0.4);
       clickOk();
     },
+    // Balance steps finish the moment the tray balances (F14) — no OK. 50, 70, 80 g:
+    // 80 is the first total within ±10 g of reading 1's 83.6 g.
     6: () => {
       click('+50g');
       click('+20g');
       click('+10g');
-      clickOk();
     },
     7: () => {
       setValve(0.5);
       clickOk();
     },
+    // 200, 220, 240, 260 g: 260 is the first total within ±10 g of reading 2's 257.9 g
+    // (200 + 50 = 250 would already balance, and end the reading one disc early).
     8: () => {
       click('+200g');
-      click('+50g');
-      click('+10g');
-      clickOk();
+      click('+20g');
+      click('+20g');
+      click('+20g');
     },
     9: () => click('Open Data Monitor'),
     10: () => click(/^Calculate$/),

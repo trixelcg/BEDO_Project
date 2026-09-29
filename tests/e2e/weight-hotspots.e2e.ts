@@ -208,7 +208,10 @@ test.describe('the tray discs answer for themselves', () => {
     await button(page, /Free Mode/i).click();
     await trayReady(page);
 
-    const tooltip = page.locator('.cursor-tooltip');
+    const tooltipBox = page.locator('.cursor-tooltip');
+    // F17: the first line names the part; the second says what it does, the third how to
+    // open its card. The name is what these checks compare.
+    const tooltip = page.locator('.cursor-tooltip .cursor-tooltip-title');
     // Hover-only outlines (BEDO-UX-ENV): with the pointer on nothing, nothing is outlined.
     await page.mouse.move(5, 5);
     await expect
@@ -228,7 +231,7 @@ test.describe('the tray discs answer for themselves', () => {
     }
     // Asserted while a disc is still under the pointer. Clicking anything in the DOM first
     // moves the mouse off the tray, and the label is correctly gone by then.
-    await expect(tooltip).toHaveCSS('pointer-events', 'none');
+    await expect(tooltipBox).toHaveCSS('pointer-events', 'none');
 
     // Arabic localises the unit the way the app's own mass strings do.
     await button(page, /العربية/).first().click();
@@ -241,7 +244,7 @@ test.describe('the tray discs answer for themselves', () => {
     await expect(tooltip).toHaveText('50 g');
     // The label rides above the cursor, clear of it, rather than sitting on the part.
     const at = await meshPoint(page, 'Weight_50');
-    const box = await tooltip.boundingBox();
+    const box = await tooltipBox.boundingBox();
     expect(box, 'the tooltip has no box').not.toBeNull();
     expect(box!.y + box!.height).toBeLessThanOrEqual(at!.y - 10);
     await expect
@@ -256,16 +259,19 @@ test.describe('the tray discs answer for themselves', () => {
       'the nozzle is not a control and must not offer a control’s cursor'
     ).not.toBe('pointer');
 
-    // Clicking the nozzle does nothing at all — it neither installs nor blocks.
+    // Clicking the nozzle does nothing to the rig — it neither installs nor blocks. Since
+    // F17 the click opens the nozzle's component card beside it, which is only information.
     const before = await loaded(page);
     await page.mouse.click(nozzle.x, nozzle.y);
     await page.waitForTimeout(1200);
     expect(await loaded(page), 'the nozzle consumed a click').toBe(before);
+    await expect(page.locator('.component-card')).toHaveAttribute('data-anchor-id', 'vlfm009.nozzle');
+    await page.locator('[data-bedo-component-close]').click();
 
     // Leaving the part retracts the label.
     const disc = await meshPoint(page, 'Weight_50');
     await page.mouse.move(disc!.x, disc!.y - 220);
-    await expect(tooltip).toBeHidden();
+    await expect(tooltipBox).toBeHidden();
     // ...and so does its outline: nothing stays lit once the pointer has gone (BEDO-UX-ENV).
     await expect
       .poll(() => page.evaluate(() => (window as any).__bedoTest.hover().outlined.length))

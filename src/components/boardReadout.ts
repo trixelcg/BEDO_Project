@@ -39,14 +39,36 @@ const TEX_H = 1475;
  * extracted 4800x2950 original, not guessed from a screenshot of the scene.
  */
 const FIELD = {
-  totalWeight: { u: 0.354, v: 0.753 },
-  weightForce: { u: 0.532, v: 0.760 },
-  nozzle: { u: 0.447, v: 0.891 },
-  liveFlow: { u: 0.695, v: 0.601 },
-  liveForce: { u: 0.905, v: 0.601 },
-  liveV0: { u: 0.716, v: 0.891 },
-  liveV: { u: 0.905, v: 0.891 },
+  // The grey box inside the Total Weight circle, measured off the artwork: u 0.318–0.390,
+  // v 0.742–0.790, with the printed `gm` at u 0.3685–0.388. The number is right-aligned
+  // just before `gm`, on the box's centre line, and never wider than the box's free part.
+  totalWeight: { u: 0.3655, v: 0.766, minU: 0.3225 },
+  // The force box: u 0.4825–0.554, v 0.742–0.790, the printed `N` at u 0.5415–0.551.
+  weightForce: { u: 0.539, v: 0.766, minU: 0.487 },
 } as const;
+
+/**
+ * The five empty printed boxes the live values go in, as their outer border in UV.
+ *
+ * Measured off the 4800x2950 original by finding each box's dark border (2026-09-29):
+ * the old centres were guessed, and put V₀, V and the nozzle line on the boxes' top
+ * borders and F_th across its box's left border (QA screenshot). Each value is now
+ * centred in its box and never drawn wider than the box's inside.
+ */
+const BOX = {
+  nozzle: { u0: 0.386, u1: 0.5067, v0: 0.8959, v1: 0.9329 },
+  liveFlow: { u0: 0.6423, u1: 0.7494, v0: 0.5858, v1: 0.6186 },
+  liveForce: { u0: 0.864, u1: 0.971, v0: 0.5847, v1: 0.6176 },
+  liveV0: { u0: 0.6571, u1: 0.7777, v0: 0.8959, v1: 0.9329 },
+  liveV: { u0: 0.846, u1: 0.9667, v0: 0.8953, v1: 0.9322 },
+} as const;
+type Box = (typeof BOX)[keyof typeof BOX];
+/** The printed border is about 12 px of the 4800 px original — 6 of ours — plus a margin. */
+const BOX_INSET_PX = 14;
+/** Centre of a box, and the width a value may take inside it, in canvas pixels. */
+export const boxCentre = (b: Box): { u: number; v: number } => ({ u: (b.u0 + b.u1) / 2, v: (b.v0 + b.v1) / 2 });
+export const boxInnerWidthPx = (b: Box): number => (b.u1 - b.u0) * TEX_W - 2 * BOX_INSET_PX;
+export const BOARD_BOXES = BOX;
 
 /** The seven printed angle chips down the left, top to bottom. */
 const ANGLE_CHIP: Record<number, number> = {
@@ -62,6 +84,8 @@ const ROW_V = [0.749, 0.814];
 
 /** Everything the board shows. Formatted values only — no state, no derivation. */
 export interface BoardValues {
+  /** False while the rod is bare: no chip is marked and F_th is a dash (F09). */
+  deflectorFitted: boolean;
   deflectorAngle: number;
   deflectorName: string;
   momentumFactor: number;
@@ -91,6 +115,7 @@ export interface BoardValues {
 /** A change worth repainting for. Cheap, and the only thing that drives an update. */
 export const boardSignature = (v: BoardValues): string =>
   [
+    v.deflectorFitted,
     v.deflectorAngle,
     v.momentumFactor,
     v.valvePct.toFixed(0),
@@ -143,13 +168,19 @@ export function drawBoard(
     u: number,
     v: number,
     text: string,
-    { size = 40, align = 'center' as CanvasTextAlign, colour = INK } = {}
+    {
+      size = 40,
+      align = 'center' as CanvasTextAlign,
+      colour = INK,
+      maxWidth = undefined as number | undefined,
+    } = {}
   ) => {
     const [x, y] = at(u, v);
     ctx.font = `700 ${size}px "Inter", system-ui, sans-serif`;
     ctx.textAlign = align;
     ctx.fillStyle = colour;
-    ctx.fillText(text, x, y);
+    if (maxWidth === undefined) ctx.fillText(text, x, y);
+    else ctx.fillText(text, x, y, maxWidth);
   };
 
   /*
@@ -159,30 +190,34 @@ export function drawBoard(
     against the right edge, so the numbers are drawn left of them rather than centred —
     otherwise the value would sit on top of its own unit.
   */
-  write(FIELD.totalWeight.u - 0.016, FIELD.totalWeight.v, `${Math.round(values.loadedMassG)}`, {
+  // Inside its grey box (QA, 2026-09-29): it used to be right-aligned at u 0.338, so the
+  // number ran out past the box's left edge and sat in its top half.
+  write(FIELD.totalWeight.u, FIELD.totalWeight.v, `${Math.round(values.loadedMassG)}`, {
     size: 46,
     align: 'right',
+    maxWidth: (FIELD.totalWeight.u - FIELD.totalWeight.minU) * TEX_W,
   });
   write(FIELD.weightForce.u, FIELD.weightForce.v, values.measuredForceN.toFixed(3), {
     size: 44,
     align: 'right',
+    maxWidth: (FIELD.weightForce.u - FIELD.weightForce.minU) * TEX_W,
   });
+
+  /** A value centred in one of the printed boxes, never wider than its inside. */
+  const inBox = (box: Box, text: string, size: number) => {
+    const { u, v } = boxCentre(box);
+    write(u, v, text, { size, maxWidth: boxInnerWidthPx(box) });
+  };
 
   // Nozzle: the bore derived from the same constant the equations use, in the spare box.
-  write(
-    FIELD.nozzle.u,
-    FIELD.nozzle.v,
-    `NOZZLE  Ø ${values.nozzleMm.toFixed(0)} mm   A = ${values.nozzleAreaM2.toExponential(3)} m²`,
-    { size: 27 }
-  );
+  inBox(BOX.nozzle, `Ø ${values.nozzleMm.toFixed(0)} mm   A = ${values.nozzleAreaM2.toExponential(3)} m²`, 22);
 
   // The four live readouts, in the poster's own empty boxes around the table.
-  write(FIELD.liveFlow.u, FIELD.liveFlow.v, `Q  ${values.flowLMin.toFixed(3)} L/min`, { size: 30 });
-  write(FIELD.liveForce.u, FIELD.liveForce.v, `F_th  ${values.theoreticalForceN.toFixed(4)} N`, {
-    size: 30,
-  });
-  write(FIELD.liveV0.u, FIELD.liveV0.v, `V₀  ${values.nozzleVelocity.toFixed(3)} m/s`, { size: 30 });
-  write(FIELD.liveV.u, FIELD.liveV.v, `V  ${values.impactVelocity.toFixed(3)} m/s`, { size: 30 });
+  inBox(BOX.liveFlow, `Q  ${values.flowLMin.toFixed(3)} L/min`, 28);
+  const fth = values.deflectorFitted ? `${values.theoreticalForceN.toFixed(4)} N` : '—';
+  inBox(BOX.liveForce, `F_th  ${fth}`, 28);
+  inBox(BOX.liveV0, `V₀  ${values.nozzleVelocity.toFixed(3)} m/s`, 28);
+  inBox(BOX.liveV, `V  ${values.impactVelocity.toFixed(3)} m/s`, 28);
 
   /*
     The installed deflector, marked rather than repainted.
@@ -190,7 +225,7 @@ export function drawBoard(
     A ring around the printed chip and its momentum factor beside it. The artwork is
     untouched — this is an overlay, and the chip keeps its own label.
   */
-  const chipV = ANGLE_CHIP[values.deflectorAngle];
+  const chipV = values.deflectorFitted ? ANGLE_CHIP[values.deflectorAngle] : undefined;
   if (chipV !== undefined) {
     const [cx, cy] = at(CHIP_U, chipV);
     const w = CHIP_W * TEX_W;

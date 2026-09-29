@@ -77,17 +77,32 @@ export interface LessonContext {
   readonly simulation: SimulationState;
   /** The results table, derived — a balance step is complete when its row balances. */
   readonly readings: readonly RecordRow[];
+  /**
+   * The Data Monitor is on screen. Interface state, not the rig — but step 9's goal is
+   * exactly that, and a step that says "open the monitor" beside an open monitor is the
+   * disagreement F14 removes. Absent means closed.
+   */
+  readonly monitorOpen?: boolean;
 }
 
 /**
  * How a step ends.
  *
- * `action` — performing the expected action finishes it, and the lesson moves on by
- *            itself. Steps 1, 3, 4 and 11 work this way today.
+ * `condition` — the step is finished the moment `isSatisfied` holds, whatever made it
+ *            hold (F14). The runner is asked after every committed change to the rig
+ *            (`LessonRunner.sync`), so the lesson can never show a step as current while
+ *            the rig already shows it done — the balanced pointer beside "Add weights"
+ *            was exactly that. Steps 1, 3, 4, 6, 8 and 10.
+ * `action` — performing the expected action finishes it. For steps whose goal is an
+ *            event rather than a state of the rig: opening the answer sheet (11).
  * `confirm` — the learner presses OK. The step may be *ready* to confirm long before it
- *            is pressed, and `when` decides when the button appears.
+ *            is pressed, and `when` decides when the button appears. For steps where the
+ *            learner decides when they are done: installing the deflector (2), and
+ *            settling the valve on a reading (5, 7) — a slider being dragged passes
+ *            through the setpoint on its way.
  */
 export type Advance =
+  | { readonly kind: 'condition' }
   | { readonly kind: 'action' }
   | { readonly kind: 'confirm'; readonly when: (context: LessonContext) => boolean };
 

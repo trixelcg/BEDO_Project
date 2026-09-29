@@ -110,13 +110,24 @@ describe('the exported CSV', () => {
     expect(lines[4]).toBe('3,120.0,0.50,27.024,4.5040e-4,5.738,5.677,260,12.75,2.5303,2.5506');
   });
 
-  it('keeps the zero row and the untaken row', async () => {
+  it('keeps the zero row and the untaken row — without measurements they never had', async () => {
     const { lines } = await exportCsv();
-    expect(lines[2]).toBe('1,120.0,0.00,0.000,0.0000e+0,0.000,0.000,0,0.00,0.0000,0.0000');
-    // Row 4 is never measured by the lesson, yet it is exported with a full theoretical
-    // force computed at n = 0.6 and an F_ac of zero. That is `BUG-14`; BEDO-005 pins it
-    // as it stands and BEDO-009 is where it changes.
-    expect(lines[5]).toBe('4,120.0,0.60,43.457,7.2428e-4,9.227,9.189,0,0.00,6.6287,0.0000');
+    // The valve-shut reference: its zeros are true, but nothing was measured, so no F_ac.
+    expect(lines[2]).toBe('1,120.0,0.00,0.000,0.0000e+0,0.000,0.000,0,0.00,0.0000,');
+    // Row 4 is never measured by the lesson. It used to export a full theoretical force at
+    // n = 0.6 and an F_ac of zero (`BUG-14`). F15 exports its schedule and blanks: same
+    // columns, same row count, no invented measurement (`docs/62`).
+    expect(lines[5]).toBe('4,120.0,0.60,,,,,,,,');
+  });
+
+  it('blanks the row being balanced: live values are not a record', async () => {
+    walkLesson(1, 5);
+    click('+50g');
+    const captured = captureDownload();
+    click('Open Data Monitor');
+    click('Export Data');
+    const lines = (await captured.blob!.text()).split('\n');
+    expect(lines[3]).toBe('2,120.0,0.40,,,,,,,,');
   });
 
   it('pins the numeric precision of every column', async () => {
@@ -177,7 +188,7 @@ describe('the on-screen readings table', () => {
       (td) => td.textContent
     );
 
-  it('has exactly these eight columns, in this order', () => {
+  it('has exactly these nine columns, in this order — the ninth is the row status (F15)', () => {
     walkLesson(1, 9);
     expect(headers()).toEqual([
       'Row',
@@ -188,13 +199,14 @@ describe('the on-screen readings table', () => {
       'Mass (g)',
       'F_th (N)',
       'F_ac (N)',
+      'Status',
     ]);
   });
 
-  it('shows the readings with their current formatting', () => {
+  it('shows the readings with their current formatting, and says they are recorded', () => {
     walkLesson(1, 10);
-    expect(cells(1)).toEqual(['2', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848']);
-    expect(cells(2)).toEqual(['3', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506']);
+    expect(cells(1)).toEqual(['2', '15.714', '2.619e-4', '3.336', '3.232', '80', '0.8199', '0.7848', '✓ Recorded']);
+    expect(cells(2)).toEqual(['3', '27.024', '4.504e-4', '5.738', '5.677', '260', '2.5303', '2.5506', '✓ Recorded']);
   });
 
   it('shows a dash for F_ac until Calculate is pressed', () => {
@@ -205,14 +217,14 @@ describe('the on-screen readings table', () => {
   it('prints the mass on the tray, not the sum of the recorded rows', () => {
     walkLesson(1, 10);
     /*
-      0 g, not 340 g.
+      260 g, not 340 g.
 
       This readout used to sum `loadedMassG` across every recorded row, so after both
       readings it printed 80 + 260 = 340 g — a mass that was never on the pan at one time.
-      BEDO-UX-12 makes it what its label says: what is on the tray right now. By step 10
-      that is nothing, because a reading step ends with `REMOVE_ALL_WEIGHTS` — the lesson
-      tidying the pan between readings — so an empty pan is the honest reading. Each
-      reading's own mass is still carried by the table's Mass column.
+      BEDO-UX-12 makes it what its label says: what is on the tray right now. Since F14 a
+      balance step leaves its discs on the carrier (reading 1's come off as reading 2
+      begins), so by step 10 the tray holds reading 2's 260 g — the balance F_ac is
+      computed from. Each reading's own mass is still carried by the table's Mass column.
 
       That it tracks the tray while weights are going on and coming off is pinned
       separately, in `monitor-live.spec.tsx`.
@@ -220,7 +232,7 @@ describe('the on-screen readings table', () => {
     const card = Array.from(document.querySelectorAll('.indicator-card')).find((el) =>
       el.textContent?.includes('Total Weight')
     );
-    expect(card?.textContent).toContain('0 g × g = 0.000 N');
+    expect(card?.textContent).toContain('260 g × g = 2.551 N');
   });
 
   it('uses the Arabic headers when the lesson is in Arabic', () => {
@@ -235,6 +247,7 @@ describe('the on-screen readings table', () => {
       'الكتلة (g)',
       'F_th (N)',
       'F_ac (N)',
+      'الحالة',
     ]);
   });
 });

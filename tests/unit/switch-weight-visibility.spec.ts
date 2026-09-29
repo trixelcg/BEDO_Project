@@ -256,13 +256,15 @@ describe('a loaded disc is visible because it is loaded, and for no other reason
     return s.slice(start, s.indexOf('</group>', s.indexOf('cylinderGeometry', start)));
   };
 
-  it('gates the disc on exactly one thing: whether it has arrived', () => {
+  it('gates the disc only on where it physically is: arrived, and not in the hand', () => {
     const block = stackBlock();
     const visibleProps = [...block.matchAll(/visible=\{([^}]*)\}/g)].map((m) => m[1].trim());
     // One gate on the slot, plus the hit proxy's material, which is invisible by
-    // definition and gates nothing.
+    // definition and gates nothing. The slot is empty while its disc is still flying to it
+    // and while the learner is holding it up the post (F03) — both are "the disc is not on
+    // the pan", and neither consults the lesson, the camera or the panel.
     const gates = visibleProps.filter((v) => v !== 'false');
-    expect(gates).toEqual(['!inFlightSeats.has(index)']);
+    expect(gates).toEqual(['!inFlightSeats.has(index) && !heldSeats.has(index)']);
     expect(visibleProps).toContain('false');
   });
 
@@ -301,18 +303,20 @@ describe('a loaded disc is visible because it is loaded, and for no other reason
   });
 
   it('is cleared only by the runtime, and the lesson is the only thing that clears it', () => {
-    // The measured cause of the reported "disappearance": the canonical lesson ends each
-    // reading step with REMOVE_ALL_WEIGHTS, so the pan empties as the camera flies to the
-    // next step. That is the lesson's own specification, not a rendering fault — recorded
-    // here so the coupling is visible rather than surprising. See `docs/42 §7`.
+    // The measured cause of the reported "disappearance" (`docs/42 §7`) was the lesson
+    // ending each reading step with REMOVE_ALL_WEIGHTS, so the pan emptied as the camera
+    // flew to the next step. F14 moved the one clear the procedure needs to where the
+    // sheet needs it — as reading 2 *begins* — so a balance just reached stays on the
+    // carrier, and reading 2's discs stay for F_ac. `docs/61`.
     const lesson = readFileSync(path.join(REPO_ROOT, 'src/lesson/currentLesson.ts'), 'utf8');
-    const clears = [...lesson.matchAll(/REMOVE_ALL_WEIGHTS/g)];
-    expect(clears).toHaveLength(2);
+    const code = lesson.replace(/\/\/.*$/gm, '');
+    const clears = [...code.matchAll(/REMOVE_ALL_WEIGHTS/g)];
+    expect(clears).toHaveLength(1);
+    const step = code.slice(code.indexOf("id: 'increase-flow-reading-2'"), code.indexOf("id: 'balance-reading-2'"));
+    expect(step).toMatch(/onComplete: \[\s*\{ type: 'REMOVE_ALL_WEIGHTS' \},\s*\{ type: 'SET_VALVE'/);
     for (const id of ['balance-reading-1', 'balance-reading-2']) {
-      const step = lesson.slice(lesson.indexOf(id), lesson.indexOf(id) + 700);
-      expect(step, `${id} should tidy the pan when it completes`).toMatch(
-        /onComplete:[\s\S]*REMOVE_ALL_WEIGHTS/
-      );
+      const block = code.slice(code.indexOf(`id: '${id}'`), code.indexOf('},\n    {', code.indexOf(`id: '${id}'`)));
+      expect(block, `${id} leaves the balance on the carrier`).toMatch(/onComplete: \[\{ type: 'END_READING' \}\]/);
     }
   });
 });

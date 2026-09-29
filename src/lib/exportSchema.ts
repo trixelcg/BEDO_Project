@@ -16,6 +16,7 @@
  */
 
 import type { RecordRow } from '../domain/physics';
+import type { ReadingStatus } from '../simulation/selectors';
 
 /** One CSV column: its published header and how a row is rendered into it. */
 interface ExportColumn {
@@ -56,14 +57,43 @@ export interface ExportContext {
   /** Free-text first line: which experiment and which deflector produced these readings. */
   title: string;
   isCalculated: boolean;
+  /**
+   * What each row is (F15). Absent means every row is a recorded reading — how free
+   * readings, and older callers, export.
+   */
+  statuses?: readonly ReadingStatus[];
 }
 
-/** Renders the readings as the CSV file the app has always produced. */
-export function toCsv(rows: RecordRow[], { title, isCalculated }: ExportContext): string {
+/**
+ * The columns a row that was never measured still carries: which row, at what Q_total and
+ * which scheduled opening. Everything else is a measurement or derived from one.
+ */
+const SCHEDULE_COLUMNS = new Set(['Row', 'Q_total (L/min)', 'n']);
+
+/**
+ * Renders the readings as the CSV file the app has always produced — same columns, same
+ * order, same formatting, one line per table row.
+ *
+ * What changed in F15 (`docs/62`) is which *values* a row may carry. A row not recorded —
+ * the one being balanced, or one the lesson never takes (row 4, `BUG-14`) — exports its
+ * schedule and blanks: it used to export a full theoretical force and an F_ac of zero, as
+ * if measured. F_ac is written only for a recorded reading, and only once recorded
+ * (Calculate). The valve-shut reference row keeps its zeros, which are true, and no F_ac.
+ */
+export function toCsv(rows: RecordRow[], { title, isCalculated, statuses }: ExportContext): string {
   const header = EXPORT_COLUMNS.map((column) => column.header).join(',');
-  const body = rows.map((row, index) =>
-    EXPORT_COLUMNS.map((column) => column.value(row, index, isCalculated)).join(',')
-  );
+  const body = rows.map((row, index) => {
+    const status: ReadingStatus = statuses?.[index] ?? 'recorded';
+    return EXPORT_COLUMNS.map((column) => {
+      if (column.header === 'F_ac (N)') {
+        return status === 'recorded' ? column.value(row, index, isCalculated) : '';
+      }
+      if (status === 'live' || status === 'pending') {
+        return SCHEDULE_COLUMNS.has(column.header) ? column.value(row, index, isCalculated) : '';
+      }
+      return column.value(row, index, isCalculated);
+    }).join(',');
+  });
   return [`# ${title}`, header, ...body].join('\n');
 }
 

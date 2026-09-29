@@ -66,7 +66,12 @@ describe('src/domain imports nothing from the outside world', () => {
     // pass by doing nothing.
     expect(files.sort()).toEqual([
       'apparatus.ts',
+      // F17: what each part is called and does — the one component-information definition.
+      'componentInfo.ts',
       'experiments.ts',
+      // F09: one force law per fitted deflector, and the two parameter ranges.
+      'forceLaw.ts',
+      'parameters.ts',
       'physics.ts',
       'spring.ts',
       'stateMachine.ts',
@@ -427,7 +432,10 @@ describe('nothing bypasses the interaction gate', () => {
     //    the author of those, not the learner)
     // 3. `handleCalculate`, immediately after `interact` returned true
     // 4. `SELECT_EXPERIMENT` — session setup, resets the lesson, not an apparatus action
-    // 5. `SET_PUMP_FLOW` — a Custom Parameters value, likewise not an apparatus action
+    // 5. `runSessionCommands` — one loop for the Parameters panel (`SET_PUMP_FLOW`,
+    //    `SET_CUSTOM_WEIGHT`, F09) and the Data Monitor's free readings (`RECORD_FREE_READING`,
+    //    `CLEAR_FREE_READINGS`, F10); values and records, not apparatus actions, validated by
+    //    the runtime
     // Each is recorded in `docs/36 §9`. If this number moves, the new call site needs an
     // entry there before this expectation is updated.
     expect(sites.length).toBe(5);

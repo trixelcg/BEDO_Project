@@ -2,7 +2,6 @@ import { expect, test } from './fixture';
 import {
   button,
   confirmStep,
-  currentStep,
   dismissPopup,
   expectStep,
   okButton,
@@ -79,10 +78,10 @@ test.describe('guided walkthrough', () => {
     for (const weight of ['+50g', '+20g', '+10g']) {
       await button(page, weight).click();
     }
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
-    await confirmStep(page);
+    // 80 g balances and the step finishes on the spot — no OK (F14).
     await dismissPopup(page); // "the shape of water impinging the deflector"
     await expectStep(page, 7);
+    await expect(okButton(page)).toHaveCount(0);
 
     // 7 — increase the flow to the second setpoint
     await setValve(page, 0.5);
@@ -93,11 +92,10 @@ test.describe('guided walkthrough', () => {
 
     // 8 — balance the pointer, reading 2 (target 260 g)
     await expect(page.getByText(/Unbalanced \(target ≈ 260 g\)/)).toBeVisible();
-    for (const weight of ['+200g', '+50g', '+10g']) {
+    // 200, 220, 240, 260 g: the first balanced total ends the reading (F14).
+    for (const weight of ['+200g', '+20g', '+20g', '+20g']) {
       await button(page, weight).click();
     }
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
-    await confirmStep(page);
     await expectStep(page, 9);
 
     // 9 — open the software monitor
@@ -135,7 +133,7 @@ test.describe('guided walkthrough', () => {
     // 11 — the closing step: open the answer sheet
     await expect(stepBadge(page)).toHaveText('Step 11 / 11');
     await page.locator('.monitor-header').getByRole('button', { name: 'Close' }).first().click();
-    await expect(page.getByRole('heading', { name: 'You finished!' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Open the answer sheet' })).toBeVisible();
 
     await button(page, 'Open the answer sheet').click();
     const sheet = page.getByTestId('answer-sheet');
@@ -148,7 +146,9 @@ test.describe('guided walkthrough', () => {
 
     // Eleven steps, and a completion state rather than a twelfth.
     await expect(page.getByTestId('lesson-complete')).toBeVisible();
-    expect(await currentStep(page)).toBe(11);
+    await expect(stepBadge(page)).toHaveText(/Complete/); // a state, not a step number (F14)
+    await expect(page.getByRole('heading', { name: 'You finished!' })).toBeVisible();
+    await expect(page.locator('[data-bedo-step-progress] [data-status="finished"]')).toBeVisible();
 
     expect(errors, `page errors during the lesson:\n${errors.join('\n')}`).toEqual([]);
   });
@@ -252,13 +252,12 @@ test.describe('guided walkthrough', () => {
     await confirmStep(page);
     await dismissPopup(page);
     for (const weight of ['+50g', '+20g', '+10g']) await button(page, weight).click();
-    await confirmStep(page);
     await dismissPopup(page);
+    await expectStep(page, 7);
     await setValve(page, 0.5);
     await confirmStep(page);
     await dismissPopup(page);
-    for (const weight of ['+200g', '+50g', '+10g']) await button(page, weight).click();
-    await confirmStep(page);
+    for (const weight of ['+200g', '+20g', '+20g', '+20g']) await button(page, weight).click();
     await expectStep(page, 9);
     await button(page, 'Open Data Monitor').click();
 
@@ -292,11 +291,16 @@ test.describe('guided walkthrough', () => {
     await expect(sidebar(page).getByText('250 g')).toBeVisible();
     await expect(okButton(page)).toHaveCount(0);
 
-    // Take off only the 200 g disc. The 50 g one stays.
+    // Take off only the top disc — the 50 g one went on last (F03). The 200 g one stays.
+    await button(page, 'Remove 50 g').click();
+    await expect(sidebar(page).getByText('200 g')).toBeVisible();
+    await expect(button(page, 'Remove 200 g')).toBeVisible();
+    await expect(button(page, 'Remove 50 g')).toHaveCount(0);
+
+    // Then the 200 g, which is now on top.
     await button(page, 'Remove 200 g').click();
+    await button(page, '+50g').click();
     await expect(sidebar(page).getByText('50 g')).toBeVisible();
-    await expect(button(page, 'Remove 50 g')).toBeVisible();
-    await expect(button(page, 'Remove 200 g')).toHaveCount(0);
 
     // Two identical discs are two discs: add a second 10 g and take one back off.
     await button(page, '+10g').click();
@@ -307,8 +311,7 @@ test.describe('guided walkthrough', () => {
 
     // Finish balancing and carry on — the derived state followed every removal.
     await button(page, '+20g').click();
-    await expect(page.getByText('Pointer balanced!')).toBeVisible();
-    await confirmStep(page);
+    // 80 g balances: the step finishes by itself (F14).
     await dismissPopup(page);
     await expectStep(page, 7);
   });
