@@ -4,7 +4,6 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   RIPPLE_TILES,
-  WATER_UV_ATTRIBUTE,
   buildWaterUv,
   flowAxisOf,
 } from '../../src/lib/waterUv';

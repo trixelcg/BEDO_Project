@@ -79,8 +79,13 @@ describeBuilt('the production bundle', () => {
     // EffectComposer, RenderPass, GTAOPass and OutputPass plus RoomEnvironment measure
     // +42,640 B (11.2 KB gzip) over the previous ceiling. They cannot be split: the
     // composer owns every frame from the first one. Headroom is kept tight again.
+    // Raised a third time, for BEDO-WATER-16 and F03–F19: the water and glass shaders
+    // (`waterMaterial`, `jetFlow`, `jetFlowMesh`, `measuringTank`, `reflectionProbe`) and
+    // the weight family, handling path and lesson UI grew the chunk from 1,418,298 B to
+    // 1,526,225 B (+107,927 B; +40,883 B gzip). Whether any of it can be code-split has
+    // not been investigated yet. Headroom is kept tight again.
     expect(js, 'the JS chunk grew by more than the lesson change should cost').toBeLessThan(
-      1_440_000
+      1_560_000
     );
   });
 

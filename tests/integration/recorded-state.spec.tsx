@@ -8,6 +8,7 @@ import {
   renderApp,
   setValve,
   stubConfigFetch,
+  trayWeightG,
   walkLesson,
 } from '../helpers/app-harness';
 
@@ -131,7 +132,8 @@ describe('reset says what it clears', () => {
     click('Cancel');
     expect(resetDialog()).toBeNull();
     expect(currentStep()).toBe(7);
-    expect(loadedWeightG()).toBe(80);
+    // Step 7 hides the weights card; reading 1's discs are still on the carrier (F14).
+    expect(trayWeightG()).toBe(80);
   });
 
   it('"Yes, reset" clears it all', () => {

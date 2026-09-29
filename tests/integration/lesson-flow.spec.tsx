@@ -157,9 +157,10 @@ describe('the progression rules the lesson enforces', () => {
     expect(okButton()).toBeNull();
 
     click('+20g');
+    expect(currentStep()).toBe(6);
     click('+10g');
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
-    expect(okButton()).not.toBeNull();
+    // Balanced: the step finishes on the spot (F14), so the lesson has already moved on.
+    expectStep(7, 'Increase the flow rate');
   });
 
   it('clears the tray between the two readings', () => {

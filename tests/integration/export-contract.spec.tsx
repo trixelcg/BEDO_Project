@@ -175,8 +175,9 @@ describe('the exported CSV', () => {
     // The header never varies by experiment or language.
     expect(lines[1].split(',')).toHaveLength(11);
     expect(lines[1].startsWith('Row,Q_total (L/min),n,')).toBe(true);
-    // ...and the theoretical force follows that experiment's deflector, not Exp. 1's.
-    expect(lines[3].split(',')[9]).toBe('1.6398'); // 2.0 x the flat plate at n = 0.4
+    // Free mode exports its own readings, not the lesson's (F10). None were recorded, so
+    // the file is the title and the header and nothing else — no lesson rows leak in.
+    expect(lines.filter((line) => line.trim() !== '')).toHaveLength(2);
   });
 });
 

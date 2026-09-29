@@ -5,6 +5,7 @@ import {
   click,
   clickMesh,
   coverState,
+  currentStep,
   loadedWeightG,
   renderApp,
   stubConfigFetch,
@@ -65,7 +66,8 @@ describe('one source of truth', () => {
     expect(screen.getByText(/Unbalanced \(target ≈ 80 g\)/)).toBeDefined();
     click('+20g');
     click('+10g');
-    expect(screen.getByText('Pointer balanced!')).toBeDefined();
+    // Balanced: the step finishes on the spot (F14) and the lesson moves to step 7.
+    expect(currentStep()).toBe(7);
   });
 
   it('a refused action changes nothing anywhere', () => {

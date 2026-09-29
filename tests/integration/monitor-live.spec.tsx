@@ -118,8 +118,8 @@ describe('the live software board', () => {
     const cell = liveCell('Installed deflector');
     expect(cell.textContent).toContain('90°');
     expect(cell.textContent).toContain('Flat surface');
-    // k = 1.000 for the flat plate — the domain's own momentum factor.
-    expect(cell.textContent).toContain('k = 1.000');
+    // k = 1 for the flat plate, written as the force law states it (F09, `forceLaw.ts`).
+    expect(cell.textContent).toContain('k = 1 (the plate turns the jet through 90°)');
   });
 
   it('reports the nozzle as the 10 mm bore the physics uses', () => {
@@ -145,7 +145,8 @@ describe('the live software board', () => {
   });
 
   it('moves the velocities and the theoretical force with the valve', () => {
-    freeRig();
+    // F_th needs a fitted deflector; without one it is a dash (F09).
+    freeRigWith(/Flat surface/);
     setValve(0.35);
     openBoard();
     const low = {
@@ -202,7 +203,7 @@ describe('the live software board', () => {
   });
 
   it('switches the family diagram and k with the deflector on the rod', () => {
-    freeRig();
+    freeRigWith(/Flat surface/);
     openBoard();
     expect(document.querySelector('.dfl-item.is-selected')?.textContent).toContain('90°');
     expect(document.querySelector('.dfl-fig.is-active figcaption')?.textContent).toBe(
@@ -227,7 +228,7 @@ describe('the live software board', () => {
   });
 
   it('carries the deflector through to the theoretical force', () => {
-    freeRig();
+    freeRigWith(/Flat surface/);
     setValve(0.6);
     openBoard();
     const flat = parseFloat(liveValue('F_th'));
@@ -251,7 +252,10 @@ describe('the live software board', () => {
     expect(liveValue('Valve opening')).toBe('60 %');
     expect(totalWeightG()).toBe(50);
 
-    click(/^Reset$/);
+    // The monitor's own Reset is gone (F15); the one whole-simulator reset is used.
+    closeBoard();
+    resetSimulator();
+    click('Free Mode');
     openBoard();
     expect(liveValue('Valve opening')).toBe('0 %');
     expect(liveValue('Q')).toBe('0.000 L/min');

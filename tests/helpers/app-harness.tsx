@@ -114,6 +114,19 @@ export const loadedWeightG = (): number => {
 };
 
 /**
+ * The mass on the carrier, summed from the mock scene's discs.
+ *
+ * `loadedWeightG` reads the weights card, which a guided step not about the pan hides — and
+ * since F14 a balance step finishes the moment the pointer balances, so the lesson is
+ * already on the next step, with the card gone, by the time the test looks. The discs stay
+ * on the carrier; the scene is where they can always be counted.
+ */
+export const trayWeightG = (): number =>
+  screen
+    .queryAllByTestId(/^scene-loaded-weight-/)
+    .reduce((total, el) => total + Number(/loaded weight (\d+)/.exec(el.textContent ?? '')?.[1] ?? 0), 0);
+
+/**
  * Walks the guided lesson from `from` up to and including `to`, asserting the step number
  * before each action.
  *

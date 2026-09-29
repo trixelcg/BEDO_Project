@@ -10,6 +10,7 @@ import {
   dismissPopup,
   loadedWeightG,
   okButton,
+  trayWeightG,
   renderApp,
   setValve,
   stubConfigFetch,
@@ -250,8 +251,9 @@ describe('taking one disc off the holder', () => {
     click('+20g');
     click('+10g');
 
-    // 80 g balances, and the step finishes on the spot (F14) — the discs stay on.
-    expect(pan()).toBe(80);
+    // 80 g balances, and the step finishes on the spot (F14) — the discs stay on. The
+    // weights card goes with the step, so the tray is read from the scene.
+    expect(trayWeightG()).toBe(80);
     dismissPopup();
     expect(currentStep()).toBe(7);
     expect(okButton()).toBeNull();
